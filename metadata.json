@@ -1,0 +1,6 @@
+{
+  "name": "Lange: Origins",
+  "description": "A relaxing 2D sandbox game with mining, building, and exploration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,32 @@
+{
+  "collections": [
+    {
+      "name": "users",
+      "description": "User profiles containing their persisted game state.",
+      "securityRules": {
+        "read": "if request.auth != null && request.auth.uid == resource.id;",
+        "create": "if request.auth != null && request.auth.uid == request.resource.id;",
+        "update": "if request.auth != null && request.auth.uid == resource.id;",
+        "delete": "if false;"
+      },
+      "documentSchema": {
+        "health": {
+          "type": "number",
+          "description": "Current player health"
+        },
+        "hotbar": {
+          "type": "string",
+          "description": "JSON string of the hotbar inventory"
+        },
+        "backpack": {
+          "type": "string",
+          "description": "JSON string of the backpack inventory"
+        },
+        "lastRoom": {
+          "type": "string",
+          "description": "The last room the player was in"
+        }
+      }
+    }
+  ]
+}
