@@ -20,6 +20,7 @@ interface GameProps {
   onHealthChange: (health: number) => void;
   onArmorDamage?: () => void;
   sendChatMsg?: {text: string, timestamp: number} | null;
+  onToolDurabilityLoss?: () => void;
   onChatMessage?: (msg: {sender: string, text: string}) => void;
   onBlockMined?: (blockType: BlockType) => void;
   onBlockPlaced?: (blockType: BlockType) => void;
@@ -57,7 +58,7 @@ interface Particle {
   size: number;
 }
 
-export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange }: GameProps) {
+export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, onToolDurabilityLoss }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -65,9 +66,12 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     id: string;
     x: number;
     y: number;
-    damage: number;
+    damage?: number;
+    text?: string;
     life: number;
     maxLife: number;
+    color?: string;
+    size?: number;
   }
 
   // Ref for mutable game state to avoid re-renders
@@ -348,6 +352,12 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
     });
 
     
+    socket.on('grappled', (data: { hx: number, hy: number }) => {
+      gameState.current.grapplePoint = { x: data.hx, y: data.hy };
+      gameState.current.grappleTimer = 30;
+      gameState.current.player.grounded = false;
+    });
+
     socket.on('take_damage', (data: { damage: number, vx: number, vy: number }) => {
       const p = gameState.current.player;
       if (p.invulnerableTimer <= 0) {
@@ -407,10 +417,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange };
-  }, [nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss };
+  }, [nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -737,6 +747,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
         const isGrapple = propsRef.current.selectedBlock === BlockType.GrapplingHook; // Grapple
 
         if (isGrapple && state.interactionCooldown <= 0) {
+            if (propsRef.current.onToolDurabilityLoss) propsRef.current.onToolDurabilityLoss();
+            
             const dx = (targetTx * 32 + 16) - player.x;
             const dy = (targetTy * 32 + 16) - player.y;
             const mDist = Math.sqrt(dx*dx + dy*dy) || 1;
@@ -746,9 +758,24 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
                let steps = Math.floor(mDist);
                let hit = false;
                let hx = 0; let hy = 0;
+               let hitPlayerId = null;
                for (let i = 0; i < steps; i+=4) {
                    const cx = player.x + (dx/mDist) * i;
                    const cy = player.y + (dy/mDist) * i;
+                   
+                   for (const pId in state.otherPlayers) {
+                       if (pId === state.socket?.id) continue;
+                       const p = state.otherPlayers[pId];
+                       if (cx >= p.x && cx <= p.x + 24 && cy >= p.y && cy <= p.y + 36) {
+                           hit = true;
+                           hitPlayerId = pId;
+                           hx = p.x;
+                           hy = p.y;
+                           break;
+                       }
+                   }
+                   if (hit) break;
+                   
                    const gTx = Math.floor(cx / 32);
                    const gTy = Math.floor(cy / 32);
                    if (gTx >= 0 && gTx < world.length && gTy >= 0 && gTy < world[0].length) {
@@ -762,28 +789,20 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
                    }
                }
                if (hit) {
-                   // Pull player
-                   const pullDx = hx - player.x;
-                   const pullDy = hy - player.y;
-                   const pullDist = Math.sqrt(pullDx*pullDx + pullDy*pullDy) || 1;
-                   player.vx += (pullDx/pullDist) * 15;
-                   player.vy += (pullDy/pullDist) * 15;
-                   if (player.vy < -25) player.vy = -25;
-                   if (player.vx < -25) player.vx = -25;
-                   if (player.vx > 25) player.vx = 25;
-                   state.interactionCooldown = 250;
-                   
+                   if (hitPlayerId && state.socket) {
+                       state.socket.emit('grapple_pull', { targetId: hitPlayerId, hx: player.x, hy: player.y });
+                   }
                    player.grounded = false;
                    state.grapplePoint = { x: hx, y: hy };
-                   state.grappleTimer = 15;
+                   state.grappleTimer = 30;
                    state.damageTexts.push({ id: Math.random().toString(), text: 'Swoosh!', x: player.x, y: player.y - 15, life: 1, maxLife: 30, color: '#DDDDDD', size: 12 });
-                   state.interactionCooldown = 400;
+                   state.interactionCooldown = 600;
                } else {
                    state.damageTexts.push({ id: Math.random().toString(), text: 'Miss!', x: player.x, y: player.y - 15, life: 1, maxLife: 30, color: '#FF4444', size: 12 });
                    state.interactionCooldown = 200;
                }
             } else {
-                state.damageTexts.push({ id: Math.random().toString(), text: 'Too far!', x: player.x, y: player.y - 15, life: 1, maxLife: 30, color: '#FF4444', size: 12 });
+                state.damageTexts.push({ id: Math.random().toString(), text: 'Aim closer!', x: player.x, y: player.y - 15, life: 1, maxLife: 30, color: '#FF4444', size: 12 });
                 state.interactionCooldown = 200;
             }
         }
@@ -829,12 +848,18 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
              const mBottom = mob.y + 24;
              
              if (mx >= mLeft && mx <= mRight && my >= mTop && my <= mBottom) {
+                const sel = propsRef.current.selectedBlock;
+                const isFist = sel === BlockType.Fists;
+                const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
+                const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
+                const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
+                
+                if (!isFist && !isSword && !isPickaxe && !isAxe) continue; // Cannot fight with this item
+                
                 if (state.socket) {
-                   const dmg = propsRef.current.selectedBlock === BlockType.IronSword ? 8
-                            : propsRef.current.selectedBlock === BlockType.IronPickaxe ? 5
-                            : propsRef.current.selectedBlock === BlockType.WoodSword ? 5
-                            : propsRef.current.selectedBlock === BlockType.StonePickaxe ? 4 
-                            : propsRef.current.selectedBlock === BlockType.WoodPickaxe ? 3 
+                   const dmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
+                            : isAxe ? (sel === BlockType.IronAxe ? 6 : 4)
+                            : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : 3)
                             : 1;
                    state.socket.emit('hit_mob', { mobId, damage: dmg, facingRight: player.x < mob.x, playerId: state.socket.id });
                 }
@@ -848,20 +873,26 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
 
           // 1.5 Check PvP Hit
           if (!hitMob && state.socket && propsRef.current.duelingOpponents && propsRef.current.duelingOpponents.length > 0) {
-             for (const otherId in state.players) {
+             for (const otherId in state.otherPlayers) {
                 if (propsRef.current.duelingOpponents.includes(otherId)) {
-                   const other = state.players[otherId];
+                   const other = state.otherPlayers[otherId];
                    const dx = other.x - player.x;
                    const dy = other.y - player.y;
                    const distToOther = Math.sqrt(dx*dx + dy*dy);
                    if (distToOther <= ATTACK_RANGE) {
+                      const sel = propsRef.current.selectedBlock;
+                      const isFist = sel === BlockType.Fists;
+                      const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === BlockType.GoldSword || sel === BlockType.DiamondSword;
+                      const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
+                      const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
+                      
+                      if (!isFist && !isSword && !isPickaxe && !isAxe) continue;
+
                       // Hit them!
-                      const dmg = propsRef.current.selectedBlock === BlockType.DiamondSword ? 10 
-                                : propsRef.current.selectedBlock === BlockType.GoldSword ? 7 
-                                : propsRef.current.selectedBlock === BlockType.IronSword ? 6 
-                                : propsRef.current.selectedBlock === BlockType.StoneSword ? 5 
-                                : propsRef.current.selectedBlock === BlockType.WoodSword ? 4 
-                                : 2;
+                      const dmg = isSword ? (sel === BlockType.DiamondSword ? 10 : sel === BlockType.GoldSword ? 7 : sel === BlockType.IronSword ? 6 : sel === BlockType.StoneSword ? 5 : 4)
+                               : isAxe ? (sel === BlockType.IronAxe ? 6 : sel === BlockType.StoneAxe ? 4 : 3)
+                               : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : sel === BlockType.StonePickaxe ? 4 : 3)
+                               : 1;
                       state.socket.emit('hit_player', { targetId: otherId, damage: dmg, facingRight: player.x < other.x });
                       state.interactionCooldown = 300;
                       hitMob = true; // reusing this to skip block mining
@@ -876,7 +907,9 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
           const currentBlock = world[targetTx][targetTy];
           
           // Block Placing (Ensure selectedBlock is not null)
-          if (currentBlock === BlockType.Air && propsRef.current.selectedBlock !== null && propsRef.current.selectedBlock !== BlockType.Air && propsRef.current.selectedBlock !== BlockType.Fists && propsRef.current.selectedBlock < 100 && state.interactionCooldown <= 0) {
+          const sel = propsRef.current.selectedBlock;
+          const isPlaceable = sel !== null && sel !== BlockType.Air && sel !== BlockType.Fists && (sel < 100 || (sel >= 414 && sel <= 417));
+          if (currentBlock === BlockType.Air && isPlaceable && state.interactionCooldown <= 0) {
              // Prevent placing block inside player
              const pLeft = Math.floor(player.x / TILE_SIZE);
              const pRight = Math.floor((player.x + player.width - 0.1) / TILE_SIZE);
@@ -909,12 +942,42 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
           let toolMultiplier = 1;
           const selected = propsRef.current.selectedBlock;
           
-          if (selected === BlockType.WoodPickaxe && BlockHardness[currentBlock] >= 2) toolMultiplier = 3;
-          if (selected === BlockType.StonePickaxe && BlockHardness[currentBlock] >= 2) toolMultiplier = 6;
-          if (selected === BlockType.IronPickaxe && BlockHardness[currentBlock] >= 2) toolMultiplier = 12;
-          if ((selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe) && BlockHardness[currentBlock] === 1) toolMultiplier = 6;
+          let canMine = false;
+          const isFist = selected === BlockType.Fists;
+          const isPickaxe = selected === BlockType.WoodPickaxe || selected === BlockType.StonePickaxe || selected === BlockType.IronPickaxe;
+          const isAxe = selected === BlockType.WoodAxe || selected === BlockType.StoneAxe || selected === BlockType.IronAxe;
+          const isHoe = selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe;
           
           const hardness = BlockHardness[currentBlock] || 1;
+          const isStoneType = hardness >= 2;
+          const isWoodType = currentBlock === BlockType.Wood || currentBlock === BlockType.Leaves || currentBlock === BlockType.Door;
+          const isDirtType = currentBlock === BlockType.Dirt || currentBlock === BlockType.Grass || currentBlock === BlockType.Sand;
+          
+          if (isPickaxe) {
+              if (isStoneType || isDirtType) { // pickaxes can mine dirt too
+                  canMine = true;
+                  toolMultiplier = (selected === BlockType.IronPickaxe) ? 12 : (selected === BlockType.StonePickaxe) ? 6 : 3;
+              }
+          } else if (isAxe) {
+              if (isWoodType || isDirtType) {
+                  canMine = true;
+                  toolMultiplier = (selected === BlockType.IronAxe) ? 12 : (selected === BlockType.StoneAxe) ? 6 : 3;
+              }
+          } else if (isHoe && isDirtType) {
+              canMine = true;
+              toolMultiplier = 6;
+          } else if (isFist) {
+              if (!isStoneType) { // Fist cannot mine stone/ores
+                  canMine = true;
+                  toolMultiplier = 1;
+              }
+          }
+          
+          if (!canMine) {
+              state.miningProgress = 0;
+              return;
+          }
+          
           const timeRequired = hardness * 300; // 300ms per hardness unit
           
           state.miningProgress += dt * toolMultiplier;
@@ -1386,17 +1449,6 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
         
         ctx.save();
 
-        if (state.grapplePoint && state.grappleTimer > 0) {
-           ctx.beginPath();
-           ctx.moveTo(pX + pWidth/2, pY + pHeight/2);
-           ctx.lineTo(state.grapplePoint.x - state.cameraX, state.grapplePoint.y - state.cameraY);
-           ctx.strokeStyle = '#FFFFFF';
-           ctx.lineWidth = 2;
-           ctx.stroke();
-           state.grappleTimer--;
-           if (state.grappleTimer <= 0) state.grapplePoint = null;
-        }
-
         ctx.translate(armX + 4, armY + 4);
         
         let armRotation = 0;
@@ -1421,6 +1473,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
            // Determine tool shape based on type
            const isSword = tool === BlockType.WoodSword || tool === BlockType.StoneSword || tool === BlockType.IronSword || tool === BlockType.GoldSword || tool === BlockType.DiamondSword;
            const isPickaxe = tool === BlockType.WoodPickaxe || tool === BlockType.StonePickaxe || tool === BlockType.IronPickaxe;
+           const isAxe = tool === BlockType.WoodAxe || tool === BlockType.StoneAxe || tool === BlockType.IronAxe;
            const isGrapple = tool === BlockType.GrapplingHook;
            const isGun = tool === BlockType.Gun;
            const isBow = tool === BlockType.Bow;
@@ -1442,6 +1495,12 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
               ctx.fillRect(-10, -4, 20, 4);
               ctx.fillRect(-10, -2, 4, 4);
               ctx.fillRect(6, -2, 4, 4);
+           } else if (isAxe) {
+              // Axe shape
+              ctx.fillStyle = '#8D6E63'; // Handle
+              ctx.fillRect(-2, 0, 4, 16);
+              ctx.fillStyle = BlockColors[tool]; // Head
+              ctx.fillRect(facingRight ? 2 : -8, -8, 6, 8);
            } else if (isHoe) {
               // Hoe shape
               ctx.fillStyle = '#8D6E63'; // Handle
@@ -1664,6 +1723,33 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
 
       });
       // Draw local player
+      
+      // Handle Grapple Drawing and Physics
+      if (state.grapplePoint && state.grappleTimer > 0) {
+           ctx.beginPath();
+           ctx.moveTo(player.x + player.width/2 - state.cameraX, player.y + player.height/2 - state.cameraY);
+           ctx.lineTo(state.grapplePoint.x - state.cameraX, state.grapplePoint.y - state.cameraY);
+           ctx.strokeStyle = '#FFFFFF';
+           ctx.lineWidth = 2;
+           ctx.stroke();
+           
+           const pullDx = state.grapplePoint.x - (player.x + player.width/2);
+           const pullDy = state.grapplePoint.y - (player.y + player.height/2);
+           const pullDist = Math.sqrt(pullDx*pullDx + pullDy*pullDy) || 1;
+           if (pullDist > 16) {
+               player.vx = (pullDx/pullDist) * 15;
+               player.vy = (pullDy/pullDist) * 15 - 0.4; // exactly counteract gravity
+               player.grounded = false;
+           } else {
+               player.vx = 0;
+               player.vy = 0;
+               state.grappleTimer = 0; // stop pulling if close
+           }
+           
+           state.grappleTimer--;
+           if (state.grappleTimer <= 0) state.grapplePoint = null;
+      }
+      
       drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0, false, propsRef.current.helmet || null, propsRef.current.chestplate || null);
 
       // Draw block highlight outline
@@ -1697,10 +1783,20 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
         dtTxt.y -= 0.5; // float upwards
         
         const alpha = 1 - (dtTxt.life / dtTxt.maxLife);
-        ctx.fillStyle = `rgba(255, 50, 50, ${alpha})`;
-        ctx.font = 'bold 16px sans-serif';
+        ctx.fillStyle = dtTxt.color ? dtTxt.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba') : `rgba(255, 50, 50, ${alpha})`;
+        if (dtTxt.color && dtTxt.color.startsWith('#')) {
+            // Can't easily add alpha to hex here without parsing, but it will still be drawn
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = dtTxt.color;
+        }
+        
+        ctx.font = `bold ${dtTxt.size || 16}px sans-serif`;
         ctx.textAlign = 'center';
-        ctx.fillText(`-${dtTxt.damage}`, dtTxt.x + 12, dtTxt.y);
+        
+        const displayTxt = dtTxt.text ? dtTxt.text : `-${dtTxt.damage}`;
+        ctx.fillText(displayTxt, dtTxt.x - state.cameraX + 12, dtTxt.y - state.cameraY);
+        
+        ctx.globalAlpha = 1.0;
         
         if (dtTxt.life >= dtTxt.maxLife) {
           state.damageTexts.splice(i, 1);

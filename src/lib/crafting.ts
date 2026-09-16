@@ -7,6 +7,33 @@ export interface Recipe {
 }
 
 export const RECIPES: Recipe[] = [
+  {
+    pattern: [
+      BlockType.Planks, BlockType.Planks, null,
+      BlockType.Planks, BlockType.Wood, null,
+      null, BlockType.Wood, null
+    ],
+    result: BlockType.WoodAxe,
+    count: 1
+  },
+  {
+    pattern: [
+      BlockType.Stone, BlockType.Stone, null,
+      BlockType.Stone, BlockType.Wood, null,
+      null, BlockType.Wood, null
+    ],
+    result: BlockType.StoneAxe,
+    count: 1
+  },
+  {
+    pattern: [
+      BlockType.IronIngot, BlockType.IronIngot, null,
+      BlockType.IronIngot, BlockType.Planks, null,
+      null, BlockType.Planks, null
+    ],
+    result: BlockType.IronAxe,
+    count: 1
+  },
 
   {
     pattern: [

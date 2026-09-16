@@ -54,22 +54,21 @@ export default function App() {
   // Game states we want to save
   type InventorySlot = { type: BlockType; count: number; durability?: number } | null;
   const [equipment, setEquipment] = useState<InventorySlot[]>([null, null]); // [helmet, chestplate]
-const [hotbar, setHotbar] = useState<InventorySlot[]>([
+  const [hotbar, setHotbar] = useState<InventorySlot[]>([
     { type: BlockType.Fists, count: 1 },
-    { type: BlockType.WoodPickaxe, count: 1 },
-    { type: BlockType.Gun, count: 1 },
-    { type: BlockType.Bow, count: 1 },
-    { type: BlockType.Grenade, count: 64 },
-    { type: BlockType.Bullet, count: 64 },
-    { type: BlockType.Arrow, count: 64 },
-    { type: BlockType.TNT, count: 64 },
-    { type: BlockType.Platform, count: 64 }
+    null, null, null, null, null, null, null, null, null
+  ]);
+  const [leftActionBar, setLeftActionBar] = useState<InventorySlot[]>([
+    null, null, null, null, null, null, null, null, null, null
+  ]);
+  const [rightActionBar, setRightActionBar] = useState<InventorySlot[]>([
+    null, null, null, null, null, null, null, null, null, null
   ]);
   const [backpack, setBackpack] = useState<InventorySlot[]>(() => {
     return Array(27).fill(null);
   });
   const [health, setHealth] = useState(10);
-  const [kills, setKills] = useState(0);
+  const [kills, setKills] = useState<Record<string, number>>({});
   const [mana, setMana] = useState(100);
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(1);
@@ -175,15 +174,7 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
              const newId = 'prof_' + Date.now();
              const defaultHotbar = [
                          { type: 103, count: 1 },
-                         { type: 302, count: 1 },
-                         { type: 111, count: 1 },
-                         { type: 304, count: 64 },
-                         { type: 34, count: 64 },
-                         { type: 31, count: 64 },
-                         { type: 32, count: 64 },
-                         { type: 100, count: 1 },
-                         { type: 28, count: 64 },
-                         null
+                         null, null, null, null, null, null, null, null, null
              ];
              const newProfile = {
                          id: newId,
@@ -306,8 +297,6 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
   const [activeChestCoords, setActiveChestCoords] = useState<{tx: number, ty: number} | null>(null);
   const [chestInventory, setChestInventory] = useState<InventorySlot[]>(() => Array(27).fill(null));
 
-  const [leftActionBar, setLeftActionBar] = useState<InventorySlot[]>(Array(10).fill(null));
-  const [rightActionBar, setRightActionBar] = useState<InventorySlot[]>(Array(10).fill(null));
   const [showLeftActionBar, setShowLeftActionBar] = useState(false);
   const [showRightActionBar, setShowRightActionBar] = useState(false);
 
@@ -349,7 +338,7 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
     if (!currentUser || !hasLoadedSave || appState !== 'playing') return;
     const timeout = setTimeout(saveProgress, 2000);
     return () => clearTimeout(timeout);
-  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health]);
+  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, skillPoints, skills, kills]);
 
   const socketRef = useRef<Socket | null>(null);
   const hoveredSlotRef = useRef<{type: string, index: number} | null>(null);
@@ -815,33 +804,68 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
        return;
     }
     
-    setHotbar(prevHotbar => {
-       const newHb = [...prevHotbar];
-       let consumed = false;
-       for (let i = 0; i < newHb.length; i++) {
-           if (newHb[i] && newHb[i].type === ammoType) {
-               newHb[i] = { ...newHb[i]!, count: newHb[i]!.count - 1 };
-               if (newHb[i]!.count <= 0) newHb[i] = null;
-               consumed = true;
-               return newHb;
-           }
-       }
-       
-       if (!consumed) {
-           setBackpack(prevBp => {
-               const newBp = [...prevBp];
-               for (let j = 0; j < newBp.length; j++) {
-                   if (newBp[j] && newBp[j].type === ammoType) {
-                       newBp[j] = { ...newBp[j]!, count: newBp[j]!.count - 1 };
-                       if (newBp[j]!.count <= 0) newBp[j] = null;
-                       return newBp;
-                   }
-               }
-               return prevBp;
-           });
-       }
-       return prevHotbar;
-    });
+    let foundInHotbar = false;
+    let foundInBackpack = false;
+    
+    for (let i = 0; i < hotbar.length; i++) {
+        if (hotbar[i] && hotbar[i].type === ammoType) {
+            foundInHotbar = true;
+            break;
+        }
+    }
+    
+    if (!foundInHotbar) {
+        for (let i = 0; i < backpack.length; i++) {
+            if (backpack[i] && backpack[i].type === ammoType) {
+                foundInBackpack = true;
+                break;
+            }
+        }
+    }
+    
+    if (foundInHotbar || foundInBackpack) {
+        setHotbar(prev => {
+            const newHb = [...prev];
+            if (foundInHotbar) {
+                for (let i = 0; i < newHb.length; i++) {
+                    if (newHb[i] && newHb[i].type === ammoType) {
+                        newHb[i] = { ...newHb[i]!, count: newHb[i]!.count - 1 };
+                        if (newHb[i]!.count <= 0) newHb[i] = null;
+                        break;
+                    }
+                }
+            }
+            
+            // Decrease tool durability
+            const currentSlot = newHb[selectedSlotIndex];
+            if (currentSlot) {
+                const maxDurability = 50;
+                const currentDurability = currentSlot.durability !== undefined ? currentSlot.durability : maxDurability;
+                if (currentDurability <= 1) {
+                    newHb[selectedSlotIndex] = null;
+                    Sounds.mineBlock();
+                } else {
+                    newHb[selectedSlotIndex] = { ...currentSlot, durability: currentDurability - 1 };
+                }
+            }
+            
+            return newHb;
+        });
+        
+        if (foundInBackpack) {
+            setBackpack(prevBp => {
+                const newBp = [...prevBp];
+                for (let i = 0; i < newBp.length; i++) {
+                    if (newBp[i] && newBp[i].type === ammoType) {
+                        newBp[i] = { ...newBp[i]!, count: newBp[i]!.count - 1 };
+                        if (newBp[i]!.count <= 0) newBp[i] = null;
+                        break;
+                    }
+                }
+                return newBp;
+            });
+        }
+    }
   };
 
   
@@ -1409,6 +1433,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                           if (p.backpack) setBackpack(JSON.parse(p.backpack));
                           if (p.health !== undefined) setHealth(p.health);
                           if (p.quests) setQuests(JSON.parse(p.quests));
+                          if (p.xp !== undefined) setXp(p.xp);
+                          if (p.level !== undefined) setLevel(p.level);
+                          if (p.skillPoints !== undefined) setSkillPoints(p.skillPoints);
+                          if (p.skills) setSkills(JSON.parse(p.skills));
+                          if (p.kills !== undefined) setKills(p.kills);
                       }}
                       className={`px-4 py-3 rounded-xl text-left text-sm font-bold border transition-all ${activeProfileId === p.id ? 'border-blue-500/50 bg-blue-900/20 text-blue-100 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'border-neutral-800 hover:border-neutral-700 text-neutral-400 hover:text-neutral-200 bg-neutral-900/50'}`}
                     >
@@ -1426,17 +1455,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       
                       const defaultHotbar = [
                          { type: 103 /* BlockType.Fists */, count: 1 },
-                         { type: 302 /* BlockType.Gun */, count: 1 },
-                         { type: 111 /* BlockType.GrapplingHook */, count: 1 },
-                         { type: 304 /* BlockType.Grenade */, count: 64 },
-                         { type: 303 /* BlockType.Bullet */, count: 64 },
-                         { type: 110 /* BlockType.Arrow */, count: 64 },
-                         { type: 34 /* BlockType.TNT */, count: 64 },
-                         { type: 31 /* BlockType.Wire */, count: 64 },
-                         { type: 32 /* BlockType.PressurePlate */, count: 64 },
-                         { type: 100 /* BlockType.WoodPickaxe */, count: 1 },
-                         { type: 28 /* BlockType.Platform */, count: 64 },
-                         null
+                         null, null, null, null, null, null, null, null, null
                       ];
                       
                       const newProfile = {
@@ -1692,6 +1711,24 @@ let targetArray = type === 'hotbar' ? [...hotbar]
     if (eUpdated) setEquipment(newEquipment);
   };
 
+  const handleToolDurabilityLoss = () => {
+    setHotbar(prev => {
+        const newHotbar = [...prev];
+        const slot = newHotbar[selectedSlotIndex];
+        if (slot) {
+            const maxDurability = 50;
+            const currentDurability = slot.durability !== undefined ? slot.durability : maxDurability;
+            if (currentDurability <= 1) {
+                newHotbar[selectedSlotIndex] = null; // Item broke
+                Sounds.mineBlock();
+            } else {
+                newHotbar[selectedSlotIndex] = { ...slot, durability: currentDurability - 1 };
+            }
+        }
+        return newHotbar;
+    });
+  };
+
   const helmetType = getHelmet();
   const chestplateType = getChestplate();
 
@@ -1705,6 +1742,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           helmet={helmetType}
           chestplate={chestplateType}
           onArmorDamage={handleArmorDamage}
+          onToolDurabilityLoss={handleToolDurabilityLoss}
           currentAmmoCount={currentAmmoCount} 
           nickname={nickname} 
           selectedBlock={selectedBlock} 
@@ -1731,7 +1769,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              Sounds.openChest();
           }}
           onMobKilled={(type) => {
-             setKills(prev => prev + 1);
+             setKills(prev => {
+                const newKills = { ...prev };
+                newKills[type] = (newKills[type] || 0) + 1;
+                return newKills;
+             });
              const xpGain = type === 'golem_boss' ? 250 : type === 'slime' ? 10 : 25;
              setXp(prevXp => {
                 let nextXp = prevXp + xpGain;
@@ -1850,54 +1892,78 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             
             const isEquipable = checkEquipable(blockType);
             
-            // 1. Try to stack in hotbar
-            setHotbar(prevHotbar => {
-               const newHotbar = [...prevHotbar];
-               let added = false;
-               if (!isEquipable) {
-                 for (let i = 0; i < newHotbar.length; i++) {
-                   if (newHotbar[i] && newHotbar[i].type === blockType && newHotbar[i].count < 64) {
-                     newHotbar[i] = { ...newHotbar[i], count: newHotbar[i].count + 1 };
-                     added = true;
-                     break;
-                   }
-                 }
-               }
-               if (!added) {
-                 const emptyIdx = newHotbar.indexOf(null);
-                 if (emptyIdx !== -1) {
-                   newHotbar[emptyIdx] = { type: blockType, count: 1 };
-                   added = true;
-                 }
-               }
-               
-               if (!added) {
-                  // Fallback to backpack
-                  setBackpack(prevBp => {
-                     const newBp = [...prevBp];
-                     let bpAdded = false;
-                     if (!isEquipable) {
-                       for (let i = 0; i < newBp.length; i++) {
-                         if (newBp[i] && newBp[i].type === blockType && newBp[i].count < 64) {
-                           newBp[i] = { ...newBp[i], count: newBp[i].count + 1 };
-                           bpAdded = true;
-                           break;
-                         }
-                       }
-                     }
-                     if (!bpAdded) {
-                       const emptyIdx = newBp.indexOf(null);
-                       if (emptyIdx !== -1) {
-                         newBp[emptyIdx] = { type: blockType, count: 1 };
-                         bpAdded = true;
-                       }
-                     }
-                     return bpAdded ? newBp : prevBp;
-                  });
-               }
-               
-               return added ? newHotbar : prevHotbar;
-            });
+            let foundInHotbar = false;
+            let foundInBackpack = false;
+            
+            if (!isEquipable) {
+              for (let i = 0; i < hotbar.length; i++) {
+                if (hotbar[i] && hotbar[i]!.type === blockType && hotbar[i]!.count < 64) {
+                  foundInHotbar = true;
+                  break;
+                }
+              }
+            }
+            if (!foundInHotbar) {
+              const emptyIdx = hotbar.findIndex(s => s === null);
+              if (emptyIdx !== -1) foundInHotbar = true;
+            }
+            
+            if (!foundInHotbar && !isEquipable) {
+              for (let i = 0; i < backpack.length; i++) {
+                if (backpack[i] && backpack[i]!.type === blockType && backpack[i]!.count < 64) {
+                  foundInBackpack = true;
+                  break;
+                }
+              }
+            }
+            if (!foundInHotbar && !foundInBackpack) {
+              const emptyIdx = backpack.findIndex(s => s === null);
+              if (emptyIdx !== -1) foundInBackpack = true;
+            }
+            
+            if (foundInHotbar) {
+               setHotbar(prevHotbar => {
+                  const newHotbar = [...prevHotbar];
+                  let added = false;
+                  if (!isEquipable) {
+                    for (let i = 0; i < newHotbar.length; i++) {
+                      if (newHotbar[i] && newHotbar[i]!.type === blockType && newHotbar[i]!.count < 64) {
+                        newHotbar[i] = { ...newHotbar[i]!, count: newHotbar[i]!.count + 1 };
+                        added = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (!added) {
+                    const emptyIdx = newHotbar.indexOf(null);
+                    if (emptyIdx !== -1) {
+                      newHotbar[emptyIdx] = { type: blockType, count: 1 };
+                    }
+                  }
+                  return newHotbar;
+               });
+            } else if (foundInBackpack) {
+               setBackpack(prevBp => {
+                  const newBp = [...prevBp];
+                  let added = false;
+                  if (!isEquipable) {
+                    for (let i = 0; i < newBp.length; i++) {
+                      if (newBp[i] && newBp[i]!.type === blockType && newBp[i]!.count < 64) {
+                        newBp[i] = { ...newBp[i]!, count: newBp[i]!.count + 1 };
+                        added = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (!added) {
+                    const emptyIdx = newBp.indexOf(null);
+                    if (emptyIdx !== -1) {
+                      newBp[emptyIdx] = { type: blockType, count: 1 };
+                    }
+                  }
+                  return newBp;
+               });
+            }
 
 
             
@@ -1920,7 +1986,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               setShowNPCMessage(true);
             }
             if (blockType === BlockType.DurelNPC) {
-              alert("DUREL: YOU HAVE SLAIN " + (kills || 0) + " CREATURES SO FAR!");
+              const killMsg = Object.entries(kills).map(([mob, count]) => `${count} ${mob}(s)`).join(', ');
+              alert("DUREL: YOU HAVE SLAIN: " + (killMsg || "NOTHING YET!"));
             }
             if (blockType === BlockType.TreeSeed || blockType === BlockType.CarrotSeed) {
               // Consume seed

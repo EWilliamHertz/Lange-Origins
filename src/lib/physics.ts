@@ -17,10 +17,10 @@ export interface PlayerState {
 
 const GRAVITY = 0.4;
 const MAX_FALL_SPEED = 18; // Increased for fall damage
-const MAX_SPEED = 3.5;
-const ACCELERATION = 0.8;
+const MAX_SPEED = 2.5; // Reduced from 3.5
+const ACCELERATION = 0.5; // Reduced from 0.8
 const FRICTION = 0.8;
-const JUMP_POWER = -8.0;
+const JUMP_POWER = -7.5; // Slightly reduced jump to match speed
 
 export function updatePhysics(player: PlayerState, world: World, keys: Record<string, boolean>, speedBonus: number = 0) {
   if (player.invulnerableTimer > 0) player.invulnerableTimer--;

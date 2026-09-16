@@ -797,6 +797,12 @@ socket.on('chat_message', (message: string) => {
     });
 
 
+    socket.on('grapple_pull', (data: { targetId: string, hx: number, hy: number }) => {
+      if (currentRoom) {
+         io.to(data.targetId).emit('grappled', { hx: data.hx, hy: data.hy });
+      }
+    });
+
     socket.on('hit_player', (data: { targetId: string, damage: number, facingRight: boolean }) => {
       if (currentRoom && activeRooms[currentRoom]) {
         const room = activeRooms[currentRoom];
