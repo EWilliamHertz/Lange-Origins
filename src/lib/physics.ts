@@ -85,7 +85,7 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
 
     for (let x = left; x <= right; x++) {
       for (let y = top; y <= bottom; y++) {
-        if (x < 0 || x >= WORLD_WIDTH || y < 0 || y >= WORLD_HEIGHT) {
+        if (x < 0 || x >= WORLD_WIDTH || y >= WORLD_HEIGHT) {
           return true; // World bounds act as solid
         }
         const block = world[x][y];
