@@ -1420,7 +1420,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
            
            // Determine tool shape based on type
            const isSword = tool === BlockType.WoodSword || tool === BlockType.StoneSword || tool === BlockType.IronSword || tool === BlockType.GoldSword || tool === BlockType.DiamondSword;
-           const isPickaxe = tool === BlockType.WoodPickaxe || tool === BlockType.StonePickaxe || tool === BlockType.IronPickaxe || tool === BlockType.GoldPickaxe || tool === BlockType.DiamondPickaxe;
+           const isPickaxe = tool === BlockType.WoodPickaxe || tool === BlockType.StonePickaxe || tool === BlockType.IronPickaxe;
            const isGrapple = tool === BlockType.GrapplingHook;
            const isGun = tool === BlockType.Gun;
            const isBow = tool === BlockType.Bow;

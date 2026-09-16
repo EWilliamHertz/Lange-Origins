@@ -268,10 +268,6 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
     prevQuestsRef.current = quests;
   }, [quests]);
 
-  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills });
-  useEffect(() => {
-    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills };
-  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills]);
 
     const handleSignOut = async () => {
     try {
@@ -284,41 +280,6 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
   };
 
 
-  const saveProgress = async () => {
-    const latest = saveStateRef.current;
-    if (!latest.currentUser || !latest.activeProfileId) return;
-    try {
-      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles', latest.activeProfileId);
-      await setDoc(docRef, {
-        equipment: JSON.stringify(latest.equipment),
-        hotbar: JSON.stringify(latest.hotbar),
-        leftActionBar: JSON.stringify(latest.leftActionBar),
-        rightActionBar: JSON.stringify(latest.rightActionBar),
-        backpack: JSON.stringify(latest.backpack),
-        health: latest.health,
-        quests: JSON.stringify(latest.quests),
-        kills: latest.kills,
-        xp: latest.xp,
-        level: latest.level,
-        skillPoints: latest.skillPoints,
-        skills: JSON.stringify(latest.skills),
-        name: latest.nickname,
-        skin: latest.characterSkin,
-        lastRoom: latest.serverName || 'public-lobby',
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      console.log("Progress auto-saved.");
-
-    } catch (e) {
-      console.error("Failed to auto-save progress", e);
-    }
-  };
-
-  useEffect(() => {
-    if (!currentUser || !hasLoadedSave || appState !== 'playing') return;
-    const timeout = setTimeout(saveProgress, 2000);
-    return () => clearTimeout(timeout);
-  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, backpack, quests, health]);
 
   const [craftingGrid, setCraftingGrid] = useState<InventorySlot[]>(Array(9).fill(null));
   const [craftingResult, setCraftingResult] = useState<{result: BlockType, count: number} | null>(null);
@@ -349,6 +310,46 @@ const [hotbar, setHotbar] = useState<InventorySlot[]>([
   const [rightActionBar, setRightActionBar] = useState<InventorySlot[]>(Array(10).fill(null));
   const [showLeftActionBar, setShowLeftActionBar] = useState(false);
   const [showRightActionBar, setShowRightActionBar] = useState(false);
+
+  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills });
+  useEffect(() => {
+    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills };
+  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills]);
+
+  const saveProgress = async () => {
+    const latest = saveStateRef.current;
+    if (!latest.currentUser || !latest.activeProfileId) return;
+    try {
+      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles', latest.activeProfileId);
+      await setDoc(docRef, {
+        equipment: JSON.stringify(latest.equipment),
+        hotbar: JSON.stringify(latest.hotbar),
+        leftActionBar: JSON.stringify(latest.leftActionBar),
+        rightActionBar: JSON.stringify(latest.rightActionBar),
+        backpack: JSON.stringify(latest.backpack),
+        health: latest.health,
+        quests: JSON.stringify(latest.quests),
+        kills: latest.kills,
+        xp: latest.xp,
+        level: latest.level,
+        skillPoints: latest.skillPoints,
+        skills: JSON.stringify(latest.skills),
+        name: latest.nickname,
+        skin: latest.characterSkin,
+        lastRoom: latest.serverName || 'public-lobby',
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      console.log("Progress auto-saved.");
+    } catch (e) {
+      console.error("Failed to auto-save progress", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser || !hasLoadedSave || appState !== 'playing') return;
+    const timeout = setTimeout(saveProgress, 2000);
+    return () => clearTimeout(timeout);
+  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health]);
 
   const socketRef = useRef<Socket | null>(null);
   const hoveredSlotRef = useRef<{type: string, index: number} | null>(null);
