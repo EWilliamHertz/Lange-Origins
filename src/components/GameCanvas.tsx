@@ -16,6 +16,7 @@ interface GameProps {
   selectedBlock: BlockType | null;
   roomId: string;
   userId?: string;
+  profileId?: string;
   isInventoryOpen: boolean;
   onHealthChange: (health: number) => void;
   onArmorDamage?: () => void;
@@ -27,6 +28,10 @@ interface GameProps {
   onInteract?: (blockType: BlockType, tx: number, ty: number) => void;
   onPlayerInteract?: (playerId: string, playerName: string) => void;
   onTradeRequest?: (senderId: string, senderName: string) => void;
+  onTradeStarted?: (trade: any) => void;
+  onTradeUpdated?: (trade: any) => void;
+  onTradeCompleted?: (result: any) => void;
+  onTradeCancelled?: (reason: string) => void;
   onGangInvite?: (senderId: string, senderName: string) => void;
   onFriendRequest?: (senderId: string, senderName: string) => void;
 
@@ -39,7 +44,7 @@ interface GameProps {
   currentGang?: any;
   onFireWeapon?: (weaponType: number) => void;
   currentAmmoCount?: number;
-  skills?: { vitality: number, speed: number, strength: number };
+  skills?: { strength: number, dexterity: number, intelligence: number };
   mana?: number;
   onManaChange?: (mana: number) => void;
   duelingOpponents?: string[];
@@ -58,7 +63,7 @@ interface Particle {
   size: number;
 }
 
-export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, onToolDurabilityLoss }: GameProps) {
+export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, onToolDurabilityLoss }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -178,7 +183,7 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     }
 
     socket.on('connect', () => {
-      socket.emit('join_room', { roomId, nickname: propsRef.current.nickname });
+      socket.emit('join_room', { roomId, nickname: propsRef.current.nickname, uid: propsRef.current.userId, profileId: propsRef.current.profileId });
     });
 
     socket.on('kicked', (data: { reason: string }) => {
@@ -269,6 +274,22 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
       if (propsRef.current.onTradeRequest) {
         propsRef.current.onTradeRequest(data.senderId, data.senderName);
       }
+    });
+
+    socket.on('trade_started', (data: any) => {
+      if (propsRef.current.onTradeStarted) propsRef.current.onTradeStarted(data);
+    });
+
+    socket.on('trade_updated', (data: any) => {
+      if (propsRef.current.onTradeUpdated) propsRef.current.onTradeUpdated(data);
+    });
+
+    socket.on('trade_completed', (data: any) => {
+      if (propsRef.current.onTradeCompleted) propsRef.current.onTradeCompleted(data);
+    });
+
+    socket.on('trade_cancelled', (data: any) => {
+      if (propsRef.current.onTradeCancelled) propsRef.current.onTradeCancelled(data.reason);
     });
     
     socket.on('gang_invite', (data: { senderId: string, senderName: string }) => {
@@ -417,10 +438,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss };
-  }, [nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -537,13 +558,13 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
       const keysToUse = propsRef.current.isInventoryOpen ? {} : state.keys;
 
       const prevHealth = player.health;
-      player.maxHealth = 20 + (propsRef.current.skills?.vitality || 0) * 10;
+      player.maxHealth = 20 + (propsRef.current.skills?.strength || 0) * 10;
       
       // Update Physics
       if (world.length > 0 && !propsRef.current.isInventoryOpen) {
         const oldX = player.x;
         const oldY = player.y;
-        updatePhysics(player, world, keysToUse, propsRef.current.skills?.speed || 0);
+        updatePhysics(player, world, keysToUse, propsRef.current.skills?.dexterity || 0);
 
         // Update explored area
         if (state.explored.length !== world.length || (world.length > 0 && state.explored[0].length !== world[0].length)) {
@@ -752,7 +773,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
             const dx = (targetTx * 32 + 16) - player.x;
             const dy = (targetTy * 32 + 16) - player.y;
             const mDist = Math.sqrt(dx*dx + dy*dy) || 1;
-            const maxRange = 600; // max grapple distance
+            const maxRange = 1500; // max grapple distance
             if (mDist < maxRange) {
                // Raycast
                let steps = Math.floor(mDist);
@@ -820,20 +841,30 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
                  const vy = (dy / mDist) * speed;
                  const type = isGun ? 'bullet' : (isBow ? 'arrow' : (isStaff ? 'fireball' : 'grenade'));
                  
+                 const baseProjDmg = type === 'bullet' ? 15 : (type === 'arrow' ? 8 : (type === 'fireball' ? 30 : 20));
+                 const bonusProjDmg = (isGun || isBow || isGrenade) ? (propsRef.current.skills?.dexterity || 0) * 2 : (propsRef.current.skills?.intelligence || 0) * 3;
+                 const projDamage = baseProjDmg + bonusProjDmg;
+                 
                  if (isStaff) {
                      // Requires mana check in parent, but we will send mana decrease event
                      if ((propsRef.current.mana || 0) < 10) {
                         state.interactionCooldown = 500;
                         state.damageTexts.push({ id: Math.random().toString(), text: 'No Mana!', x: player.x, y: player.y - 15, life: 1, maxLife: 40, color: '#4444FF', size: 14 });
-                        return; // cancel shot
+                     } else {
+                         state.socket.emit('fire_projectile', { type, x: player.x, y: player.y - 12, vx, vy, damage: projDamage });
+                         state.interactionCooldown = isGun ? 100 : (isBow ? 300 : (isStaff ? 250 : 400));
+                         
+                         if (propsRef.current.onFireWeapon && propsRef.current.selectedBlock !== null) {
+                             propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
+                         }
                      }
-                 }
-                 
-                 state.socket.emit('fire_projectile', { type, x: player.x, y: player.y - 12, vx, vy });
-                 state.interactionCooldown = isGun ? 100 : (isBow ? 300 : (isStaff ? 250 : 400));
-                 
-                 if (propsRef.current.onFireWeapon && propsRef.current.selectedBlock !== null) {
-                     propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
+                 } else {
+                     state.socket.emit('fire_projectile', { type, x: player.x, y: player.y - 12, vx, vy, damage: projDamage });
+                     state.interactionCooldown = isGun ? 100 : (isBow ? 300 : (isStaff ? 250 : 400));
+                     
+                     if (propsRef.current.onFireWeapon && propsRef.current.selectedBlock !== null) {
+                         propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
+                     }
                  }
              }
         }
@@ -857,10 +888,11 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
                 if (!isFist && !isSword && !isPickaxe && !isAxe) continue; // Cannot fight with this item
                 
                 if (state.socket) {
-                   const dmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
+                   const baseDmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
                             : isAxe ? (sel === BlockType.IronAxe ? 6 : 4)
                             : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : 3)
                             : 1;
+                   const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
                    state.socket.emit('hit_mob', { mobId, damage: dmg, facingRight: player.x < mob.x, playerId: state.socket.id });
                 }
                 state.interactionCooldown = 300; // Attack cooldown
@@ -889,10 +921,11 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
                       if (!isFist && !isSword && !isPickaxe && !isAxe) continue;
 
                       // Hit them!
-                      const dmg = isSword ? (sel === BlockType.DiamondSword ? 10 : sel === BlockType.GoldSword ? 7 : sel === BlockType.IronSword ? 6 : sel === BlockType.StoneSword ? 5 : 4)
+                      const baseDmg = isSword ? (sel === BlockType.DiamondSword ? 10 : sel === BlockType.GoldSword ? 7 : sel === BlockType.IronSword ? 6 : sel === BlockType.StoneSword ? 5 : 4)
                                : isAxe ? (sel === BlockType.IronAxe ? 6 : sel === BlockType.StoneAxe ? 4 : 3)
                                : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : sel === BlockType.StonePickaxe ? 4 : 3)
                                : 1;
+                      const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
                       state.socket.emit('hit_player', { targetId: otherId, damage: dmg, facingRight: player.x < other.x });
                       state.interactionCooldown = 300;
                       hitMob = true; // reusing this to skip block mining
@@ -975,36 +1008,34 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
           
           if (!canMine) {
               state.miningProgress = 0;
-              return;
-          }
-          
-          const timeRequired = hardness * 300; // 300ms per hardness unit
-          
-          state.miningProgress += dt * toolMultiplier;
-          
-          if (state.miningProgress >= timeRequired) {
-            // Break it
-            const blockColor = BlockColors[currentBlock];
-            for (let i = 0; i < 8; i++) {
-              state.particles.push({
-                x: targetTx * TILE_SIZE + TILE_SIZE / 2 + (Math.random() - 0.5) * TILE_SIZE,
-                y: targetTy * TILE_SIZE + TILE_SIZE / 2 + (Math.random() - 0.5) * TILE_SIZE,
-                vx: (Math.random() - 0.5) * 6,
-                vy: (Math.random() - 1) * 6,
-                life: 1,
-                maxLife: 20 + Math.random() * 20,
-                color: blockColor,
-                size: 4 + Math.random() * 4
-              });
-            }
-            
-            world[targetTx][targetTy] = BlockType.Air;
-            state.miningProgress = 0;
-            state.miningTarget = null;
-            state.lastLightTime = 0; // force light update
-            if (state.socket) {
-               state.socket.emit('block_update', { tx: targetTx, ty: targetTy, blockType: BlockType.Air });
-               // Custom drops
+          } else {
+              const timeRequired = hardness * 300; // 300ms per hardness unit
+              
+              state.miningProgress += dt * toolMultiplier;
+              
+              if (state.miningProgress >= timeRequired) {
+                // Break it
+                const blockColor = BlockColors[currentBlock];
+                for (let i = 0; i < 8; i++) {
+                  state.particles.push({
+                    x: targetTx * TILE_SIZE + TILE_SIZE / 2 + (Math.random() - 0.5) * TILE_SIZE,
+                    y: targetTy * TILE_SIZE + TILE_SIZE / 2 + (Math.random() - 0.5) * TILE_SIZE,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 1) * 6,
+                    life: 1,
+                    maxLife: 20 + Math.random() * 20,
+                    color: blockColor,
+                    size: 4 + Math.random() * 4
+                  });
+                }
+                
+                world[targetTx][targetTy] = BlockType.Air;
+                state.miningProgress = 0;
+                state.miningTarget = null;
+                state.lastLightTime = 0; // force light update
+                if (state.socket) {
+                   state.socket.emit('block_update', { tx: targetTx, ty: targetTy, blockType: BlockType.Air });
+                   // Custom drops
                // Always spawn the broken block itself!
                let dropType = currentBlock;
                if (currentBlock === BlockType.Grass) dropType = BlockType.Dirt;
@@ -1032,6 +1063,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
             // Do NOT call onBlockMined directly here. 
             // It will be called when the player physically collects the spawned item via the 'item_collected' socket event.
           }
+        }
         }
         } // close !hitMob block
       } else {
@@ -1736,18 +1768,32 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
            const pullDx = state.grapplePoint.x - (player.x + player.width/2);
            const pullDy = state.grapplePoint.y - (player.y + player.height/2);
            const pullDist = Math.sqrt(pullDx*pullDx + pullDy*pullDy) || 1;
-           if (pullDist > 16) {
-               player.vx = (pullDx/pullDist) * 15;
-               player.vy = (pullDy/pullDist) * 15 - 0.4; // exactly counteract gravity
+           
+           // Jump out of grapple
+           if (keysToUse['w'] || keysToUse['ArrowUp'] || keysToUse[' ']) {
+               state.grapplePoint = null;
+               player.isGrappling = false;
+               player.vy = -7.5;
                player.grounded = false;
            } else {
-               player.vx = 0;
-               player.vy = 0;
-               state.grappleTimer = 0; // stop pulling if close
+               if (pullDist > 16) {
+                   // Linear animation to the point
+                   player.vx = (pullDx/pullDist) * 15;
+                   player.vy = (pullDy/pullDist) * 15;
+                   player.grounded = false;
+                   player.isGrappling = true;
+                   // Reset timer to keep pulling until we reach the point or jump
+                   state.grappleTimer = 30; 
+               } else {
+                   player.vx = 0;
+                   player.vy = 0;
+                   player.isGrappling = true;
+                   // Keep attached indefinitely
+                   state.grappleTimer = 30;
+               }
            }
-           
-           state.grappleTimer--;
-           if (state.grappleTimer <= 0) state.grapplePoint = null;
+      } else {
+           player.isGrappling = false;
       }
       
       drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0, false, propsRef.current.helmet || null, propsRef.current.chestplate || null);

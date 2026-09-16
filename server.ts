@@ -532,7 +532,11 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
   io.on('connection', (socket) => {
     let currentRoom: string | null = null;
 
-    socket.on('join_room', (data: { roomId: string, nickname?: string } | string) => { const roomId = typeof data === 'string' ? data : data.roomId; const nickname = typeof data === 'string' ? 'Player' : (data.nickname || 'Player');
+    socket.on('join_room', (data: { roomId: string, nickname?: string, uid?: string, profileId?: string } | string) => { 
+      const roomId = typeof data === 'string' ? data : data.roomId; 
+      const nickname = typeof data === 'string' ? 'Player' : (data.nickname || 'Player');
+      const uid = typeof data === 'string' ? undefined : data.uid;
+      const profileId = typeof data === 'string' ? undefined : data.profileId;
       // Leave previous room if any
       if (currentRoom) {
         socket.leave(currentRoom);
@@ -576,7 +580,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       const startY = (spawnY - 2) * 32;
 
       // Add player to room
-      activeRooms[roomId].players[socket.id] = { id: socket.id, name: nickname, x: startX, y: startY, facingRight: true, vx: 0, vy: 0 };
+      activeRooms[roomId].players[socket.id] = { id: socket.id, name: nickname, x: startX, y: startY, facingRight: true, vx: 0, vy: 0, uid, profileId };
 
       // Send the entire current world and player list to the new user
       socket.emit('init_world', {
@@ -778,7 +782,7 @@ socket.on('chat_message', (message: string) => {
     });
 
     
-    socket.on('fire_projectile', (data: { type: string, x: number, y: number, vx: number, vy: number }) => {
+    socket.on('fire_projectile', (data: { type: string, x: number, y: number, vx: number, vy: number, damage?: number }) => {
         if (currentRoom && activeRooms[currentRoom]) {
             const room = activeRooms[currentRoom];
             const pId = 'proj_' + Math.random().toString(36).substr(2, 9);
@@ -791,7 +795,7 @@ socket.on('chat_message', (message: string) => {
                 vx: data.vx,
                 vy: data.vy,
                 life: data.type === 'grenade' ? 60 : (data.type === 'fireball' ? 80 : 40),
-                damage: data.type === 'bullet' ? 15 : (data.type === 'arrow' ? 8 : (data.type === 'fireball' ? 30 : 0))
+                damage: data.damage !== undefined ? data.damage : (data.type === 'bullet' ? 15 : (data.type === 'arrow' ? 8 : (data.type === 'fireball' ? 30 : 0)))
             };
         }
     });
@@ -965,8 +969,7 @@ socket.on('chat_message', (message: string) => {
                
                if (trade.p1Confirm && trade.p2Confirm) {
                    // Complete trade
-                   io.to(trade.p1).emit('trade_completed', { itemsReceived: trade.p2Items });
-                   io.to(trade.p2).emit('trade_completed', { itemsReceived: trade.p1Items });
+                   processTrade(trade, activeRooms[currentRoom], io, db);
                    delete activeRooms[currentRoom].trades[data.tradeId];
                } else {
                    io.to(trade.p1).emit('trade_updated', trade);
@@ -1022,3 +1025,140 @@ socket.on('chat_message', (message: string) => {
 }
 
 startServer();
+async function processTrade(trade: any, room: any, io: any, db: any) {
+    const p1 = room.players[trade.p1];
+    const p2 = room.players[trade.p2];
+    
+    if (!p1.uid || !p1.profileId || !p2.uid || !p2.profileId) {
+        io.to(trade.p1).emit('trade_cancelled', { reason: 'Missing profile data' });
+        io.to(trade.p2).emit('trade_cancelled', { reason: 'Missing profile data' });
+        return;
+    }
+
+    try {
+        await db.runTransaction(async (t) => {
+            const p1Ref = db.doc(`users/${p1.uid}/profiles/${p1.profileId}`);
+            const p2Ref = db.doc(`users/${p2.uid}/profiles/${p2.profileId}`);
+            
+            const p1Doc = await t.get(p1Ref);
+            const p2Doc = await t.get(p2Ref);
+            
+            if (!p1Doc.exists || !p2Doc.exists) throw new Error("Profile not found");
+            
+            const p1Data = p1Doc.data();
+            const p2Data = p2Doc.data();
+            
+            // Helper to deduct items
+            const deductItems = (data: any, itemsToDeduct: any[]) => {
+                let success = true;
+                const inventories = ['hotbar', 'backpack', 'leftActionBar', 'rightActionBar'];
+                const parsed = inventories.map(k => data[k] ? JSON.parse(data[k]) : []);
+                
+                for (const item of itemsToDeduct) {
+                    if (!item) continue;
+                    let remaining = item.count;
+                    for (const inv of parsed) {
+                        for (const slot of inv) {
+                            if (slot && slot.type === item.type) {
+                                const take = Math.min(slot.count, remaining);
+                                slot.count -= take;
+                                remaining -= take;
+                                if (slot.count <= 0) {
+                                    slot.type = 0; // or null, let's just make it null later
+                                }
+                            }
+                            if (remaining <= 0) break;
+                        }
+                        if (remaining <= 0) break;
+                    }
+                    if (remaining > 0) {
+                        success = false;
+                        break;
+                    }
+                }
+                
+                if (success) {
+                    inventories.forEach((k, i) => {
+                        const cleaned = parsed[i].map(s => (s && s.count > 0 && s.type !== 0) ? s : null);
+                        data[k] = JSON.stringify(cleaned);
+                    });
+                }
+                
+                return success;
+            };
+
+            // Helper to add items
+            const addItems = (data: any, itemsToAdd: any[]) => {
+                let success = true;
+                const inventories = ['hotbar', 'backpack', 'leftActionBar', 'rightActionBar'];
+                const parsed = inventories.map(k => data[k] ? JSON.parse(data[k]) : []);
+                
+                for (const item of itemsToAdd) {
+                    if (!item) continue;
+                    let remaining = item.count;
+                    // Try to stack first
+                    for (const inv of parsed) {
+                        for (const slot of inv) {
+                            if (slot && slot.type === item.type) {
+                                const space = 99 - slot.count;
+                                if (space > 0) {
+                                    const add = Math.min(space, remaining);
+                                    slot.count += add;
+                                    remaining -= add;
+                                }
+                            }
+                            if (remaining <= 0) break;
+                        }
+                        if (remaining <= 0) break;
+                    }
+                    // Try empty slots
+                    if (remaining > 0) {
+                        for (const inv of parsed) {
+                            for (let i=0; i<inv.length; i++) {
+                                if (!inv[i] || inv[i].type === 0 || inv[i].count <= 0) {
+                                    const add = Math.min(99, remaining);
+                                    inv[i] = { type: item.type, count: add };
+                                    remaining -= add;
+                                }
+                                if (remaining <= 0) break;
+                            }
+                            if (remaining <= 0) break;
+                        }
+                    }
+                    
+                    if (remaining > 0) {
+                        success = false;
+                        break;
+                    }
+                }
+                
+                if (success) {
+                    inventories.forEach((k, i) => {
+                        data[k] = JSON.stringify(parsed[i]);
+                    });
+                }
+                
+                return success;
+            };
+
+            if (!deductItems(p1Data, trade.p1Items)) throw new Error("P1 missing items");
+            if (!deductItems(p2Data, trade.p2Items)) throw new Error("P2 missing items");
+            
+            if (!addItems(p1Data, trade.p2Items)) throw new Error("P1 inventory full");
+            if (!addItems(p2Data, trade.p1Items)) throw new Error("P2 inventory full");
+
+            p1Data.updatedAt = Date.now();
+            p2Data.updatedAt = Date.now();
+            
+            t.update(p1Ref, p1Data);
+            t.update(p2Ref, p2Data);
+            
+            io.to(trade.p1).emit('trade_completed', { success: true, newProfile: p1Data });
+            io.to(trade.p2).emit('trade_completed', { success: true, newProfile: p2Data });
+        });
+    } catch (e: any) {
+        console.error("Trade transaction failed: ", e);
+        io.to(trade.p1).emit('trade_cancelled', { reason: e.message || 'Trade failed' });
+        io.to(trade.p2).emit('trade_cancelled', { reason: e.message || 'Trade failed' });
+    }
+}

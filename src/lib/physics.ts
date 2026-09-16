@@ -13,6 +13,7 @@ export interface PlayerState {
   health: number;
   maxHealth: number;
   invulnerableTimer: number;
+  isGrappling?: boolean;
 }
 
 const GRAVITY = 0.4;
@@ -70,7 +71,9 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
   if (Math.abs(player.vx) < 0.1) player.vx = 0;
 
   // Gravity
-  player.vy += GRAVITY;
+  if (!player.isGrappling) {
+    player.vy += GRAVITY;
+  }
   // Soft clamp fall speed so upward grapple momentum isn't broken
   if (player.vy > MAX_FALL_SPEED) {
       player.vy -= (player.vy - MAX_FALL_SPEED) * 0.1; 

@@ -73,7 +73,7 @@ export default function App() {
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(1);
   const [skillPoints, setSkillPoints] = useState(0);
-  const [skills, setSkills] = useState({ vitality: 0, speed: 0, strength: 0 });
+  const [skills, setSkills] = useState({ strength: 0, dexterity: 0, intelligence: 0 });
   
   interface Quest {
     id: string; title: string; description: string; goal: number; current: number; completed: boolean; rewardText: string; prerequisiteId?: string;
@@ -103,10 +103,10 @@ export default function App() {
     if (!isMagicUnlocked) return;
     
     const interval = setInterval(() => {
-       setMana(prev => Math.min(100 + ((skills.strength || 0) * 20), prev + 2));
+       setMana(prev => Math.min(100 + ((skills.intelligence || 0) * 20), prev + 2));
     }, 1000);
     return () => clearInterval(interval);
-  }, [appState, quests, skills.strength]);
+  }, [appState, quests, skills.intelligence]);
   
   useEffect(() => {
     if (appState === 'playing' && hotbar.length > 0) {
@@ -189,7 +189,7 @@ export default function App() {
                          xp: 0,
                          level: 1,
                          skillPoints: 0,
-                         skills: JSON.stringify({ vitality: 0, speed: 0, strength: 0 }),
+                         skills: JSON.stringify({ strength: 0, dexterity: 0, intelligence: 0 }),
                          updatedAt: Date.now()
              };
              await setDoc(doc(db, 'users', user.uid, 'profiles', newId), newProfile);
@@ -1484,7 +1484,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       setXp(0);
                       setLevel(1);
                       setSkillPoints(0);
-                      setSkills({ vitality: 0, speed: 0, strength: 0 });
+                      setSkills({ strength: 0, dexterity: 0, intelligence: 0 });
                       setQuests(defaultQuests);
                    }}
                    className="px-4 py-2 rounded-xl text-sm font-bold border border-emerald-500/30 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-800/40 transition-all flex items-center justify-center gap-1 w-full"
@@ -1541,14 +1541,6 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                         placeholder="Enter Nickname..."
                         maxLength={16}
                      />
-                     {activeProfileId && (
-                         <button
-                           onClick={saveProgress}
-                           className="bg-blue-600/20 hover:bg-blue-500/30 text-blue-400 border border-blue-500/30 rounded-2xl px-6 font-bold transition-all"
-                         >
-                           Save
-                         </button>
-                     )}
                   </div>
                 </div>
                 <div>
@@ -1570,6 +1562,14 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                      ))}
                   </div>
                 </div>
+                {activeProfileId && (
+                  <button
+                    onClick={saveProgress}
+                    className="mt-2 w-full py-4 bg-blue-600/20 hover:bg-blue-500/30 text-blue-400 border border-blue-500/30 rounded-2xl font-bold transition-all text-lg shadow-[0_0_15px_rgba(59,130,246,0.1)]"
+                  >
+                    Save Profile
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1747,6 +1747,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           nickname={nickname} 
           selectedBlock={selectedBlock} 
           roomId={serverName} 
+          userId={currentUser?.uid}
+          profileId={activeProfileId || undefined}
           isInventoryOpen={inventoryOpen || showInstructions || furnaceOpen || chestOpen || merchantOpen}
           onHealthChange={setHealth}
           skills={skills}
@@ -1754,6 +1756,22 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           onManaChange={setMana}
 
           onTradeRequest={(senderId, senderName) => addNotification('trade', senderId, senderName)}
+          onTradeStarted={(trade) => setActiveTrade(trade)}
+          onTradeUpdated={(trade) => setActiveTrade(trade)}
+          onTradeCompleted={(result) => {
+              setActiveTrade(null);
+              if (result.success && result.newProfile) {
+                 const np = result.newProfile;
+                 if (np.hotbar) setHotbar(JSON.parse(np.hotbar));
+                 if (np.backpack) setBackpack(JSON.parse(np.backpack));
+                 if (np.leftActionBar) setLeftActionBar(JSON.parse(np.leftActionBar));
+                 if (np.rightActionBar) setRightActionBar(JSON.parse(np.rightActionBar));
+              }
+          }}
+          onTradeCancelled={(reason) => {
+              setActiveTrade(null);
+              // Maybe add a toast/chat notification for the reason?
+          }}
           onGangInvite={(senderId, senderName) => addNotification('gang', senderId, senderName)}
           onFriendRequest={(senderId, senderName) => addNotification('friend', senderId, senderName)}
 
@@ -2115,10 +2133,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
            <div className="flex flex-col gap-1 mt-1">
              <div className="flex justify-between items-center px-1">
                 <span className="text-[10px] uppercase font-black text-red-400 tracking-wider flex items-center gap-1"><Heart size={10} className="fill-red-400" /> HP</span>
-                <span className="text-[10px] font-bold text-neutral-300">{health} / {20 + (skills.vitality || 0) * 10}</span>
+                <span className="text-[10px] font-bold text-neutral-300">{health} / {20 + (skills.strength || 0) * 10}</span>
              </div>
              <div className="w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-red-900/30">
-                <div className="h-full bg-gradient-to-r from-red-600 to-rose-400 transition-all duration-300 relative" style={{ width: `${(health / (20 + (skills.vitality || 0) * 10)) * 100}%` }}>
+                <div className="h-full bg-gradient-to-r from-red-600 to-rose-400 transition-all duration-300 relative" style={{ width: `${(health / (20 + (skills.strength || 0) * 10)) * 100}%` }}>
                    <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.2)_50%,transparent_100%)] w-full h-full animate-[shimmer_2s_infinite]"></div>
                 </div>
              </div>
@@ -2129,10 +2147,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              <div className="flex flex-col gap-1">
                <div className="flex justify-between items-center px-1">
                   <span className="text-[10px] uppercase font-black text-blue-400 tracking-wider flex items-center gap-1">MP</span>
-                  <span className="text-[10px] font-bold text-neutral-300">{mana} / {100 + (skills.strength || 0) * 20}</span>
+                  <span className="text-[10px] font-bold text-neutral-300">{mana} / {100 + (skills.intelligence || 0) * 20}</span>
                </div>
                <div className="w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-blue-900/30">
-                  <div className="h-full bg-gradient-to-r from-blue-700 to-cyan-400 transition-all duration-300 relative" style={{ width: `${(mana / (100 + (skills.strength || 0) * 20)) * 100}%` }}>
+                  <div className="h-full bg-gradient-to-r from-blue-700 to-cyan-400 transition-all duration-300 relative" style={{ width: `${(mana / (100 + (skills.intelligence || 0) * 20)) * 100}%` }}>
                      <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.2)_50%,transparent_100%)] w-full h-full animate-[shimmer_2s_infinite]"></div>
                   </div>
                </div>
@@ -2449,59 +2467,15 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                        <div className="w-full h-3 bg-neutral-900 rounded-full overflow-hidden mt-1 shadow-inner border border-neutral-700">
                            <div className="h-full bg-gradient-to-r from-amber-500 to-amber-300 rounded-full" style={{ width: `${Math.min(100, (xp / (level * 100)) * 100)}%` }} />
                        </div>
-                       <p className="text-neutral-400 text-sm mt-2">Available Skill Points: <span className="font-bold text-amber-300">{skillPoints}</span></p>
+                       <p className="text-neutral-400 text-sm mt-2">Available Stat Points: <span className="font-bold text-amber-300">{skillPoints}</span></p>
                    </div>
                    
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                        <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
                            <div className="flex justify-between items-start">
                                <div>
-                                   <h4 className="text-lg font-bold text-red-400 drop-shadow">Vitality</h4>
-                                   <p className="text-neutral-400 text-sm">Increases Max Health (+10 per point)</p>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.vitality}</span>
-                           </div>
-                           <button 
-                               onClick={() => {
-                                  if (skillPoints > 0) {
-                                     setSkillPoints(sp => sp - 1);
-                                     setSkills(s => ({ ...s, vitality: s.vitality + 1 }));
-                                  }
-                               }}
-                               disabled={skillPoints <= 0}
-                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
-                           >
-                               <Plus size={18} /> Upgrade (1 SP)
-                           </button>
-                       </div>
-                       
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-emerald-400 drop-shadow">Speed</h4>
-                                   <p className="text-neutral-400 text-sm">Increases Movement Speed</p>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.speed} / 10</span>
-                           </div>
-                           <button 
-                               onClick={() => {
-                                  if (skillPoints > 0 && skills.speed < 10) {
-                                     setSkillPoints(sp => sp - 1);
-                                     setSkills(s => ({ ...s, speed: s.speed + 1 }));
-                                  }
-                               }}
-                               disabled={skillPoints <= 0 || skills.speed >= 10}
-                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
-                           >
-                               <Plus size={18} /> Upgrade (1 SP)
-                           </button>
-                       </div>
-                       
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-blue-400 drop-shadow">Mana</h4>
-                                   <p className="text-neutral-400 text-sm">Increases Max Mana (+20 per point)</p>
+                                   <h4 className="text-lg font-bold text-red-400 drop-shadow">Strength</h4>
+                                   <p className="text-neutral-400 text-sm">Boosts melee damage and max health (+10)</p>
                                </div>
                                <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.strength || 0}</span>
                            </div>
@@ -2515,7 +2489,51 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                                disabled={skillPoints <= 0}
                                className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
                            >
-                               <Plus size={18} /> Upgrade (1 SP)
+                               <Plus size={18} /> Allocate (1 SP)
+                           </button>
+                       </div>
+                       
+                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
+                           <div className="flex justify-between items-start">
+                               <div>
+                                   <h4 className="text-lg font-bold text-emerald-400 drop-shadow">Dexterity</h4>
+                                   <p className="text-neutral-400 text-sm">Boosts ranged/grapple damage and speed</p>
+                               </div>
+                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.dexterity || 0} / 10</span>
+                           </div>
+                           <button 
+                               onClick={() => {
+                                  if (skillPoints > 0 && (skills.dexterity || 0) < 10) {
+                                     setSkillPoints(sp => sp - 1);
+                                     setSkills(s => ({ ...s, dexterity: (s.dexterity || 0) + 1 }));
+                                  }
+                               }}
+                               disabled={skillPoints <= 0 || (skills.dexterity || 0) >= 10}
+                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
+                           >
+                               <Plus size={18} /> Allocate (1 SP)
+                           </button>
+                       </div>
+                       
+                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
+                           <div className="flex justify-between items-start">
+                               <div>
+                                   <h4 className="text-lg font-bold text-blue-400 drop-shadow">Intelligence</h4>
+                                   <p className="text-neutral-400 text-sm">Boosts magic damage and max mana (+20)</p>
+                               </div>
+                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.intelligence || 0}</span>
+                           </div>
+                           <button 
+                               onClick={() => {
+                                  if (skillPoints > 0) {
+                                     setSkillPoints(sp => sp - 1);
+                                     setSkills(s => ({ ...s, intelligence: (s.intelligence || 0) + 1 }));
+                                  }
+                               }}
+                               disabled={skillPoints <= 0}
+                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
+                           >
+                               <Plus size={18} /> Allocate (1 SP)
                            </button>
                        </div>
                    </div>
