@@ -52,11 +52,19 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gradient-to-b from-blue-400 via-blue-500 to-emerald-600 font-sans">
       
+      
       {/* Sky & Clouds Background */}
       <div className="absolute inset-0 z-0">
+        {/* Sun */}
+        <motion.div
+          animate={{ scale: [1, 1.05, 1], rotate: [0, 360] }}
+          transition={{ scale: { repeat: Infinity, duration: 10, ease: "easeInOut" }, rotate: { repeat: Infinity, duration: 200, ease: "linear" } }}
+          className="absolute top-10 right-20 w-32 h-32 bg-yellow-300 rounded-full blur-[2px] shadow-[0_0_100px_40px_rgba(253,224,71,0.6)]"
+        />
+
         <motion.div 
           animate={{ x: ['-10%', '110%'] }} 
-          transition={{ repeat: Infinity, duration: 40, ease: "linear" }}
+          transition={{ repeat: Infinity, duration: 8, ease: "linear" }}
           className="absolute top-20 left-0 text-white/40"
         >
           <Cloud size={120} />
@@ -64,18 +72,26 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
         
         <motion.div 
           animate={{ x: ['-20%', '120%'] }} 
-          transition={{ repeat: Infinity, duration: 60, ease: "linear", delay: 10 }}
+          transition={{ repeat: Infinity, duration: 12, ease: "linear", delay: 10 }}
           className="absolute top-40 left-0 text-white/30"
         >
           <Cloud size={180} />
         </motion.div>
-
         <motion.div 
           animate={{ x: ['-15%', '115%'] }} 
-          transition={{ repeat: Infinity, duration: 50, ease: "linear", delay: 25 }}
+          transition={{ repeat: Infinity, duration: 10, ease: "linear", delay: 25 }}
           className="absolute top-10 left-0 text-white/50"
         >
           <Cloud size={90} />
+        </motion.div>
+        
+        {/* Additional slow moving clouds */}
+        <motion.div 
+          animate={{ x: ['-30%', '130%'] }} 
+          transition={{ repeat: Infinity, duration: 16, ease: "linear", delay: 5 }}
+          className="absolute top-32 left-0 text-white/20"
+        >
+          <Cloud size={200} />
         </motion.div>
       </div>
 

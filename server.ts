@@ -29,6 +29,36 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
+  app.post('/api/servers/:id/reset', async (req, res) => {
+    const roomId = req.params.id;
+    if (activeRooms[roomId]) {
+      // Regenerate the world
+      activeRooms[roomId].world = generateWorld(roomId);
+      activeRooms[roomId].mobs = {};
+      activeRooms[roomId].items = {};
+      activeRooms[roomId].chests = {};
+      
+      // Delete all saved chests for this room in Firestore
+      try {
+        const chestsRef = db.collection('rooms').doc(roomId).collection('chests');
+        const snapshot = await chestsRef.get();
+        const batch = db.batch();
+        snapshot.docs.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+      } catch (e) {
+        console.error("Failed to delete room chests in firestore:", e);
+      }
+      
+      io.to(roomId).emit('chat_message', { sender: 'System', text: 'The world has been reset by an admin!' });
+      io.to(roomId).emit('world_wiped', { world: activeRooms[roomId].world });
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'Room not found or not active.' });
+    }
+  });
+
   app.get('/api/servers', (req, res) => {
     const servers = [];
     for (const roomId in activeRooms) {
@@ -42,7 +72,7 @@ async function startServer() {
   });
 
   // --- Admin Endpoints ---
-  app.post('/api/admin/wipe', (req, res) => {
+  app.post('/api/admin/wipe', async (req, res) => {
     const { email, roomId } = req.body;
     if (email !== 'ewilliamhe@gmail.com' && email !== 'zudran@gmail.com') return res.status(403).json({error: "Unauthorized"});
     
@@ -53,9 +83,21 @@ async function startServer() {
       activeRooms[targetRoom].items = {};
       activeRooms[targetRoom].mobs = {};
       
-      // Notify all players in that room
+      try {
+        const chestsRef = db.collection('rooms').doc(targetRoom).collection('chests');
+        const snapshot = await chestsRef.get();
+        const batch = db.batch();
+        snapshot.docs.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+      } catch (e) {
+        console.error("Failed to delete room chests in firestore:", e);
+      }
+      
       io.to(targetRoom).emit('world_wiped', { world: activeRooms[targetRoom].world });
-      res.json({ success: true, message: `World ${targetRoom} wiped successfully.` });
+      io.to(targetRoom).emit('chat_message', { sender: 'System', message: 'The world has been reset by an admin!' });
+      res.json({ success: true });
     } else {
       res.status(404).json({error: "Room not found"});
     }
@@ -89,6 +131,68 @@ async function startServer() {
 
   // --- Multiplayer Game State ---
   // Store worlds by room ID
+  
+function triggerExplosion(room: any, roomId: string, cx: number, cy: number, radius: number, damage: number) {
+    let worldUpdated = false;
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+            if (dx * dx + dy * dy <= radius * radius) {
+                const tx = cx + dx;
+                const ty = cy + dy;
+                if (room.world[tx] && room.world[tx][ty] !== undefined && room.world[tx][ty] !== 0 && room.world[tx][ty] !== 21) {
+                    // 21 is AdminBrick
+                    const blockType = room.world[tx][ty];
+                    room.world[tx][ty] = 0; // Air
+                    worldUpdated = true;
+                    // Send to client
+                    io.to(roomId).emit('world_updated', { tx, ty, blockType: 0 });
+                    
+                    // Spawn dropped item
+                    const id = 'item_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+                    room.items[id] = {
+                        id,
+                        type: blockType,
+                        x: tx * 32 + 16 + (Math.random() - 0.5) * 16,
+                        y: ty * 32 + 16 + (Math.random() - 0.5) * 16,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: -4 - Math.random() * 4
+                    };
+
+                    // Chain reaction for TNT
+                    if (blockType === 34) {
+                        setTimeout(() => triggerExplosion(room, roomId, tx, ty, 4, 30), 200);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Damage mobs
+    const expPx = cx * 32 + 16;
+    const expPy = cy * 32 + 16;
+    const pxRadius = radius * 32;
+    for (const mId in room.mobs) {
+        const m = room.mobs[mId];
+        const dist = Math.sqrt(Math.pow(m.x + 16 - expPx, 2) + Math.pow(m.y + 16 - expPy, 2));
+        if (dist <= pxRadius) {
+            m.hp -= damage;
+            m.vy = -10;
+            m.vx = m.x > expPx ? 10 : -10;
+        }
+    }
+    
+    // Damage players
+    for (const pId in room.players) {
+        const p = room.players[pId];
+        const dist = Math.sqrt(Math.pow(p.x + 16 - expPx, 2) + Math.pow(p.y + 16 - expPy, 2));
+        if (dist <= pxRadius) {
+            // we could emit damage event to player
+            io.to(pId).emit('damage_indicator', { id: Math.random().toString(), x: p.x, y: p.y, damage });
+            io.to(pId).emit('take_damage', { damage, vx: p.x > expPx ? 15 : -15, vy: -10 });
+        }
+    }
+}
+
   const activeRooms: Record<string, {
     world: World;
     players: Record<string, any>;
@@ -96,6 +200,10 @@ async function startServer() {
     items: Record<string, any>;
     chests: Record<string, any[]>;
     createdAt: number;
+    gangs: Record<string, any>;
+    trades: Record<string, any>;
+    projectiles: Record<string, any>;
+    timeOfDay: number;
   }> = {
     'public-lobby': {
       world: generateWorld('public-lobby'),
@@ -103,7 +211,11 @@ async function startServer() {
       mobs: {},
       items: {},
       chests: {},
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      gangs: {},
+      trades: {},
+      projectiles: {},
+      timeOfDay: 0
     }
   };
 
@@ -113,6 +225,110 @@ async function startServer() {
       let mobsUpdated = false;
       let itemsUpdated = false;
       
+      
+      // Projectiles
+      for (const pId in room.projectiles) {
+         const p = room.projectiles[pId];
+         p.x += p.vx;
+         p.y += p.vy;
+         
+         if (p.type === 'grenade') p.vy += 0.5; // gravity for grenade
+         else if (p.type !== 'fireball') p.vy += 0.1; // slight gravity for arrows/bullets, magic has none
+         
+         p.life--;
+         
+         const tx = Math.floor((p.x + (p.type === 'grenade' ? 8 : 4)) / 32);
+         const ty = Math.floor((p.y + (p.type === 'grenade' ? 8 : 4)) / 32);
+         
+         // Collision with blocks
+         if (room.world[tx] && room.world[tx][ty] && room.world[tx][ty] !== 0 && room.world[tx][ty] !== 31 && room.world[tx][ty] !== 32) {
+             if (p.type === 'grenade' || p.type === 'rocket') {
+                 triggerExplosion(room, roomId, tx, ty, 3, 20);
+             }
+             delete room.projectiles[pId];
+             continue;
+         }
+         
+         // Collision with mobs
+         let hitMob = false;
+         for (const mId in room.mobs) {
+             const m = room.mobs[mId];
+             if (p.x >= m.x - 10 && p.x <= m.x + 32 && p.y >= m.y - 10 && p.y <= m.y + 32) {
+                 if (p.type === 'grenade') {
+                     triggerExplosion(room, roomId, tx, ty, 3, 20);
+                 } else {
+                     m.hp -= p.damage || 5;
+                     m.vy = -5;
+                     m.vx = p.vx > 0 ? 5 : -5;
+                 }
+                 hitMob = true;
+                 break;
+             }
+         }
+         
+         if (hitMob || p.life <= 0) {
+             if (p.life <= 0 && p.type === 'grenade') {
+                 triggerExplosion(room, roomId, tx, ty, 3, 20);
+             }
+             delete room.projectiles[pId];
+         }
+      }
+
+      // Redstone & Logic
+      const powered = new Set<string>();
+      const toCheck: {x: number, y: number}[] = [];
+      
+      // Find pressure plates being stepped on
+      for (const pId in room.players) {
+          const p = room.players[pId];
+          const px = Math.floor((p.x + 12) / 32);
+          const py = Math.floor((p.y + 12) / 32);
+          const py2 = Math.floor((p.y + 32) / 32);
+          
+          if (room.world[px]) {
+              if (room.world[px][py] === 32) {
+                  const key = px + ',' + py;
+                  if (!powered.has(key)) { powered.add(key); toCheck.push({x: px, y: py}); }
+              }
+              if (room.world[px][py2] === 32) {
+                  const key = px + ',' + py2;
+                  if (!powered.has(key)) { powered.add(key); toCheck.push({x: px, y: py2}); }
+              }
+          }
+      }
+      
+      // BFS for wire
+      let iters = 0;
+      while (toCheck.length > 0 && iters < 1000) {
+          iters++;
+          const curr = toCheck.shift()!;
+          const neighbors = [
+              {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
+              {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
+          ];
+          for (const n of neighbors) {
+              const key = n.x + ',' + n.y;
+              if (!powered.has(key) && room.world[n.x]) {
+                  const block = room.world[n.x][n.y];
+                  if (block === 31 || block === 29 || block === 33 || block === 34) { // Wire, Door, DoorOpen, TNT
+                      powered.add(key);
+                      if (block === 31) toCheck.push({x: n.x, y: n.y}); // only propagate through wire
+                      
+                      if (block === 29) {
+                          room.world[n.x][n.y] = 33;
+                          io.to(roomId).emit('world_updated', { tx: n.x, ty: n.y, blockType: 33 });
+                      } else if (block === 34) {
+                          // Ignite TNT
+                          triggerExplosion(room, roomId, n.x, n.y, 4, 30);
+                      }
+                  }
+              }
+          }
+      }
+      
+      // Broadcast projectiles
+      io.to(roomId).emit('projectiles_update', room.projectiles);
+
       // Update items
       for (const itemId in room.items) {
         const item = room.items[itemId];
@@ -124,11 +340,19 @@ async function startServer() {
         const tx = Math.floor((item.x + 8) / 32);
         const ty = Math.floor((item.y + 16) / 32);
         
+        
         if (room.world[tx] && room.world[tx][ty] && room.world[tx][ty] !== 0) {
-          item.vy = 0;
-          item.vx = 0;
-          item.y = ty * 32 - 16 - 0.01;
+          // Bounce slightly if falling fast
+          if (item.vy > 2) {
+             item.vy = -item.vy * 0.4;
+             item.y = ty * 32 - 16 - 0.01;
+          } else {
+             item.vy = 0;
+             item.vx = 0;
+             item.y = ty * 32 - 16 - 0.01;
+          }
         }
+
         itemsUpdated = true;
       }
       
@@ -139,14 +363,90 @@ async function startServer() {
       // Update mobs
       for (const mobId in room.mobs) {
         const mob = room.mobs[mobId];
+        
         if (mob.hp <= 0) {
+          // Drop items based on mob type
+          let dropType = 0;
+          let dropAmount = 1;
+          if (mob.type === 'skeleton') {
+              dropType = Math.random() > 0.5 ? 403 : 107; // 403 = Bone, 107 = Arrow
+              dropAmount = Math.floor(Math.random() * 3) + 1;
+          } else if (mob.type === 'creeper') {
+              dropType = 402; // Gunpowder
+              dropAmount = Math.floor(Math.random() * 2) + 1;
+          } else if (mob.type === 'zombie') {
+              dropType = 1; // Dirt (placeholder for rotten flesh)
+          } else if (mob.type === 'golem_boss') {
+              dropType = 405; // Boss Relic
+              dropAmount = 1;
+              io.to(roomId).emit('chat_message', { sender: 'DUREL', text: 'THE CHAMPION HAS SLAIN A MIGHTY BOSS!!!' });
+          }
+
+          io.to(roomId).emit('mob_killed', { mobId: mob.id, type: mob.type, killerId: mob.lastHitBy });
+          if (dropType !== 0) {
+              for(let i = 0; i < dropAmount; i++) {
+                 const id = 'item_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+                 room.items[id] = { 
+                     id, 
+                     type: dropType, 
+                     x: mob.x + Math.random() * 16 - 8, 
+                     y: mob.y + Math.random() * 16 - 8, 
+                     vx: (Math.random() - 0.5) * 4, 
+                     vy: -3 - Math.random() * 3 
+                 };
+                 itemsUpdated = true;
+              }
+          }
+          
           delete room.mobs[mobId];
           mobsUpdated = true;
           continue;
         }
 
-        // Normal AI Movement or Knockback
-        if (Math.abs(mob.vx) > 3) {
+
+// Normal AI Movement or Knockback
+        if (mob.ownerId) {
+            // Pet AI
+            const owner = room.players[mob.ownerId];
+            if (owner) {
+                const distToOwner = Math.sqrt(Math.pow(mob.x - owner.x, 2) + Math.pow(mob.y - owner.y, 2));
+                
+                // Find nearest hostile mob
+                let targetMob = null;
+                let closestDist = 200; // Attack range
+                for (const tmId in room.mobs) {
+                    const tm = room.mobs[tmId];
+                    if (tmId !== mobId && !tm.ownerId) {
+                        const dist = Math.sqrt(Math.pow(mob.x - tm.x, 2) + Math.pow(mob.y - tm.y, 2));
+                        if (dist < closestDist) {
+                            closestDist = dist;
+                            targetMob = tm;
+                        }
+                    }
+                }
+
+                if (targetMob) {
+                    // Attack target
+                    if (closestDist < 40) {
+                       targetMob.hp -= 2;
+                       targetMob.vx = mob.x < targetMob.x ? 5 : -5;
+                       targetMob.vy = -3;
+                       mob.vx = mob.x < targetMob.x ? 1 : -1;
+                    } else {
+                       mob.vx = mob.x < targetMob.x ? 4 : -4;
+                    }
+                    mob.facingRight = mob.vx > 0;
+                } else if (distToOwner > 60) {
+                    // Follow owner
+                    mob.vx = mob.x < owner.x ? 4 : -4;
+                    mob.facingRight = mob.vx > 0;
+                } else {
+                    mob.vx *= 0.5;
+                }
+            } else {
+               mob.vx = 0; // owner offline
+            }
+        } else if (Math.abs(mob.vx) > 3) {
           mob.vx *= 0.8; // friction if knocked back
         } else {
           mob.vx = mob.facingRight ? 2 : -2;
@@ -188,26 +488,37 @@ async function startServer() {
       }
       
       // Spawn new mobs occasionally
-      if (Object.keys(room.mobs).length < 5 && Math.random() < 0.05) {
-        const spawnX = Math.floor(room.world.length / 2) + Math.floor((Math.random() - 0.5) * 40);
+      if (Object.keys(room.mobs).length < 15 && Math.random() < 0.20) {
+        let spawnX = Math.floor(room.world.length / 2) + Math.floor((Math.random() - 0.5) * 40);
         let spawnY = 0;
-        while (spawnY < room.world[0].length && room.world[spawnX][spawnY] === 0) {
-          spawnY++;
+        
+        // 5% chance to try spawning a boss in the deep underground
+        const isBossSpawn = Math.random() < 0.15;
+        let type = 'slime';
+        
+        if (isBossSpawn) {
+           spawnX = Math.floor(Math.random() * room.world.length);
+           spawnY = room.world[0].length - Math.floor(Math.random() * 40) - 10; // Deep underground
+           type = 'golem_boss';
+        } else {
+           while (spawnY < room.world[0].length && room.world[spawnX][spawnY] === 0) {
+             spawnY++;
+           }
+           const elapsedMs = Date.now() - room.createdAt;
+           const timeOfDay = (0.35 + elapsedMs * 0.000005) % 1.0;
+           const isNight = timeOfDay < 0.1 || timeOfDay > 0.9;
+           const typesNight = ['skeleton', 'creeper', 'zombie'];
+           type = isNight ? typesNight[Math.floor(Math.random() * typesNight.length)] : 'slime';
         }
-        
-        const elapsedMs = Date.now() - room.createdAt;
-        const timeOfDay = (0.35 + elapsedMs * 0.00001) % 1.0;
-        const isNight = timeOfDay < 0.2 || timeOfDay > 0.8;
-        
-        const type = isNight ? 'zombie' : 'slime';
         
         const mobId = 'mob_' + Date.now() + Math.floor(Math.random()*1000);
         room.mobs[mobId] = {
           id: mobId,
           type: type,
           x: spawnX * 32,
-          y: (spawnY - 2) * 32,
-          vx: 0, vy: 0, hp: 10, facingRight: Math.random() > 0.5
+          y: (spawnY - (type === 'golem_boss' ? 4 : 2)) * 32,
+          vx: 0, vy: 0, hp: type === 'golem_boss' ? 300 : 10, 
+          facingRight: Math.random() > 0.5
         };
         mobsUpdated = true;
       }
@@ -221,7 +532,7 @@ async function startServer() {
   io.on('connection', (socket) => {
     let currentRoom: string | null = null;
 
-    socket.on('join_room', (roomId: string) => {
+    socket.on('join_room', (data: { roomId: string, nickname?: string } | string) => { const roomId = typeof data === 'string' ? data : data.roomId; const nickname = typeof data === 'string' ? 'Player' : (data.nickname || 'Player');
       // Leave previous room if any
       if (currentRoom) {
         socket.leave(currentRoom);
@@ -242,7 +553,11 @@ async function startServer() {
           mobs: {},
           items: {},
           chests: {},
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          gangs: {},
+          trades: {},
+          projectiles: {},
+          timeOfDay: 0
         };
       }
 
@@ -261,7 +576,7 @@ async function startServer() {
       const startY = (spawnY - 2) * 32;
 
       // Add player to room
-      activeRooms[roomId].players[socket.id] = { id: socket.id, x: startX, y: startY, facingRight: true, vx: 0, vy: 0 };
+      activeRooms[roomId].players[socket.id] = { id: socket.id, name: nickname, x: startX, y: startY, facingRight: true, vx: 0, vy: 0 };
 
       // Send the entire current world and player list to the new user
       socket.emit('init_world', {
@@ -277,11 +592,35 @@ async function startServer() {
       socket.to(roomId).emit('player_joined', activeRooms[roomId].players[socket.id]);
     });
 
-    socket.on('open_chest', (data: { tx: number, ty: number }) => {
+socket.on('open_chest', async (data: { tx: number, ty: number }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
       const chestKey = `${data.tx}_${data.ty}`;
       if (!activeRooms[currentRoom].chests[chestKey]) {
-        activeRooms[currentRoom].chests[chestKey] = Array(27).fill(null);
+        try {
+          const chestDoc = await db.collection('rooms').doc(currentRoom).collection('chests').doc(chestKey).get();
+          if (chestDoc.exists) {
+            activeRooms[currentRoom].chests[chestKey] = JSON.parse(chestDoc.data()?.inventory || "[]");
+          } else {
+            // Generate random loot for wild chest
+            const inv = Array(27).fill(null);
+            const numItems = Math.floor(Math.random() * 5) + 2; // 2 to 6 items
+            const possibleLoot = [202, 304, 303, 18, 19, 20]; // Apple, Grenade, Bullet, Coal, Iron, Diamond
+            for (let i = 0; i < numItems; i++) {
+                const idx = Math.floor(Math.random() * 27);
+                const type = possibleLoot[Math.floor(Math.random() * possibleLoot.length)];
+                const count = Math.floor(Math.random() * 5) + 1;
+                inv[idx] = { type, count };
+            }
+            activeRooms[currentRoom].chests[chestKey] = inv;
+            // Save initial generated chest
+            db.collection('rooms').doc(currentRoom).collection('chests').doc(chestKey).set({
+                inventory: JSON.stringify(inv),
+                updatedAt: Date.now()
+            }).catch(console.error);
+          }
+        } catch (e) {
+          activeRooms[currentRoom].chests[chestKey] = Array(27).fill(null);
+        }
       }
       socket.emit('chest_data', { tx: data.tx, ty: data.ty, inventory: activeRooms[currentRoom].chests[chestKey] });
     });
@@ -291,6 +630,10 @@ async function startServer() {
       const chestKey = `${data.tx}_${data.ty}`;
       activeRooms[currentRoom].chests[chestKey] = data.inventory;
       socket.to(currentRoom).emit('chest_updated', { tx: data.tx, ty: data.ty, inventory: data.inventory });
+      db.collection('rooms').doc(currentRoom).collection('chests').doc(chestKey).set({
+        inventory: JSON.stringify(data.inventory),
+        updatedAt: Date.now()
+      }).catch(console.error);
     });
 
     socket.on('spawn_item', (data: { type: number, x: number, y: number, vx?: number, vy?: number }) => {
@@ -309,13 +652,95 @@ async function startServer() {
       }
     });
 
-    socket.on('chat_message', (message: string) => {
-      if (currentRoom) {
-        io.to(currentRoom).emit('chat_message', { id: socket.id, message });
+    
+    
+socket.on('chat_message', (message: string) => {
+      if (!currentRoom) return;
+      const room = activeRooms[currentRoom];
+      const player = room?.players[socket.id];
+      if (!player) return;
+
+      if (message.startsWith('/give ')) {
+        const parts = message.split(' ');
+        if (parts.length >= 2) {
+           const typeStr = parts[1];
+           let typeId = parseInt(typeStr);
+           const count = parts[2] ? parseInt(parts[2]) : 1;
+           if (!isNaN(typeId)) {
+               // Give item directly to player by spawning it exactly on top of them (fastest way to give without a complex direct inventory packet)
+               const itemId = 'item_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+               activeRooms[currentRoom].items[itemId] = {
+                   id: itemId, type: typeId, count: count, x: player.x, y: player.y, vx: 0, vy: -5
+               };
+               socket.emit('chat_message', { id: 'system', name: 'System', message: `Spawned item ${typeId} x${count}.` });
+           }
+        }
+        return;
+      }
+      
+      if (message.startsWith('/spawn')) {
+         socket.emit('teleport', { x: 4000, y: 1000 }); // Will teleport player and let physics drop them to spawn
+         socket.emit('chat_message', { id: 'system', name: 'System', message: `Teleported to spawn.` });
+         return;
+      }
+
+      if (message.startsWith('/w ') || message.startsWith('/whisper ')) {
+        const parts = message.split(' ');
+        if (parts.length >= 3) {
+           const targetName = parts[1].toLowerCase();
+           const whisperMsg = parts.slice(2).join(' ');
+           
+           let targetSocketId = null;
+           let actualTargetName = '';
+           
+           // Search all rooms to allow cross-server whispers!
+           for (const rId in activeRooms) {
+               for (const p of Object.values(activeRooms[rId].players)) {
+                  if (p.name.toLowerCase() === targetName) {
+                     targetSocketId = p.id;
+                     actualTargetName = p.name;
+                     break;
+                  }
+               }
+               if (targetSocketId) break;
+           }
+
+           if (targetSocketId) {
+              io.to(targetSocketId).emit('chat_message', { id: socket.id, name: player.name, message: `(Whisper from ${player.name}): ${whisperMsg}` });
+              socket.emit('chat_message', { id: socket.id, name: player.name, message: `(Whisper to ${actualTargetName}): ${whisperMsg}` });
+           } else {
+              socket.emit('chat_message', { id: 'system', name: 'System', message: `Player ${parts[1]} not found or offline.` });
+           }
+        }
+      } else {
+        io.to(currentRoom).emit('chat_message', { id: socket.id, name: player.name, message });
       }
     });
 
-    socket.on('player_update', (data: {x: number, y: number, vx: number, vy: number, facingRight: boolean, tool?: number | null, isMining?: boolean}) => {
+
+
+    
+    socket.on('drop_item', (data: { type: number, count: number, facingRight: boolean }) => {
+      if (!currentRoom || !activeRooms[currentRoom]) return;
+      const player = activeRooms[currentRoom].players[socket.id];
+      if (!player) return;
+      
+      const itemId = 'item_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+      const tossVx = data.facingRight ? 10 : -10;
+      activeRooms[currentRoom].items[itemId] = {
+        id: itemId,
+        type: data.type,
+        count: data.count,
+        x: player.x + (data.facingRight ? 32 : -16),
+        y: player.y - 16, // Throw from chest height
+        vx: tossVx,
+        vy: -8 // toss up a bit
+      };
+      io.to(currentRoom).emit('world_state', activeRooms[currentRoom]);
+    });
+
+    socket.on('player_update',
+ (data: {x: number, y: number, vx: number, vy: number, facingRight: boolean, tool?: number | null, isMining?: boolean, skin?: string, name?: string, helmet?: number | null, chest?: number | null}) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
       
       const player = activeRooms[currentRoom].players[socket.id];
@@ -326,7 +751,15 @@ async function startServer() {
         player.vy = data.vy;
         player.facingRight = data.facingRight;
         if (data.tool !== undefined) player.tool = data.tool;
-        if (data.isMining !== undefined) player.isMining = data.isMining;
+        if (data.isMining !== undefined) 
+        player.isMining = data.isMining;
+        
+        if (data.skin) player.skin = data.skin;
+        if (data.name) player.name = data.name;
+        player.helmet = data.helmet;
+        player.chest = data.chest;
+
+
         
         // Broadcast to everyone else
         socket.to(currentRoom).emit('player_moved', { id: socket.id, ...data });
@@ -344,7 +777,45 @@ async function startServer() {
       }
     });
 
-    socket.on('hit_mob', (data: { mobId: string, damage: number, facingRight: boolean }) => {
+    
+    socket.on('fire_projectile', (data: { type: string, x: number, y: number, vx: number, vy: number }) => {
+        if (currentRoom && activeRooms[currentRoom]) {
+            const room = activeRooms[currentRoom];
+            const pId = 'proj_' + Math.random().toString(36).substr(2, 9);
+            room.projectiles[pId] = {
+                id: pId,
+                ownerId: socket.id,
+                type: data.type,
+                x: data.x,
+                y: data.y,
+                vx: data.vx,
+                vy: data.vy,
+                life: data.type === 'grenade' ? 60 : (data.type === 'fireball' ? 80 : 40),
+                damage: data.type === 'bullet' ? 15 : (data.type === 'arrow' ? 8 : (data.type === 'fireball' ? 30 : 0))
+            };
+        }
+    });
+
+
+    socket.on('hit_player', (data: { targetId: string, damage: number, facingRight: boolean }) => {
+      if (currentRoom && activeRooms[currentRoom]) {
+        const room = activeRooms[currentRoom];
+        const targetPlayer = room.players[data.targetId];
+        if (targetPlayer) {
+            // Apply damage locally on their client
+            io.to(data.targetId).emit('take_damage', { amount: data.damage || 5, facingRight: data.facingRight });
+            // Emit damage indicator
+            io.to(currentRoom).emit('damage_indicator', {
+                id: Math.random().toString(),
+                x: targetPlayer.x,
+                y: targetPlayer.y,
+                damage: data.damage || 5
+            });
+        }
+      }
+    });
+
+    socket.on('hit_mob', (data: { mobId: string, damage: number, facingRight: boolean, playerId?: string }) => {
       if (currentRoom && activeRooms[currentRoom]) {
         const room = activeRooms[currentRoom];
         const primaryMob = room.mobs[data.mobId];
@@ -359,8 +830,9 @@ async function startServer() {
             if (dist <= splashRadius) {
               m.hp -= (data.damage || 1);
               m.vy = -6;
-              // knockback away from hit center, or default to facing direction if exact same spot
-              m.vx = (m.x > hitX) ? 8 : (m.x < hitX) ? -8 : (data.facingRight ? 8 : -8); 
+              m.vx = data.facingRight ? 8 : -8;
+              m.vx = (m.x > hitX) ? 8 : (m.x < hitX) ? -8 : (data.facingRight ? 8 : -8);
+              m.lastHitBy = data.playerId; 
               
               // Emit damage indicator
               io.to(currentRoom).emit('damage_indicator', { 
@@ -373,6 +845,140 @@ async function startServer() {
           }
         }
       }
+    });
+
+    
+    socket.on('send_trade_request', (data: { targetId: string }) => {
+       if (currentRoom && activeRooms[currentRoom].players[data.targetId]) {
+           const senderName = activeRooms[currentRoom].players[socket.id]?.name || 'Player';
+           io.to(data.targetId).emit('trade_request', { senderId: socket.id, senderName });
+       }
+    });
+    
+    socket.on('send_gang_invite', (data: { targetId: string }) => {
+       if (currentRoom && activeRooms[currentRoom].players[data.targetId]) {
+           const senderName = activeRooms[currentRoom].players[socket.id]?.name || 'Player';
+           io.to(data.targetId).emit('gang_invite', { senderId: socket.id, senderName });
+       }
+    });
+    
+
+    socket.on('send_duel_request', (data: { targetId: string }) => {
+       if (currentRoom && activeRooms[currentRoom].players[data.targetId]) {
+           const senderName = activeRooms[currentRoom].players[socket.id]?.name || 'Player';
+           io.to(data.targetId).emit('duel_request', { senderId: socket.id, senderName });
+       }
+    });
+    socket.on('accept_duel', (data: { senderId: string }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const room = activeRooms[currentRoom];
+           if (room.players[data.senderId] && room.players[socket.id]) {
+               // Initiate Duel (Turn on PvP for both towards each other)
+               io.to(data.senderId).emit('duel_started', { opponentId: socket.id, opponentName: room.players[socket.id].name });
+               io.to(socket.id).emit('duel_started', { opponentId: data.senderId, opponentName: room.players[data.senderId].name });
+           }
+       }
+    });
+
+    socket.on('send_friend_request', (data: { targetId: string }) => {
+       if (currentRoom && activeRooms[currentRoom].players[data.targetId]) {
+           const senderName = activeRooms[currentRoom].players[socket.id]?.name || 'Player';
+           io.to(data.targetId).emit('friend_request', { senderId: socket.id, senderName });
+       }
+    });
+
+    socket.on('accept_gang_invite', (data: { senderId: string }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const room = activeRooms[currentRoom];
+           if (room.players[data.senderId] && room.players[socket.id]) {
+               let gangId = room.players[data.senderId].gangId;
+               if (!gangId) {
+                   gangId = "gang_" + data.senderId;
+                   room.players[data.senderId].gangId = gangId;
+                   room.gangs[gangId] = { id: gangId, members: [data.senderId] };
+               }
+               
+               if (!room.gangs[gangId].members.includes(socket.id)) {
+                   room.gangs[gangId].members.push(socket.id);
+               }
+               room.players[socket.id].gangId = gangId;
+               
+               // Broadcast gang update to members
+               room.gangs[gangId].members.forEach(memberId => {
+                   io.to(memberId).emit('gang_update', room.gangs[gangId]);
+               });
+           }
+       }
+    });
+
+    socket.on('accept_trade_request', (data: { senderId: string }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const room = activeRooms[currentRoom];
+           if (room.players[data.senderId] && room.players[socket.id]) {
+               const tradeId = "trade_" + data.senderId + "_" + socket.id;
+               room.trades[tradeId] = {
+                   id: tradeId,
+                   p1: data.senderId,
+                   p2: socket.id,
+                   p1Items: Array(9).fill(null),
+                   p2Items: Array(9).fill(null),
+                   p1Confirm: false,
+                   p2Confirm: false
+               };
+               io.to(data.senderId).emit('trade_started', { tradeId, peerId: socket.id, peerName: room.players[socket.id].name, role: 'p1' });
+               io.to(socket.id).emit('trade_started', { tradeId, peerId: data.senderId, peerName: room.players[data.senderId].name, role: 'p2' });
+           }
+       }
+    });
+    
+    socket.on('update_trade_item', (data: { tradeId: string, role: 'p1'|'p2', index: number, item: any }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const trade = activeRooms[currentRoom].trades[data.tradeId];
+           if (trade) {
+               if (data.role === 'p1') {
+                   trade.p1Items[data.index] = data.item;
+                   trade.p1Confirm = false;
+                   trade.p2Confirm = false;
+               } else {
+                   trade.p2Items[data.index] = data.item;
+                   trade.p1Confirm = false;
+                   trade.p2Confirm = false;
+               }
+               io.to(trade.p1).emit('trade_updated', trade);
+               io.to(trade.p2).emit('trade_updated', trade);
+           }
+       }
+    });
+
+    socket.on('toggle_trade_confirm', (data: { tradeId: string, role: 'p1'|'p2' }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const trade = activeRooms[currentRoom].trades[data.tradeId];
+           if (trade) {
+               if (data.role === 'p1') trade.p1Confirm = !trade.p1Confirm;
+               else trade.p2Confirm = !trade.p2Confirm;
+               
+               if (trade.p1Confirm && trade.p2Confirm) {
+                   // Complete trade
+                   io.to(trade.p1).emit('trade_completed', { itemsReceived: trade.p2Items });
+                   io.to(trade.p2).emit('trade_completed', { itemsReceived: trade.p1Items });
+                   delete activeRooms[currentRoom].trades[data.tradeId];
+               } else {
+                   io.to(trade.p1).emit('trade_updated', trade);
+                   io.to(trade.p2).emit('trade_updated', trade);
+               }
+           }
+       }
+    });
+    
+    socket.on('cancel_trade', (data: { tradeId: string }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const trade = activeRooms[currentRoom].trades[data.tradeId];
+           if (trade) {
+               io.to(trade.p1).emit('trade_cancelled', { returnedItems: trade.p1Items });
+               io.to(trade.p2).emit('trade_cancelled', { returnedItems: trade.p2Items });
+               delete activeRooms[currentRoom].trades[data.tradeId];
+           }
+       }
     });
 
     socket.on('disconnect', () => {

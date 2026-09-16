@@ -1,6 +1,8 @@
 {
   "name": "Lange: Origins",
-  "description": "A relaxing 2D sandbox game with mining, building, and exploration.",
+  "description": "A 2D multiplayer sandbox survival game featuring gangs, trading, hostile mobs, and redstone mechanics.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

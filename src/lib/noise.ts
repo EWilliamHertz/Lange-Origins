@@ -15,7 +15,7 @@ export class Simple1DNoise {
     };
 
     for (let i = 0; i < this.MAX_VERTICES; i++) {
-      this.vertices.push(random());
+      this.vertices.push(random() * 2 - 1);
     }
   }
 

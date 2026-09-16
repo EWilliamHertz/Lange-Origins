@@ -26,7 +26,10 @@ export function generateWorld(roomId: string = 'default'): World {
   const world: World = [];
   const noise = new Simple1DNoise(seedBase); // Main elevation
   const noise2 = new Simple1DNoise(seedBase + 1234); // Detail
+  
   const moistureNoise = new Simple1DNoise(seedBase + 8888); // Biomes
+  const temperatureNoise = new Simple1DNoise(seedBase + 9999); // Temperature for Snow/Ice
+
   const oreNoiseCoal = new Simple1DNoise(seedBase + 111);
   const oreNoiseIron = new Simple1DNoise(seedBase + 222);
   const oreNoiseGold = new Simple1DNoise(seedBase + 333);
@@ -46,37 +49,61 @@ export function generateWorld(roomId: string = 'default'): World {
   // Generate terrain
   for (let x = 0; x < WORLD_WIDTH; x++) {
     // Generate height offset using multi-layered noise (low freq large amp + high freq low amp)
-    const elevation = (noise.get(x * 0.01) * 30) + (noise2.get(x * 0.05) * 10);
+    let plateauLift = 0;
+    if (x < 300) {
+       plateauLift = (300 - x) * 0.3;
+    } else if (x > WORLD_WIDTH - 300) {
+       plateauLift = (x - (WORLD_WIDTH - 300)) * 0.3;
+    }
+    const elevation = (noise.get(x * 0.005) * 40) + (noise2.get(x * 0.02) * 15) - plateauLift;
     const localSurface = Math.floor(surfaceLevel + elevation);
     
-    // Determine biome properties based on moisture
-    const moisture = moistureNoise.get(x * 0.02); // -1 to 1 roughly
-    const isDesert = moisture < -0.3;
+    
+    // Determine biome properties based on moisture and temperature
+    const moisture = moistureNoise.get(x * 0.002); // -1 to 1 roughly
+    const temperature = temperatureNoise.get(x * 0.0025); // -1 to 1
+    
+    const isCold = temperature < -0.2; // Snow biome
+    const isDesert = moisture < -0.2 && !isCold; // Don't make it desert if it's freezing
+    
     const isOcean = localSurface > waterLevel; // Terrain dips below sea level
+
 
     const dirtDepth = Math.floor(random() * 3) + (isDesert ? 5 : 3);
 
     for (let y = 0; y < WORLD_HEIGHT; y++) {
       if (y < localSurface) {
         world[x][y] = BlockType.Air;
+      
       } else if (y === localSurface) {
         // Surface block
         if (isOcean) {
-          world[x][y] = BlockType.Sand; // Ocean floor
+          if (isCold && localSurface <= waterLevel + 1) {
+             world[x][y] = BlockType.Ice; // Frozen ocean surface
+          } else {
+             world[x][y] = BlockType.Sand; // Ocean floor
+          }
         } else if (localSurface >= waterLevel - 2 && localSurface <= waterLevel + 1) {
-          world[x][y] = BlockType.Sand; // Beach
+          world[x][y] = isCold ? BlockType.Snow : BlockType.Sand; // Snowy beach or normal beach
         } else if (isDesert) {
           world[x][y] = BlockType.Sand;
+        } else if (isCold) {
+          world[x][y] = BlockType.Snow;
         } else {
           world[x][y] = BlockType.Grass;
         }
       } else if (y > localSurface && y <= localSurface + dirtDepth) {
         // Sub-surface
-        if (isOcean || isDesert || (localSurface >= waterLevel - 2 && localSurface <= waterLevel + 1)) {
+        if (isOcean) {
           world[x][y] = BlockType.Sand;
+        } else if (isDesert || (localSurface >= waterLevel - 2 && localSurface <= waterLevel + 1)) {
+          world[x][y] = BlockType.Sand;
+        } else if (isCold) {
+          world[x][y] = BlockType.Dirt; // Dirt under snow
         } else {
           world[x][y] = BlockType.Dirt;
         }
+
       } else if (y > localSurface + dirtDepth) {
         // Deep stone
         world[x][y] = BlockType.Stone;
@@ -100,6 +127,10 @@ export function generateWorld(roomId: string = 'default'): World {
         else if (depth > 40 && Math.abs(oreNoiseDiamond.get((x + y * WORLD_WIDTH) * 0.2)) > 0.96) {
             world[x][y] = BlockType.DiamondOre;
         }
+        // Blue Crystal: deep magic ore
+        else if (depth > 30 && Math.abs(oreNoiseDiamond.get((x + y * WORLD_WIDTH) * 0.17)) > 0.95) {
+            world[x][y] = BlockType.BlueCrystal;
+        }
       }
     }
   }
@@ -110,9 +141,17 @@ export function generateWorld(roomId: string = 'default'): World {
     let y = 0;
     while(y < WORLD_HEIGHT && world[x][y] === BlockType.Air) y++;
     
-    // Only place trees on grass, with some random spacing
-    if (y < WORLD_HEIGHT && world[x][y] === BlockType.Grass) {
-      if (random() < 0.1 && world[x-1][y-1] !== BlockType.Wood && world[x-2][y-1] !== BlockType.Wood) {
+    if (y < WORLD_HEIGHT && (world[x][y] === BlockType.Grass || world[x][y] === BlockType.Dirt)) {
+      const treeChance = 0.25; // 25% chance of tree on any grass/dirt
+      
+      let nearbyWood = false;
+      for (let dx = -2; dx <= 2; dx++) {
+         if (x + dx >= 0 && x + dx < WORLD_WIDTH && y > 0 && world[x + dx][y - 1] === BlockType.Wood) {
+            nearbyWood = true;
+         }
+      }
+      
+      if (random() < treeChance && !nearbyWood) {
         const treeHeight = Math.floor(random() * 3) + 4;
         
         // Trunk
@@ -124,7 +163,6 @@ export function generateWorld(roomId: string = 'default'): World {
         const leafCenterY = y - treeHeight;
         for (let lx = x - 2; lx <= x + 2; lx++) {
           for (let ly = leafCenterY - 2; ly <= leafCenterY + 1; ly++) {
-            // Circle/Diamond approximation
             if (Math.abs(lx - x) + Math.abs(ly - leafCenterY) <= 2.5) {
               if (lx >= 0 && lx < WORLD_WIDTH && ly >= 0 && ly < WORLD_HEIGHT) {
                 if (world[lx][ly] === BlockType.Air) {
@@ -135,15 +173,133 @@ export function generateWorld(roomId: string = 'default'): World {
           }
         }
       }
+    } else if (y < WORLD_HEIGHT && world[x][y] === BlockType.Sand) {
+      // Cactus in desert
+      const temperature = temperatureNoise.get(x * 0.005) * 1.5;
+      const isCold = temperature < -0.1;
+      
+      if (!isCold && random() < 0.05 && world[x-1][y-1] !== BlockType.Cactus) {
+         const cactusHeight = Math.floor(random() * 3) + 2;
+         for (let i = 0; i < cactusHeight; i++) {
+            if (y - 1 - i >= 0) world[x][y - 1 - i] = BlockType.Cactus;
+         }
+      }
+
+    } else if (y < WORLD_HEIGHT && world[x][y] === BlockType.Snow) {
+      // Ice Spikes in snow
+      if (random() < 0.02 && world[x-1][y-1] !== BlockType.Ice) {
+         const spikeHeight = Math.floor(random() * 5) + 3;
+         for (let i = 0; i < spikeHeight; i++) {
+            if (y - 1 - i >= 0) {
+               world[x][y - 1 - i] = BlockType.Ice;
+               // make it thick at bottom
+               if (i < 2) {
+                  if (x > 0 && world[x-1][y - 1 - i] === BlockType.Air) world[x-1][y - 1 - i] = BlockType.Ice;
+                  if (x < WORLD_WIDTH-1 && world[x+1][y - 1 - i] === BlockType.Air) world[x+1][y - 1 - i] = BlockType.Ice;
+               }
+            }
+         }
+      }
     }
   }
 
+  
+  // --- Structure Pass ---
+  for (let x = 20; x < WORLD_WIDTH - 20; x += 40 + Math.floor(random() * 60)) {
+     // Find surface
+     let y = 0;
+     while(y < WORLD_HEIGHT && world[x][y] === BlockType.Air) y++;
+     
+     if (y < WORLD_HEIGHT) {
+         if (world[x][y] === BlockType.Sand) {
+            // Check if flat enough
+            let flat = true;
+            for(let dx=-5; dx<=5; dx++) {
+               let sy = 0;
+               while(sy < WORLD_HEIGHT && world[x+dx][sy] === BlockType.Air) sy++;
+               if (Math.abs(sy - y) > 2 || world[x+dx][sy] !== BlockType.Sand) flat = false;
+            }
+            if (flat) {
+               // Build pyramid
+               for (let h = 0; h < 6; h++) {
+                  for (let dx = -(5-h); dx <= (5-h); dx++) {
+                     world[x+dx][y - 1 - h] = BlockType.Sand;
+                     // also clear above
+                     for (let cy = y - 2 - h; cy > Math.max(0, y - 10); cy--) {
+                         world[x+dx][cy] = BlockType.Air;
+                     }
+                  }
+               }
+               // Hollow center and chest
+               world[x][y-1] = BlockType.Air;
+               world[x][y-2] = BlockType.Air;
+               world[x][y-3] = BlockType.Air;
+               world[x][y-1] = BlockType.Chest;
+               
+               x += 30;
+            }
+         } else if (world[x][y] === BlockType.Snow) {
+            // Build snow ruins
+            let flat = true;
+            for(let dx=-4; dx<=4; dx++) {
+               let sy = 0;
+               while(sy < WORLD_HEIGHT && world[x+dx][sy] === BlockType.Air) sy++;
+               if (Math.abs(sy - y) > 3 || world[x+dx][sy] !== BlockType.Snow) flat = false;
+            }
+            if (flat) {
+               for(let dx=-4; dx<=4; dx++) {
+                  if (Math.abs(dx) === 4 || Math.abs(dx) === 3) {
+                     let h = Math.floor(random() * 4) + 2;
+                     for(let i=0; i<h; i++) {
+                        world[x+dx][y - 1 - i] = BlockType.Stone; // Stone ruins in snow
+                     }
+                  } else {
+                     world[x+dx][y - 1] = BlockType.Stone;
+                  }
+               }
+               world[x][y-2] = BlockType.Chest;
+               world[x][y-1] = BlockType.Air;
+               world[x][y-3] = BlockType.Air;
+               x += 30;
+            }
+         }
+     }
+  }
+
+  // --- Dungeon Pass ---
+  for (let i = 0; i < 30; i++) {
+     let dx = 10 + Math.floor(random() * (WORLD_WIDTH - 20));
+     let dy = surfaceLevel + 30 + Math.floor(random() * (WORLD_HEIGHT - surfaceLevel - 40));
+     
+     // 7x7 room
+     for (let rx = -4; rx <= 4; rx++) {
+        for (let ry = -4; ry <= 4; ry++) {
+           let tx = dx + rx;
+           let ty = dy + ry;
+           if (tx >= 0 && tx < WORLD_WIDTH && ty >= 0 && ty < WORLD_HEIGHT) {
+              if (Math.abs(rx) === 4 || Math.abs(ry) === 4) {
+                 world[tx][ty] = BlockType.AdminBrick; // Unbreakable walls, or maybe just stone? Let's use Stone or a new block. We have AdminBrick, but let's use Stone with Mossy variants if we had one. Just Stone is fine, but maybe Wood? Let's use Wood for mine shafts, AdminBrick for dungeons? AdminBrick is unbreakable. Let's use Stone for walls, but place chests inside.
+                 world[tx][ty] = BlockType.Stone; 
+              } else {
+                 world[tx][ty] = BlockType.Air;
+              }
+           }
+        }
+     }
+     // Add chest and spawners (maybe just a mob will spawn naturally, but we can put some iron/gold blocks or a chest)
+     if (dx >= 0 && dx < WORLD_WIDTH && dy >= 0 && dy < WORLD_HEIGHT) {
+        world[dx][dy + 3] = BlockType.Chest;
+        world[dx - 2][dy + 3] = BlockType.IronOre;
+        world[dx + 2][dy + 3] = BlockType.GoldOre;
+     }
+  }
+
   // Add some simple caves using simple random walk
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 80; i++) {
     let cx = Math.floor(random() * WORLD_WIDTH);
-    let cy = surfaceLevel + 15 + Math.floor(random() * (WORLD_HEIGHT - surfaceLevel - 30));
-    let length = 50 + Math.floor(random() * 150); // Longer caves
-    let size = 1.5 + random() * 3; // Thicker caves
+    let cy = surfaceLevel + 25 + Math.floor(random() * (WORLD_HEIGHT - surfaceLevel - 40));
+    let length = 150 + Math.floor(random() * 300); // Longer caves
+    let size = 2 + random() * 4; // Thicker caves
     
     for (let j = 0; j < length; j++) {
       // Clear area around (cx, cy)
@@ -154,24 +310,45 @@ export function generateWorld(roomId: string = 'default'): World {
              const tx = Math.floor(cx + dx);
              const ty = Math.floor(cy + dy);
              if (tx >= 0 && tx < WORLD_WIDTH && ty >= 0 && ty < WORLD_HEIGHT) {
-                world[tx][ty] = BlockType.Air;
+                // Prevent caves from breaking the surface
+                const localElev = (noise.get(tx * 0.005) * 40) + (noise2.get(tx * 0.02) * 15);
+                if (ty > surfaceLevel + localElev + 12) {
+                   world[tx][ty] = BlockType.Air;
+
+                   // Bottom of deep caves might have lava
+                   if (ty > WORLD_HEIGHT - 30 && dy === isize && random() < 0.3) {
+                       world[tx][ty] = BlockType.Lava;
+                   }
+                   
+                   // Occasionally spawn a chest or rare ore in caves
+                   if (dy === isize && world[tx][ty] === BlockType.Air && world[tx][ty+1] === BlockType.Stone) {
+                       if (random() < 0.01) {
+                           world[tx][ty] = BlockType.Chest;
+                       } else if (random() < 0.05) {
+                           world[tx][ty] = BlockType.DiamondOre;
+                       } else if (random() < 0.05) {
+                           world[tx][ty] = BlockType.BlueCrystal;
+                       } else if (random() < 0.1) {
+                           world[tx][ty] = BlockType.GoldOre;
+                       }
+                   }
+                }
              }
            }
         }
       }
       
       // Wander
-      cx += (random() - 0.5) * 4;
-      cy += (random() - 0.5) * 4;
-      size += (random() - 0.5) * 0.8;
-      if (size < 1) size = 1;
-      if (size > 6) size = 6;
+      cx += (random() - 0.5) * 5;
+      cy += (random() - 0.3) * 5; // Tend to go downwards slightly
+      size += (random() - 0.5) * 1.2;
+      if (size < 1.5) size = 1.5;
+      if (size > 8) size = 8;
       
       if (cx < 0 || cx >= WORLD_WIDTH || cy < 0 || cy >= WORLD_HEIGHT) break;
     }
   }
-
-  // Generate NPC Building at Spawn Center
+// Generate NPC Building at Spawn Center
   const centerX = Math.floor(WORLD_WIDTH / 2);
   let centerY = 0;
   while(centerY < WORLD_HEIGHT && world[centerX][centerY] === BlockType.Air) centerY++;
@@ -205,6 +382,9 @@ export function generateWorld(roomId: string = 'default'): World {
   }
   // Add Quest NPC
   world[centerX][centerY - 1] = BlockType.QuestNPC;
+  world[centerX + 3][centerY - 1] = BlockType.DurelNPC;
+  // Spawn Merchant nearby
+  world[centerX - 3][centerY - 1] = BlockType.Merchant;
   // Torches
   world[centerX - 3][centerY - 3] = BlockType.Torch;
   world[centerX + 3][centerY - 3] = BlockType.Torch;

@@ -3,30 +3,55 @@ import { World } from './world';
 
 export type LightMap = Uint8Array;
 
-export function computeLighting(world: World, timeOfDay: number): LightMap {
+export function computeLighting(world: World, timeOfDay: number, viewX?: number, viewY?: number, viewW?: number, viewH?: number, extraLights?: {x: number, y: number, intensity: number}[]): LightMap {
   const lightMap = new Uint8Array(WORLD_WIDTH * WORLD_HEIGHT);
   const queue: number[] = [];
   
   // Sky light level based on time of day
-  // 0.2 - 0.8 is daytime (15 to 4 based on transition)
   let skyLight = 15;
   if (timeOfDay < 0.2 || timeOfDay > 0.8) skyLight = 4; // Night
   else if (timeOfDay < 0.25 || timeOfDay > 0.75) skyLight = 10; // Twilight
+  
+  let minX = 0;
+  let maxX = WORLD_WIDTH - 1;
+  let minY = 0;
+  let maxY = WORLD_HEIGHT - 1;
+  
+  if (viewX !== undefined && viewW !== undefined) {
+      minX = Math.max(0, viewX - 20);
+      maxX = Math.min(WORLD_WIDTH - 1, viewX + viewW + 20);
+      minY = Math.max(0, viewY - 20);
+      maxY = Math.min(WORLD_HEIGHT - 1, viewY + viewH + 20);
+  }
 
-  // Initialize light sources (Sky and Torches)
-  for (let x = 0; x < WORLD_WIDTH; x++) {
+  if (extraLights) {
+     for (const light of extraLights) {
+        if (light.x >= minX && light.x <= maxX && light.y >= minY && light.y <= maxY) {
+           const idx = light.x + light.y * WORLD_WIDTH;
+           lightMap[idx] = Math.max(lightMap[idx], light.intensity);
+           queue.push(idx);
+        }
+     }
+  }
+
+  // To properly calculate skylight, we need to know the surface for the bounded area.
+  // Actually, we can just trace down from Y=0 for the columns in our bounded area
+  for (let x = minX; x <= maxX; x++) {
     let hitSolid = false;
-    for (let y = 0; y < WORLD_HEIGHT; y++) {
+    for (let y = 0; y <= maxY; y++) {
       const block = world[x][y];
       const idx = x + y * WORLD_WIDTH;
       
       if (!hitSolid) {
-        lightMap[idx] = skyLight;
-        queue.push(idx);
+        // We are still in the sky
+        if (y >= minY) {
+           lightMap[idx] = skyLight;
+           queue.push(idx);
+        }
         if (SolidBlocks.has(block) && block !== BlockType.Leaves && block !== BlockType.Glass) {
           hitSolid = true;
         }
-      } else if (block === BlockType.Torch || block === BlockType.Lava) {
+      } else if (y >= minY && (block === BlockType.Torch || block === BlockType.Lava)) {
         lightMap[idx] = 15;
         queue.push(idx);
       }
@@ -52,13 +77,13 @@ export function computeLighting(world: World, timeOfDay: number): LightMap {
     ];
 
     for (const {nx, ny} of neighbors) {
-      if (nx >= 0 && nx < WORLD_WIDTH && ny >= 0 && ny < WORLD_HEIGHT) {
+      if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) {
         const nIdx = nx + ny * WORLD_WIDTH;
         const nBlock = world[nx][ny];
         const isSolid = SolidBlocks.has(nBlock) && nBlock !== BlockType.Glass && nBlock !== BlockType.Leaves;
         
         // Light drops by 1 in air/glass, 3 in solid blocks
-        const drop = isSolid ? 3 : 1;
+        const drop = isSolid ? 2 : 1;
         const newLight = light - drop;
         
         if (newLight > lightMap[nIdx]) {

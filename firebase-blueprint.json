@@ -1,15 +1,10 @@
 {
-  "collections": [
-    {
-      "name": "users",
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
       "description": "User profiles containing their persisted game state.",
-      "securityRules": {
-        "read": "if request.auth != null && request.auth.uid == resource.id;",
-        "create": "if request.auth != null && request.auth.uid == request.resource.id;",
-        "update": "if request.auth != null && request.auth.uid == resource.id;",
-        "delete": "if false;"
-      },
-      "documentSchema": {
+      "type": "object",
+      "properties": {
         "health": {
           "type": "number",
           "description": "Current player health"
@@ -22,11 +17,44 @@
           "type": "string",
           "description": "JSON string of the backpack inventory"
         },
+        "quests": {
+          "type": "string",
+          "description": "JSON string of the player's quests state"
+        },
         "lastRoom": {
           "type": "string",
           "description": "The last room the player was in"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "RoomChest": {
+      "title": "Room Chest",
+      "description": "A chest containing items in a specific world room.",
+      "type": "object",
+      "properties": {
+        "inventory": {
+          "type": "string",
+          "description": "JSON string of the chest inventory array"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp of the last update"
         }
       }
     }
-  ]
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User documents"
+    },
+    "rooms/{roomId}/chests/{chestId}": {
+      "schema": { "$ref": "#/entities/RoomChest" },
+      "description": "Chests within a room"
+    }
+  }
 }
