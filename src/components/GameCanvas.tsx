@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { BlockType, BlockColors, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, BlockHardness } from '../lib/constants';
+import { BlockType, BlockColors, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, BlockHardness, SolidBlocks } from '../lib/constants';
+const ATTACK_RANGE = 64;
 import { World } from '../lib/world';
 import { PlayerState, updatePhysics } from '../lib/physics';
 import { computeLighting, LightMap } from '../lib/lighting';
@@ -37,6 +38,10 @@ interface GameProps {
   currentGang?: any;
   onFireWeapon?: (weaponType: number) => void;
   currentAmmoCount?: number;
+  skills?: { vitality: number, speed: number, strength: number };
+  mana?: number;
+  onManaChange?: (mana: number) => void;
+  duelingOpponents?: string[];
   onDepthChange?: (depth: number) => void;
   socketRef?: React.MutableRefObject<Socket | null>;
 }
@@ -52,7 +57,7 @@ interface Particle {
   size: number;
 }
 
-export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents }: GameProps) {
+export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -73,6 +78,8 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     socket: Socket | null;
     myId: string | null;
     keys: Record<string, boolean>;
+    grapplePoint: { x: number, y: number } | null;
+    grappleTimer: number;
     mouseX: number;
     mouseY: number;
     cameraX: number;
@@ -400,10 +407,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate };
-  }, [nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange };
+  }, [nickname, currentAmmoCount, selectedBlock, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -520,12 +527,13 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
       const keysToUse = propsRef.current.isInventoryOpen ? {} : state.keys;
 
       const prevHealth = player.health;
+      player.maxHealth = 20 + (propsRef.current.skills?.vitality || 0) * 10;
       
       // Update Physics
       if (world.length > 0 && !propsRef.current.isInventoryOpen) {
         const oldX = player.x;
         const oldY = player.y;
-        updatePhysics(player, world, keysToUse);
+        updatePhysics(player, world, keysToUse, propsRef.current.skills?.speed || 0);
 
         // Update explored area
         if (state.explored.length !== world.length || (world.length > 0 && state.explored[0].length !== world[0].length)) {
@@ -758,13 +766,16 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
                    const pullDx = hx - player.x;
                    const pullDy = hy - player.y;
                    const pullDist = Math.sqrt(pullDx*pullDx + pullDy*pullDy) || 1;
-                   player.vx += (pullDx/pullDist) * 20; // impulse instead of absolute set to allow swinging
-                   player.vy += (pullDy/pullDist) * 20;
+                   player.vx += (pullDx/pullDist) * 15;
+                   player.vy += (pullDy/pullDist) * 15;
                    if (player.vy < -25) player.vy = -25;
                    if (player.vx < -25) player.vx = -25;
                    if (player.vx > 25) player.vx = 25;
+                   state.interactionCooldown = 250;
                    
                    player.grounded = false;
+                   state.grapplePoint = { x: hx, y: hy };
+                   state.grappleTimer = 15;
                    state.damageTexts.push({ id: Math.random().toString(), text: 'Swoosh!', x: player.x, y: player.y - 15, life: 1, maxLife: 30, color: '#DDDDDD', size: 12 });
                    state.interactionCooldown = 400;
                } else {
@@ -1374,6 +1385,18 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
         const armX = facingRight ? pX + pWidth - 6 : pX - 2;
         
         ctx.save();
+
+        if (state.grapplePoint && state.grappleTimer > 0) {
+           ctx.beginPath();
+           ctx.moveTo(pX + pWidth/2, pY + pHeight/2);
+           ctx.lineTo(state.grapplePoint.x - state.cameraX, state.grapplePoint.y - state.cameraY);
+           ctx.strokeStyle = '#FFFFFF';
+           ctx.lineWidth = 2;
+           ctx.stroke();
+           state.grappleTimer--;
+           if (state.grappleTimer <= 0) state.grapplePoint = null;
+        }
+
         ctx.translate(armX + 4, armY + 4);
         
         let armRotation = 0;
@@ -1396,8 +1419,12 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
            ctx.fillStyle = BlockColors[tool] || '#FFF';
            
            // Determine tool shape based on type
-           const isSword = tool === BlockType.WoodSword || tool === BlockType.IronSword;
-           const isPickaxe = tool === BlockType.WoodPickaxe || tool === BlockType.StonePickaxe || tool === BlockType.IronPickaxe;
+           const isSword = tool === BlockType.WoodSword || tool === BlockType.StoneSword || tool === BlockType.IronSword || tool === BlockType.GoldSword || tool === BlockType.DiamondSword;
+           const isPickaxe = tool === BlockType.WoodPickaxe || tool === BlockType.StonePickaxe || tool === BlockType.IronPickaxe || tool === BlockType.GoldPickaxe || tool === BlockType.DiamondPickaxe;
+           const isGrapple = tool === BlockType.GrapplingHook;
+           const isGun = tool === BlockType.Gun;
+           const isBow = tool === BlockType.Bow;
+           const isStaff = tool === BlockType.WizardStaff;
            const isHoe = tool === BlockType.WoodHoe || tool === BlockType.StoneHoe || tool === BlockType.IronHoe;
            
            if (isSword) {
@@ -1421,9 +1448,38 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, isInventory
               ctx.fillRect(-2, 0, 4, 16);
               ctx.fillStyle = BlockColors[tool]; // Head
               ctx.fillRect(facingRight ? -2 : -8, -4, 10, 4);
+           } else if (isGrapple) {
+              ctx.fillStyle = '#455A64';
+              ctx.fillRect(-2, -4, 4, 10);
+              ctx.fillStyle = '#78909C';
+              ctx.fillRect(-6, -8, 12, 4);
+           } else if (isGun) {
+              ctx.fillStyle = '#212121';
+              ctx.fillRect(-4, -2, 12, 4);
+              ctx.fillRect(-4, -2, 4, 8);
+           } else if (isBow) {
+              ctx.strokeStyle = '#8D6E63';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(0, 0, 8, -Math.PI/2, Math.PI/2);
+              ctx.stroke();
+              ctx.strokeStyle = '#FFF';
+              ctx.beginPath();
+              ctx.moveTo(0, -8);
+              ctx.lineTo(0, 8);
+              ctx.stroke();
+           } else if (isStaff) {
+              ctx.fillStyle = '#5D4037';
+              ctx.fillRect(-2, -10, 4, 20);
+              ctx.fillStyle = '#9C27B0';
+              ctx.beginPath();
+              ctx.arc(0, -12, 4, 0, Math.PI*2);
+              ctx.fill();
            } else {
               // Normal block
-              ctx.fillRect(-6, -6, 12, 12);
+              if (tool < 100) {
+                 ctx.fillRect(-6, -6, 12, 12);
+              }
            }
         }
         

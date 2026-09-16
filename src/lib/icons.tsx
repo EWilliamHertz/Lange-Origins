@@ -3,7 +3,7 @@ import React from 'react';
 import { Settings2, ArrowRightCircle, Rocket, Crosshair, Cpu, Bomb, LocateFixed, CircleDot,
   Store, Pickaxe, Sword, Box, Flame, Sprout, Droplets, Diamond, Gem, Hexagon,
   TreePine, Trees, PocketKnife, Wrench, Activity, DoorClosed, Construction,
-  Layers, SquareDashed, LayoutGrid, Hand, Shield } from 'lucide-react';
+  Layers, SquareDashed, LayoutGrid, Hand, Shield, Anchor } from 'lucide-react';
 
 export function getBlockIcon(blockType: BlockType, className: string = "w-full h-full") {
   switch (blockType) {
@@ -103,6 +103,8 @@ export function getBlockIcon(blockType: BlockType, className: string = "w-full h
     
     case BlockType.TNT:
       return <Bomb className={className} style={{ color: '#D32F2F' }} />;
+    case BlockType.GrapplingHook:
+      return <Anchor className={className} style={{ color: '#455A64' }} />;
     case BlockType.Gun:
       return <LocateFixed className={className} style={{ color: '#424242' }} />;
     case BlockType.Bullet:

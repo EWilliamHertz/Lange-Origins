@@ -17,12 +17,12 @@ export interface PlayerState {
 
 const GRAVITY = 0.4;
 const MAX_FALL_SPEED = 18; // Increased for fall damage
-const MAX_SPEED = 5;
+const MAX_SPEED = 3.5;
 const ACCELERATION = 0.8;
 const FRICTION = 0.8;
 const JUMP_POWER = -8.0;
 
-export function updatePhysics(player: PlayerState, world: World, keys: Record<string, boolean>) {
+export function updatePhysics(player: PlayerState, world: World, keys: Record<string, boolean>, speedBonus: number = 0) {
   if (player.invulnerableTimer > 0) player.invulnerableTimer--;
 
   // Movement Input
@@ -50,13 +50,31 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
   }
 
   // Velocity Clamping
-  if (player.vx > MAX_SPEED) player.vx = MAX_SPEED;
-  if (player.vx < -MAX_SPEED) player.vx = -MAX_SPEED;
+  const currentMaxSpeed = MAX_SPEED + (speedBonus * 0.25);
+  // Instead of hard clamping, we apply friction if we're over max speed
+  // This allows impulses (like from the Grappling Hook) to briefly exceed max speed.
+  if (player.vx > currentMaxSpeed) {
+      if (!keys['a'] && !keys['ArrowLeft'] && !keys['d'] && !keys['ArrowRight']) {
+          // already applying friction
+      } else {
+          // If they are inputting, we still slowly drag them back to max speed
+          player.vx *= 0.95;
+      }
+  } else if (player.vx < -currentMaxSpeed) {
+      if (!keys['a'] && !keys['ArrowLeft'] && !keys['d'] && !keys['ArrowRight']) {
+          // already applying friction
+      } else {
+          player.vx *= 0.95;
+      }
+  }
   if (Math.abs(player.vx) < 0.1) player.vx = 0;
 
   // Gravity
   player.vy += GRAVITY;
-  if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
+  // Soft clamp fall speed so upward grapple momentum isn't broken
+  if (player.vy > MAX_FALL_SPEED) {
+      player.vy -= (player.vy - MAX_FALL_SPEED) * 0.1; 
+  }
 
   // Collision Helper
   const checkCollision = (newX: number, newY: number, checkingY: boolean = false) => {

@@ -74,7 +74,16 @@ export enum BlockType {
   CorruptedGrass = 36,
   BossGolem = 404,
   BossDrop = 405,
-  MagicStaff = 406
+  MagicStaff = 406,
+  DiamondSword = 411,
+  GoldSword = 412,
+  StoneSword = 413,
+  GuideNPC = 414,
+  GoblinNPC = 415,
+  WizardNPC = 416,
+  DurelNPC = 417,
+  WizardStaff = 418,
+  BlueCrystal = 419
 }
 
 export const BlockColors: Record<BlockType, string> = {
@@ -149,6 +158,15 @@ export const BlockColors: Record<BlockType, string> = {
   [BlockType.BossGolem]: '#1A237E',
   [BlockType.BossDrop]: '#FFD700',
     [BlockType.MagicStaff]: '#9C27B0',
+  [BlockType.DiamondSword]: '#00BCD4',
+  [BlockType.GoldSword]: '#FFD700',
+  [BlockType.StoneSword]: '#9E9E9E',
+  [BlockType.GuideNPC]: '#FFC107',
+  [BlockType.GoblinNPC]: '#4CAF50',
+  [BlockType.WizardNPC]: '#9C27B0',
+  [BlockType.DurelNPC]: '#F44336',
+  [BlockType.WizardStaff]: '#673AB7',
+  [BlockType.TreeSeed]: '#4CAF50',
   [BlockType.GrapplingHook]: '#455A64'
 };
 
@@ -232,6 +250,15 @@ export const BlockHardness: Record<BlockType, number> = {
   [BlockType.BossGolem]: 0,
   [BlockType.BossDrop]: 0,
     [BlockType.MagicStaff]: 0,
+  [BlockType.DiamondSword]: 0,
+  [BlockType.GoldSword]: 0,
+  [BlockType.StoneSword]: 0,
+  [BlockType.GuideNPC]: 0,
+  [BlockType.GoblinNPC]: 0,
+  [BlockType.WizardNPC]: 0,
+  [BlockType.DurelNPC]: 0,
+  [BlockType.WizardStaff]: 0,
+  [BlockType.TreeSeed]: 0,
   [BlockType.GrapplingHook]: 0
 };
 
@@ -311,5 +338,14 @@ export const BlockNames: Record<BlockType, string> = {
   [BlockType.CorruptedGrass]: 'Corrupted Grass',
   [BlockType.BossGolem]: 'Giant Golem',
   [BlockType.BossDrop]: 'Boss Relic',
-  [BlockType.MagicStaff]: 'Magic Staff'
+  [BlockType.MagicStaff]: 'Magic Staff',
+  [BlockType.DiamondSword]: 'Diamond Sword',
+  [BlockType.GoldSword]: 'Gold Sword',
+  [BlockType.StoneSword]: 'Stone Sword',
+  [BlockType.GuideNPC]: 'Guide',
+  [BlockType.GoblinNPC]: 'Goblin',
+  [BlockType.WizardNPC]: 'Wizard',
+  [BlockType.DurelNPC]: 'Durel',
+  [BlockType.WizardStaff]: 'Wizard Staff',
+  [BlockType.BlueCrystal]: 'Blue Crystal'
 };
