@@ -16,6 +16,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@types/pg": "^8.23.1",
     "@vitejs/plugin-react": "^5.0.4",
+    "bitecs": "^0.4.0",
     "dotenv": "^17.2.3",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
@@ -29,7 +30,8 @@
     "react-dom": "^19.0.1",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
@@ -40,6 +42,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "vitest": "^5.0.1"
   }
 }

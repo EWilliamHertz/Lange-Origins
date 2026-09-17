@@ -2274,25 +2274,25 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         />
 
 
-        {/* Chat System */}
-        <div className="absolute bottom-24 left-4 w-72 z-10 flex flex-col justify-end pointer-events-none">
-           <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
+        {/* Modern Chat System */}
+        <div className="absolute bottom-28 left-4 w-[350px] z-10 flex flex-col justify-end pointer-events-none">
+           <div className="flex flex-col gap-1.5 mb-3 max-h-60 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
              {chatMessages.map((msg, idx) => (
-               <div key={idx} className="bg-black/40 text-white text-sm px-2 py-1 rounded w-fit break-all">
-                 <span className="opacity-50 text-xs mr-2">{msg.sender}:</span>
-                 {msg.text}
+               <div key={idx} className="bg-neutral-900/70 backdrop-blur-md border border-white/5 text-white text-sm px-3 py-2 rounded-xl w-fit break-all shadow-lg animate-fade-in-up">
+                 <span className="font-bold text-amber-400/90 text-xs mr-2 uppercase tracking-wide">{msg.sender}</span>
+                 <span className="text-neutral-200 leading-relaxed">{msg.text}</span>
                </div>
              ))}
            </div>
            
            {isChatOpen && (
-             <form onSubmit={handleChatSubmit} className="pointer-events-auto bg-black/60 p-2 rounded flex items-center shadow-lg">
-               <MessageSquare size={16} className="text-white/50 mr-2 shrink-0" />
+             <form onSubmit={handleChatSubmit} className="pointer-events-auto bg-neutral-900/80 backdrop-blur-xl border border-white/10 p-3 rounded-2xl flex items-center shadow-2xl transition-all duration-300 transform translate-y-0 opacity-100">
+               <MessageSquare size={18} className="text-amber-500 mr-3 shrink-0" />
                <input 
                  ref={chatInputRef}
                  type="text" 
-                 className="bg-transparent text-white outline-none w-full text-sm"
-                 placeholder="Say something... (Enter)"
+                 className="bg-transparent text-white outline-none w-full text-sm placeholder:text-neutral-500 font-medium"
+                 placeholder="Type to chat globally..."
                  onBlur={() => setIsChatOpen(false)}
                  maxLength={100}
                />
@@ -2305,8 +2305,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
            )}
         </div>
         
-        {/* UI Overlay - Hotbar */}
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-1 p-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl">
+        {/* UI Overlay - Modern Hotbar */}
+        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-2 p-2 bg-neutral-900/80 backdrop-blur-xl rounded-2xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)] transition-all">
           {hotbar.map((slot, index) => {
             const isSelected = selectedSlotIndex === index && !inventoryOpen;
             return (
@@ -2317,14 +2317,16 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   else setSelectedSlotIndex(index);
                 }}
                 onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('hotbar', index, true); }}
-                className={`w-12 h-12 p-1.5 rounded-lg relative transition-all duration-200 ${
+                className={`w-14 h-14 p-2 rounded-xl relative transition-all duration-300 group ${
                   isSelected 
-                    ? 'ring-2 ring-amber-400 scale-110 bg-gradient-to-t from-white/20 to-transparent shadow-[0_0_15px_rgba(251,191,36,0.5)] z-10' 
-                    : 'hover:bg-white/10 opacity-70 hover:opacity-100 bg-black/50'
+                    ? 'ring-2 ring-amber-400 bg-gradient-to-t from-amber-500/20 to-transparent shadow-[0_0_20px_rgba(251,191,36,0.3)] z-10 -translate-y-2' 
+                    : 'bg-neutral-800/80 hover:bg-neutral-700/80 border border-neutral-700 hover:border-amber-400/50 hover:-translate-y-1'
                 }`}
               >
-                <div className="absolute -top-1 -left-1 text-[9px] font-black bg-black/60 text-white w-4 h-4 flex items-center justify-center rounded border border-white/20 shadow-sm">{index + 1}</div>
-                {renderBlockIcon(slot)}
+                <div className="absolute -top-2 -left-2 text-[10px] font-black bg-neutral-800 text-neutral-300 w-5 h-5 flex items-center justify-center rounded-md border border-neutral-600 shadow-sm transition-colors group-hover:text-amber-400">{index === 9 ? 0 : index + 1}</div>
+                <div className={`${isSelected ? 'scale-110 drop-shadow-[0_0_8px_rgba(255,255,255,0.6)]' : 'group-hover:scale-105'}`}>
+                   {renderBlockIcon(slot)}
+                </div>
               </button>
             );
           })}
