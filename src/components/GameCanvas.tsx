@@ -479,6 +479,25 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       if (document.activeElement?.tagName === 'INPUT') return;
       const key = e.key.toLowerCase();
       gameState.current.keys[key] = true;
+      
+      // MMO Abilities
+      if ((key === 'z' || key === 'x' || key === 'c') && gameState.current.globalCooldown <= 0 && gameState.current.targetId && gameState.current.socket) {
+          const state = gameState.current;
+          let cost = 0;
+          let cd = 0;
+          let abilityName = '';
+          if (key === 'z' && (state.abilityCooldowns['slash'] || 0) <= 0) { cost = 0; cd = 3000; abilityName = 'slash'; }
+          else if (key === 'x' && (state.abilityCooldowns['fireball'] || 0) <= 0) { cost = 10; cd = 5000; abilityName = 'fireball'; }
+          else if (key === 'c' && (state.abilityCooldowns['heal'] || 0) <= 0) { cost = 20; cd = 10000; abilityName = 'heal'; }
+          
+          if (abilityName !== '') {
+              // Note: actual cost logic would hook into props, but for now just send event
+              state.socket.emit('use_ability', { ability: abilityName, targetId: state.targetId, targetType: state.targetType });
+              state.globalCooldown = 1500;
+              state.abilityCooldowns[abilityName] = cd;
+          }
+      }
+      
       if (key === 'e') {
         const hoveredPlayer = checkPlayerHover(gameState.current.mouseX, gameState.current.mouseY);
         if (hoveredPlayer && propsRef.current.onPlayerInteract) {
@@ -509,6 +528,19 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       }
       return null;
     };
+    
+    const checkMobHover = (x: number, y: number) => {
+      const mx = x + gameState.current.cameraX;
+      const my = y + gameState.current.cameraY;
+      for (const [id, mob] of Object.entries(gameState.current.mobs)) {
+        const px = (mob as any).x - TILE_SIZE / 2;
+        const py = (mob as any).y - TILE_SIZE;
+        if (mx >= px && mx <= px + TILE_SIZE && my >= py && my <= py + TILE_SIZE) {
+          return id;
+        }
+      }
+      return null;
+    };
 
     const updateMousePos = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -518,7 +550,24 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
     };
 
     const handleMouseDown = (e: MouseEvent) => {
-      if (e.button === 0) gameState.current.mouseDown = true;
+      if (e.button === 0) {
+          gameState.current.mouseDown = true;
+          
+          // MMO Targeting
+          const mx = gameState.current.mouseX;
+          const my = gameState.current.mouseY;
+          const mobId = checkMobHover(mx, my);
+          const playerId = checkPlayerHover(mx, my);
+          if (mobId) {
+              gameState.current.targetId = mobId;
+              gameState.current.targetType = 'mob';
+              gameState.current.autoAttacking = true;
+          } else if (playerId) {
+              gameState.current.targetId = playerId.id;
+              gameState.current.targetType = 'player';
+              gameState.current.autoAttacking = true;
+          }
+      }
       if (e.button === 2) gameState.current.rightMouseDown = true;
       updateMousePos(e);
     };
