@@ -562,7 +562,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       const uid = typeof data === 'string' ? undefined : data.uid;
       const email = typeof data === 'string' ? '' : (data.email || '');
       const profileId = typeof data === 'string' ? undefined : data.profileId;
-      const isAdmin = email === 'ewilliamhe@gmail.com' || email === 'zudran@gmail.com';
+      const isAdmin = email.toLowerCase() === 'ewilliamhe@gmail.com' || email.toLowerCase() === 'zudran@gmail.com';
       // Leave previous room if any
       if (currentRoom) {
         socket.leave(currentRoom);

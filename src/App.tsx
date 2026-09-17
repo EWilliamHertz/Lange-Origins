@@ -150,7 +150,7 @@ export default function App() {
         
         // Load data from Firestore
         try {
-          const profilesRef = collection(db, 'users', user.uid, 'profiles');
+          const profilesRef = collection(db, 'users', user.uid, 'profiles_v2');
           const profilesSnap = await getDocs(profilesRef);
           const loadedProfiles = profilesSnap.docs.map(d => d.data());
           if (loadedProfiles.length > 0) {
@@ -194,7 +194,7 @@ export default function App() {
                          skills: JSON.stringify({ strength: 0, dexterity: 0, intelligence: 0 }),
                          updatedAt: Date.now()
              };
-             await setDoc(doc(db, 'users', user.uid, 'profiles', newId), newProfile);
+             await setDoc(doc(db, 'users', user.uid, 'profiles_v2', newId), newProfile);
              setProfiles([newProfile]);
              setActiveProfileId(newId);
              setEquipment([null, null]);
@@ -320,7 +320,7 @@ export default function App() {
     const latest = saveStateRef.current;
     if (!latest.currentUser || !latest.activeProfileId) return;
     try {
-      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles', latest.activeProfileId);
+      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles_v2', latest.activeProfileId);
       await setDoc(docRef, {
         equipment: JSON.stringify(latest.equipment),
         hotbar: JSON.stringify(latest.hotbar),
@@ -1570,7 +1570,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                          updatedAt: Date.now()
                       };
                       
-                          setDoc(doc(db, 'users', currentUser.uid, 'profiles', newId), { ...newProfile, updatedAt: serverTimestamp() });
+                          setDoc(doc(db, 'users', currentUser.uid, 'profiles_v2', newId), { ...newProfile, updatedAt: serverTimestamp() });
                       
                       setProfiles([...profiles, newProfile]);
                       setActiveProfileId(newId);
@@ -1605,7 +1605,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       if (!window.confirm("Are you sure you want to delete this profile? This action cannot be undone.")) return;
                       
                       try {
-                          await deleteDoc(doc(db, 'users', currentUser.uid, 'profiles', activeProfileId));
+                          await deleteDoc(doc(db, 'users', currentUser.uid, 'profiles_v2', activeProfileId));
                           
                           const newProfiles = profiles.filter(p => p.id !== activeProfileId);
                           setProfiles(newProfiles);
