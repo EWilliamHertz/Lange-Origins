@@ -857,6 +857,33 @@ socket.on('chat_message', (message: string) => {
       }
     });
 
+    socket.on('use_ability', (data: { ability: string, targetId: string, targetType: string }) => {
+      if (!currentRoom || !activeRooms[currentRoom]) return;
+      const room = activeRooms[currentRoom];
+      const player = room.players[socket.id];
+      if (!player) return;
+
+      if (data.ability === 'heal') {
+          player.hp = Math.min(100, (player.hp || 100) + 20);
+          io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: player.x, y: player.y - 30, damage: -20 }); 
+      } else if (data.ability === 'slash' || data.ability === 'fireball') {
+          const targetObj = data.targetType === 'mob' ? room.mobs[data.targetId] : room.players[data.targetId];
+          if (targetObj) {
+              const damage = data.ability === 'fireball' ? 25 : 15;
+              targetObj.hp -= damage;
+              
+              io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: targetObj.x, y: targetObj.y, damage });
+              
+              if (data.targetType === 'mob') {
+                  const m = targetObj as any;
+                  m.vy = -6;
+                  m.vx = (player.x < m.x) ? 8 : -8;
+                  m.lastHitBy = socket.id;
+              }
+          }
+      }
+    });
+
     
     socket.on('send_trade_request', (data: { targetId: string }) => {
        if (currentRoom && activeRooms[currentRoom].players[data.targetId]) {

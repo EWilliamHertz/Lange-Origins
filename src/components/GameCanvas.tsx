@@ -550,6 +550,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
     };
 
     const handleMouseDown = (e: MouseEvent) => {
+      updateMousePos(e);
       if (e.button === 0) {
           gameState.current.mouseDown = true;
           
@@ -562,14 +563,15 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
               gameState.current.targetId = mobId;
               gameState.current.targetType = 'mob';
               gameState.current.autoAttacking = true;
+              gameState.current.autoAttackTimer = 0; // instantly attack on click
           } else if (playerId) {
               gameState.current.targetId = playerId.id;
               gameState.current.targetType = 'player';
               gameState.current.autoAttacking = true;
+              gameState.current.autoAttackTimer = 0; // instantly attack on click
           }
       }
       if (e.button === 2) gameState.current.rightMouseDown = true;
-      updateMousePos(e);
     };
     const handleMouseUp = (e: MouseEvent) => {
       if (e.button === 0) gameState.current.mouseDown = false;
@@ -781,7 +783,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
               const dist = Math.sqrt(dx*dx + dy*dy);
               if (dist <= ATTACK_RANGE) {
                   const sel = propsRef.current.selectedBlock;
-                  const isFist = sel === BlockType.Fists || !sel || sel === 0;
+                  const isFist = sel === BlockType.Fists; // Strictly require Fists
                   const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
                   const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
                   const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
@@ -981,72 +983,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                  }
              }
         }
-        else if (state.interactionCooldown <= 0) {
-
-          const mx = state.cameraX + state.mouseX;
-          const my = state.cameraY + state.mouseY;
-          for (const mobId in state.mobs) {
-             const mob = state.mobs[mobId];
-             const mLeft = mob.x; const mRight = mob.x + 24;
-             const mTop = mob.y - 24;
-             const mBottom = mob.y + 24;
-             
-             if (mx >= mLeft && mx <= mRight && my >= mTop && my <= mBottom) {
-                const sel = propsRef.current.selectedBlock;
-                const isFist = sel === BlockType.Fists;
-                const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
-                const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
-                const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
-                
-                if (!isFist && !isSword && !isPickaxe && !isAxe) continue; // Cannot fight with this item
-                
-                if (state.socket) {
-                   const baseDmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
-                            : isAxe ? (sel === BlockType.IronAxe ? 6 : 4)
-                            : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : 3)
-                            : 1;
-                   const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
-                   state.socket.emit('hit_mob', { mobId, damage: dmg, facingRight: player.x < mob.x, playerId: state.socket.id });
-                }
-                state.interactionCooldown = 300; // Attack cooldown
-                hitMob = true;
-                break;
-             }
-          }
         }
-
-
-          // 1.5 Check PvP Hit
-          if (!hitMob && state.socket && propsRef.current.duelingOpponents && propsRef.current.duelingOpponents.length > 0) {
-             for (const otherId in state.otherPlayers) {
-                if (propsRef.current.duelingOpponents.includes(otherId)) {
-                   const other = state.otherPlayers[otherId];
-                   const dx = other.x - player.x;
-                   const dy = other.y - player.y;
-                   const distToOther = Math.sqrt(dx*dx + dy*dy);
-                   if (distToOther <= ATTACK_RANGE) {
-                      const sel = propsRef.current.selectedBlock;
-                      const isFist = sel === BlockType.Fists;
-                      const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === BlockType.GoldSword || sel === BlockType.DiamondSword;
-                      const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
-                      const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
-                      
-                      if (!isFist && !isSword && !isPickaxe && !isAxe) continue;
-
-                      // Hit them!
-                      const baseDmg = isSword ? (sel === BlockType.DiamondSword ? 10 : sel === BlockType.GoldSword ? 7 : sel === BlockType.IronSword ? 6 : sel === BlockType.StoneSword ? 5 : 4)
-                               : isAxe ? (sel === BlockType.IronAxe ? 6 : sel === BlockType.StoneAxe ? 4 : 3)
-                               : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : sel === BlockType.StonePickaxe ? 4 : 3)
-                               : 1;
-                      const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
-                      state.socket.emit('hit_player', { targetId: otherId, damage: dmg, facingRight: player.x < other.x });
-                      state.interactionCooldown = 300;
-                      hitMob = true; // reusing this to skip block mining
-                      break;
-                   }
-                }
-             }
-          }
 
         // 2. Block interaction if no mob hit and in reach
         if (!hitMob && dist <= MAX_REACH) {
