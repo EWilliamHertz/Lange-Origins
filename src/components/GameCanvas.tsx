@@ -113,6 +113,14 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     damageTexts: DamageText[];
     explored: boolean[][];
     showMap: boolean;
+    
+    // MMO Combat State
+    targetId: string | null;
+    targetType: 'mob' | 'player' | null;
+    autoAttacking: boolean;
+    autoAttackTimer: number;
+    globalCooldown: number;
+    abilityCooldowns: Record<string, number>;
   }>({
     world: [],
     player: {
@@ -160,7 +168,14 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     items: {},
     damageTexts: [],
     explored: [],
-    showMap: false
+    showMap: false,
+    
+    targetId: null,
+    targetType: null,
+    autoAttacking: false,
+    autoAttackTimer: 0,
+    globalCooldown: 0,
+    abilityCooldowns: {},
   });
 
   const [connected, setConnected] = useState(false);
@@ -696,6 +711,55 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       state.cameraX = Math.max(0, Math.min(state.cameraX, WORLD_WIDTH * TILE_SIZE - dimensions.width));
       state.cameraY = Math.max(0, Math.min(state.cameraY, WORLD_HEIGHT * TILE_SIZE - dimensions.height));
 
+      // Handle MMO Cooldowns
+      if (state.globalCooldown > 0) state.globalCooldown -= dt;
+      if (state.autoAttackTimer > 0) state.autoAttackTimer -= dt;
+      for (const key in state.abilityCooldowns) {
+          if (state.abilityCooldowns[key] > 0) {
+              state.abilityCooldowns[key] -= dt;
+          }
+      }
+
+      // Handle MMO Auto-Attack
+      if (state.autoAttacking && state.targetId && state.autoAttackTimer <= 0 && state.socket) {
+          let targetObj = null;
+          if (state.targetType === 'mob' && state.mobs[state.targetId]) targetObj = state.mobs[state.targetId];
+          if (state.targetType === 'player' && state.otherPlayers[state.targetId]) targetObj = state.otherPlayers[state.targetId];
+          
+          if (targetObj) {
+              const dx = targetObj.x - player.x;
+              const dy = targetObj.y - player.y;
+              const dist = Math.sqrt(dx*dx + dy*dy);
+              if (dist <= ATTACK_RANGE) {
+                  const sel = propsRef.current.selectedBlock;
+                  const isFist = sel === BlockType.Fists || !sel || sel === 0;
+                  const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
+                  const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
+                  const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
+                  
+                  if (isFist || isSword || isPickaxe || isAxe) {
+                      const baseDmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
+                               : isAxe ? (sel === BlockType.IronAxe ? 6 : 4)
+                               : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : 3)
+                               : 1;
+                      const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
+                      
+                      if (state.targetType === 'mob') {
+                          state.socket.emit('hit_mob', { mobId: state.targetId, damage: dmg, facingRight: player.x < targetObj.x, playerId: state.socket.id });
+                      } else {
+                          state.socket.emit('hit_player', { targetId: state.targetId, damage: dmg, facingRight: player.x < targetObj.x });
+                      }
+                      
+                      state.autoAttackTimer = 1500; // 1.5s attack speed
+                  }
+              }
+          } else {
+              // Target lost
+              state.targetId = null;
+              state.targetType = null;
+              state.autoAttacking = false;
+          }
+      }
       // Handle mining/placing
       if (state.interactionCooldown > 0) {
          state.interactionCooldown -= dt;
@@ -1796,7 +1860,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            player.isGrappling = false;
       }
       
-      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0, false, propsRef.current.helmet || null, propsRef.current.chestplate || null);
+      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, false);
 
       // Draw block highlight outline
       if (inBounds && dist <= MAX_REACH) {

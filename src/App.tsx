@@ -346,6 +346,7 @@ export default function App() {
   const [furnaceFuel, setFurnaceFuel] = useState<InventorySlot>(null);
   const [furnaceOutput, setFurnaceOutput] = useState<InventorySlot>(null);
   const [cursorItem, setCursorItem] = useState<InventorySlot>(null);
+  const [draggedItemInfo, setDraggedItemInfo] = useState<{type: string, index: number} | null>(null);
 
   const returnCursorItemToInventory = (item) => {
      if (!item || item.type === 0) return;
@@ -1107,6 +1108,75 @@ let targetArray = type === 'hotbar' ? [...hotbar]
 
   };
 
+  const handleDragStart = (e: React.DragEvent, type: string, index: number) => {
+    setDraggedItemInfo({ type, index });
+  };
+  
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+  
+  const handleDrop = (e: React.DragEvent, targetType: string, targetIndex: number) => {
+    e.preventDefault();
+    if (!draggedItemInfo) return;
+    
+    // Perform standard slot swap/merge by temporarily tricking handleSlotClick
+    // Actually, we can just call handleSlotClick to pick up, then place.
+    // Wait, handleSlotClick uses `cursorItem`. If we bypass cursorItem, we need to swap.
+    
+    const { type: srcType, index: srcIndex } = draggedItemInfo;
+    if (srcType === targetType && srcIndex === targetIndex) {
+        setDraggedItemInfo(null);
+        return;
+    }
+    
+    const getArray = (t: string) => {
+        if (t === 'backpack') return [...backpack];
+        if (t === 'hotbar') return [...hotbar];
+        if (t === 'leftActionBar') return [...leftActionBar];
+        if (t === 'rightActionBar') return [...rightActionBar];
+        if (t === 'equipment') return [...equipment];
+        return [];
+    };
+    
+    const setArray = (t: string, arr: any) => {
+        if (t === 'backpack') setBackpack(arr);
+        if (t === 'hotbar') setHotbar(arr);
+        if (t === 'leftActionBar') setLeftActionBar(arr);
+        if (t === 'rightActionBar') setRightActionBar(arr);
+        if (t === 'equipment') setEquipment(arr);
+    };
+    
+    const srcArr = getArray(srcType);
+    const targetArr = getArray(targetType);
+    
+    if (!srcArr || !targetArr) return;
+    
+    const srcItem = srcArr[srcIndex];
+    const targetItem = targetArr[targetIndex];
+    
+    // Stack merge
+    if (srcItem && targetItem && srcItem.type === targetItem.type) {
+        targetArr[targetIndex] = { type: srcItem.type, count: targetItem.count + srcItem.count };
+        srcArr[srcIndex] = null;
+    } else {
+        // Swap
+        srcArr[srcIndex] = targetItem;
+        if (srcType === targetType) {
+            srcArr[targetIndex] = srcItem;
+        } else {
+            targetArr[targetIndex] = srcItem;
+        }
+    }
+    
+    setArray(srcType, srcArr);
+    if (srcType !== targetType) {
+        setArray(targetType, targetArr);
+    }
+    
+    setDraggedItemInfo(null);
+  };
+
   const renderBlockIcon = (slot: InventorySlot | BlockType | null) => {
     if (slot === null) return null;
     
@@ -1852,7 +1922,26 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             if (minedBlockType === BlockType.DiamondOre) blockType = BlockType.Diamond;
             Sounds.mineBlock();
             
-            // Add XP for mining
+            // Add Woodcutting XP if applicable
+            if (minedBlockType === BlockType.Wood || minedBlockType === BlockType.Leaves) {
+               const wcXpGain = minedBlockType === BlockType.Wood ? 15 : 5;
+               setSkills(prev => {
+                  let currentLevel = prev.woodcutting || 1;
+                  let nextXp = (prev.woodcuttingXp || 0) + wcXpGain;
+                  let levelUp = false;
+                  while (nextXp >= currentLevel * 50) {
+                     nextXp -= currentLevel * 50;
+                     currentLevel++;
+                     levelUp = true;
+                  }
+                  if (levelUp) {
+                     addNotification('system', 'System', 'System', `Woodcutting Level Up! Now level ${currentLevel}.`);
+                  }
+                  return { ...prev, woodcutting: currentLevel, woodcuttingXp: nextXp };
+               });
+            }
+
+            // Add general XP for mining
             const xpGain = (minedBlockType === BlockType.DiamondOre) ? 15 : (minedBlockType === BlockType.GoldOre) ? 10 : (minedBlockType === BlockType.IronOre || minedBlockType === BlockType.CoalOre) ? 5 : 1;
             setXp(prevXp => {
                 let nextXp = prevXp + xpGain;
@@ -2353,6 +2442,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                         {backpack.map((slot, i) => (
                           <button
                             key={i}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, 'backpack', i)}
+                            onDragOver={handleDragOver}
+                            onDrop={(e) => handleDrop(e, 'backpack', i)}
                             onClick={() => handleSlotClick('backpack', i)}
                             onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
                             onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'backpack', index: i }; }}
@@ -2393,6 +2486,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                         {leftActionBar.map((slot, i) => (
                           <button
                             key={'lm'+i}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, 'leftActionBar', i)}
+                            onDragOver={handleDragOver}
+                            onDrop={(e) => handleDrop(e, 'leftActionBar', i)}
                             onClick={() => handleSlotClick('leftActionBar', i)}
                             onContextMenu={(e) => { e.preventDefault(); handleSlotClick('leftActionBar', i, true); }}
                             onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'leftActionBar', index: i }; }}
@@ -2411,6 +2508,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                         {rightActionBar.map((slot, i) => (
                           <button
                             key={'rm'+i}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, 'rightActionBar', i)}
+                            onDragOver={handleDragOver}
+                            onDrop={(e) => handleDrop(e, 'rightActionBar', i)}
                             onClick={() => handleSlotClick('rightActionBar', i)}
                             onContextMenu={(e) => { e.preventDefault(); handleSlotClick('rightActionBar', i, true); }}
                             onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'rightActionBar', index: i }; }}
