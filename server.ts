@@ -368,7 +368,10 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
           // Drop items based on mob type
           let dropType = 0;
           let dropAmount = 1;
-          if (mob.type === 'skeleton') {
+          if (mob.type === 'slime') {
+              dropType = Math.random() > 0.5 ? 1 : 10; // Dirt or Sand (slime gel placeholder)
+              dropAmount = Math.floor(Math.random() * 2) + 1;
+          } else if (mob.type === 'skeleton') {
               dropType = Math.random() > 0.5 ? 403 : 107; // 403 = Bone, 107 = Arrow
               dropAmount = Math.floor(Math.random() * 3) + 1;
           } else if (mob.type === 'creeper') {
@@ -392,14 +395,33 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
                      x: mob.x + Math.random() * 16 - 8, 
                      y: mob.y + Math.random() * 16 - 8, 
                      vx: (Math.random() - 0.5) * 4, 
-                     vy: -3 - Math.random() * 3 
+                     vy: -3 - Math.random() * 3,
+                     spawnTime: Date.now()
                  };
                  itemsUpdated = true;
               }
           }
           
+          // Spawn XP Orbs
+          const xpOrbCount = mob.type === 'golem_boss' ? 20 : mob.type === 'skeleton' ? 3 : 2;
+          for(let i = 0; i < xpOrbCount; i++) {
+             const id = 'xp_' + Date.now() + '_' + i + '_' + Math.floor(Math.random() * 10000);
+             room.items[id] = { 
+                 id, 
+                 type: 999,
+                 x: mob.x + Math.random() * 24 - 12, 
+                 y: mob.y, 
+                 vx: (Math.random() - 0.5) * 5, 
+                 vy: -4 - Math.random() * 3,
+                 spawnTime: Date.now()
+             };
+             itemsUpdated = true;
+          }
+          
           delete room.mobs[mobId];
           mobsUpdated = true;
+          // Emit items immediately so drops appear this tick, not next tick
+          io.to(roomId).emit('items_update', room.items);
           continue;
         }
 
@@ -517,7 +539,9 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
           type: type,
           x: spawnX * 32,
           y: (spawnY - (type === 'golem_boss' ? 4 : 2)) * 32,
-          vx: 0, vy: 0, hp: type === 'golem_boss' ? 300 : 10, 
+          vx: 0, vy: 0, 
+          hp: type === 'golem_boss' ? 300 : 10, 
+          maxHp: type === 'golem_boss' ? 300 : 10,
           facingRight: Math.random() > 0.5
         };
         mobsUpdated = true;
@@ -532,11 +556,13 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
   io.on('connection', (socket) => {
     let currentRoom: string | null = null;
 
-    socket.on('join_room', (data: { roomId: string, nickname?: string, uid?: string, profileId?: string } | string) => { 
+    socket.on('join_room', (data: { roomId: string, nickname?: string, uid?: string, email?: string, profileId?: string } | string) => { 
       const roomId = typeof data === 'string' ? data : data.roomId; 
       const nickname = typeof data === 'string' ? 'Player' : (data.nickname || 'Player');
       const uid = typeof data === 'string' ? undefined : data.uid;
+      const email = typeof data === 'string' ? '' : (data.email || '');
       const profileId = typeof data === 'string' ? undefined : data.profileId;
+      const isAdmin = email === 'ewilliamhe@gmail.com' || email === 'zudran@gmail.com';
       // Leave previous room if any
       if (currentRoom) {
         socket.leave(currentRoom);
@@ -580,7 +606,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       const startY = (spawnY - 2) * 32;
 
       // Add player to room
-      activeRooms[roomId].players[socket.id] = { id: socket.id, name: nickname, x: startX, y: startY, facingRight: true, vx: 0, vy: 0, uid, profileId };
+      activeRooms[roomId].players[socket.id] = { id: socket.id, name: nickname, x: startX, y: startY, facingRight: true, vx: 0, vy: 0, uid, profileId, isAdmin };
 
       // Send the entire current world and player list to the new user
       socket.emit('init_world', {
@@ -664,20 +690,41 @@ socket.on('chat_message', (message: string) => {
       const player = room?.players[socket.id];
       if (!player) return;
 
-      if (message.startsWith('/give ')) {
+      // ---- Admin-only commands ----
+      if (message.startsWith('/give ') || message.startsWith('/give_sp ') || message.startsWith('/give_xp ') || message.startsWith('/give_level ') || message.startsWith('/mob ')) {
+        if (!player.isAdmin) {
+          socket.emit('chat_message', { id: 'system', name: 'System', message: '⛔ You do not have permission to use this command.' });
+          return;
+        }
+
         const parts = message.split(' ');
-        if (parts.length >= 2) {
-           const typeStr = parts[1];
-           let typeId = parseInt(typeStr);
-           const count = parts[2] ? parseInt(parts[2]) : 1;
-           if (!isNaN(typeId)) {
-               // Give item directly to player by spawning it exactly on top of them (fastest way to give without a complex direct inventory packet)
-               const itemId = 'item_' + Date.now() + '_' + Math.floor(Math.random()*1000);
-               activeRooms[currentRoom].items[itemId] = {
-                   id: itemId, type: typeId, count: count, x: player.x, y: player.y, vx: 0, vy: -5
-               };
-               socket.emit('chat_message', { id: 'system', name: 'System', message: `Spawned item ${typeId} x${count}.` });
-           }
+
+        if (message.startsWith('/give ')) {
+          const typeId = parseInt(parts[1]);
+          const count = parts[2] ? parseInt(parts[2]) : 1;
+          if (!isNaN(typeId)) {
+            const itemId = 'item_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+            room.items[itemId] = { id: itemId, type: typeId, count, x: player.x, y: player.y - 32, vx: 0, vy: -3, spawnTime: Date.now() };
+            socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Spawned item ${typeId} x${count}.` });
+          }
+        } else if (message.startsWith('/give_sp ')) {
+          const amount = parseInt(parts[1]) || 1;
+          socket.emit('give_sp', amount);
+          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Granted ${amount} Skill Points.` });
+        } else if (message.startsWith('/give_xp ')) {
+          const amount = parseInt(parts[1]) || 100;
+          socket.emit('give_xp', amount);
+          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Granted ${amount} XP.` });
+        } else if (message.startsWith('/give_level ')) {
+          const amount = parseInt(parts[1]) || 1;
+          socket.emit('give_level', amount);
+          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Granted ${amount} levels.` });
+        } else if (message.startsWith('/mob ')) {
+          const mobType = parts[1] || 'slime';
+          const mobId = 'mob_admin_' + Date.now();
+          room.mobs[mobId] = { id: mobId, type: mobType, x: player.x + 64, y: player.y, vx: 0, vy: 0, hp: mobType === 'golem_boss' ? 300 : 10, maxHp: mobType === 'golem_boss' ? 300 : 10, facingRight: false };
+          io.to(currentRoom).emit('mobs_update', room.mobs);
+          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Spawned mob: ${mobType}.` });
         }
         return;
       }
@@ -840,9 +887,8 @@ socket.on('chat_message', (message: string) => {
             if (dist <= splashRadius) {
               m.hp -= (data.damage || 1);
               m.vy = -6;
-              m.vx = data.facingRight ? 8 : -8;
               m.vx = (m.x > hitX) ? 8 : (m.x < hitX) ? -8 : (data.facingRight ? 8 : -8);
-              m.lastHitBy = data.playerId; 
+              m.lastHitBy = socket.id; // Always use authoritative socket.id
               
               // Emit damage indicator
               io.to(currentRoom).emit('damage_indicator', { 

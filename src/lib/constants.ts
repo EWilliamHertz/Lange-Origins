@@ -86,7 +86,8 @@ export enum BlockType {
   WizardNPC = 416,
   DurelNPC = 417,
   WizardStaff = 418,
-  BlueCrystal = 419
+  BlueCrystal = 419,
+  XpOrb = 999
 }
 
 export const BlockColors: Record<BlockType, string> = {
@@ -173,7 +174,8 @@ export const BlockColors: Record<BlockType, string> = {
   [BlockType.DurelNPC]: '#F44336',
   [BlockType.WizardStaff]: '#673AB7',
   [BlockType.TreeSeed]: '#4CAF50',
-  [BlockType.GrapplingHook]: '#455A64'
+  [BlockType.GrapplingHook]: '#455A64',
+  [BlockType.XpOrb]: '#00FF00'
 };
 
 export const SolidBlocks = new Set([
@@ -268,7 +270,8 @@ export const BlockHardness: Record<BlockType, number> = {
   [BlockType.DurelNPC]: Infinity,
   [BlockType.WizardStaff]: 0,
   [BlockType.TreeSeed]: 0,
-  [BlockType.GrapplingHook]: 0
+  [BlockType.GrapplingHook]: 0,
+  [BlockType.XpOrb]: 0
 };
 
 export const PlatformBlocks = new Set([
@@ -359,5 +362,6 @@ export const BlockNames: Record<BlockType, string> = {
   [BlockType.WizardNPC]: 'Wizard',
   [BlockType.DurelNPC]: 'Durel',
   [BlockType.WizardStaff]: 'Wizard Staff',
-  [BlockType.BlueCrystal]: 'Blue Crystal'
+  [BlockType.BlueCrystal]: 'Blue Crystal',
+  [BlockType.XpOrb]: 'XP Orb'
 };

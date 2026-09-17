@@ -46,7 +46,7 @@ export default function App() {
   const [interactPlayerName, setInteractPlayerName] = useState<string | null>(null);
 
   const [activeTrade, setActiveTrade] = useState<any>(null);
-  const [currentGang, setCurrentGang] = useState<any>(null);
+  const [currentParty, setCurrentParty] = useState<any>(null);
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasLoadedSave, setHasLoadedSave] = useState(false);
@@ -74,6 +74,7 @@ export default function App() {
   const [level, setLevel] = useState(1);
   const [skillPoints, setSkillPoints] = useState(0);
   const [skills, setSkills] = useState({ strength: 0, dexterity: 0, intelligence: 0 });
+  const [levelUpFlash, setLevelUpFlash] = useState(false);
   
   interface Quest {
     id: string; title: string; description: string; goal: number; current: number; completed: boolean; rewardText: string; prerequisiteId?: string;
@@ -228,6 +229,14 @@ export default function App() {
   const [nickname, setNickname] = useState<string>(() => `Player${Math.floor(Math.random() * 10000)}`);
 
   const [characterSkin, setCharacterSkin] = useState<string>('orange');
+  const [characterJob, setCharacterJob] = useState<string>('warrior');
+  
+  const availableJobs = [
+    { id: 'warrior', name: 'Warrior', desc: '+5 Strength', icon: '⚔️', skills: { strength: 5, dexterity: 0, intelligence: 0 } },
+    { id: 'ranger', name: 'Ranger', desc: '+5 Dexterity', icon: '🏹', skills: { strength: 0, dexterity: 5, intelligence: 0 } },
+    { id: 'mage', name: 'Mage', desc: '+5 Intelligence', icon: '🪄', skills: { strength: 0, dexterity: 0, intelligence: 5 } },
+    { id: 'novice', name: 'Novice', desc: 'No starting bonus', icon: '👤', skills: { strength: 0, dexterity: 0, intelligence: 0 } }
+  ];
 
   const [profiles, setProfiles] = useState<any[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
@@ -283,6 +292,7 @@ export default function App() {
   
   const [selectedSlotIndex, setSelectedSlotIndex] = useState(0);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [instancesOpen, setInstancesOpen] = useState(false);
   const [showEquipment, setShowEquipment] = useState(false);
   const [duelingOpponents, setDuelingOpponents] = useState<string[]>([]);
   const [inventoryTab, setInventoryTab] = useState<'crafting' | 'guide' | 'skills'>('crafting');
@@ -300,10 +310,10 @@ export default function App() {
   const [showLeftActionBar, setShowLeftActionBar] = useState(false);
   const [showRightActionBar, setShowRightActionBar] = useState(false);
 
-  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills });
+  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, characterJob, kills, xp, level, skillPoints, skills });
   useEffect(() => {
-    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills };
-  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills]);
+    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, characterJob, kills, xp, level, skillPoints, skills };
+  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, characterJob, kills, xp, level, skillPoints, skills]);
 
   const saveProgress = async () => {
     const latest = saveStateRef.current;
@@ -325,6 +335,7 @@ export default function App() {
         skills: JSON.stringify(latest.skills),
         name: latest.nickname,
         skin: latest.characterSkin,
+        job: latest.characterJob,
         lastRoom: latest.serverName || 'public-lobby',
         updatedAt: serverTimestamp()
       }, { merge: true });
@@ -378,7 +389,7 @@ export default function App() {
   
   const [notifications, setNotifications] = useState<{id: string, type: string, senderId: string, senderName: string, msg?: string, timestamp: number}[]>([]);
   
-  const addNotification = (type: 'trade'|'gang'|'friend'|'duel'|'system'|'level_up', senderId: string, senderName: string, msg?: string) => {
+  const addNotification = (type: 'trade'|'party'|'friend'|'duel'|'system'|'level_up', senderId: string, senderName: string, msg?: string) => {
      setNotifications(prev => [...prev, { id: Math.random().toString(), type, senderId, senderName, msg, timestamp: Date.now() }]);
   };
 
@@ -686,6 +697,11 @@ export default function App() {
         return;
       }
       
+      if (e.key.toLowerCase() === 'i') {
+        setInstancesOpen(prev => !prev);
+        return;
+      }
+      
       if (e.key.toLowerCase() === 'e') {
         if (merchantOpen) {
           setMerchantOpen(false);
@@ -711,6 +727,10 @@ export default function App() {
       }
       
       if (e.key === 'Escape') {
+        if (instancesOpen) {
+          setInstancesOpen(false);
+          return;
+        }
         if (merchantOpen) {
           setMerchantOpen(false);
           returnCursorItemToInventory(cursorItem);
@@ -1357,56 +1377,56 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              
              <div className="flex items-center gap-4 mb-10 shrink-0">
                <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-900/30">
-                 <Globe size={28} className="text-white" />
+                 <Globe size={28} className="text-blue-400 drop-shadow-[0_0_10px_rgba(96,165,250,0.8)]" />
                </div>
                <div>
-                 <h1 className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-neutral-500 tracking-tight">World Browser</h1>
-                 <p className="text-neutral-400 font-medium">Join an existing realm or start your own.</p>
+                 <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 tracking-tight drop-shadow-sm">World Browser</h1>
+                 <p className="text-neutral-400 font-medium mt-1">Join an existing realm or start your own.</p>
                </div>
              </div>
 
              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar flex flex-col">
-               <div className="flex items-center gap-4 mb-6 border-b border-white/5 pb-4 shrink-0">
+               <div className="flex items-center gap-4 mb-6 border-b border-white/10 pb-4 shrink-0">
                  <button
                      onClick={() => setLobbyTab('play')}
-                     className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all ${lobbyTab === 'play' ? 'bg-blue-600/20 text-blue-400' : 'text-neutral-500 hover:text-white'}`}
+                     className={`text-sm font-bold uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all duration-300 ${lobbyTab === 'play' ? 'bg-blue-600/30 text-blue-300 shadow-[0_0_20px_rgba(37,99,235,0.3)] border border-blue-500/30' : 'text-neutral-500 hover:text-white hover:bg-white/5 border border-transparent'}`}
                  >Live Servers</button>
                  <button
                      onClick={() => setLobbyTab('marketplace')}
-                     className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${lobbyTab === 'marketplace' ? 'bg-emerald-600/20 text-emerald-400' : 'text-neutral-500 hover:text-white'}`}
+                     className={`text-sm font-bold uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all duration-300 flex items-center gap-2 ${lobbyTab === 'marketplace' ? 'bg-emerald-600/30 text-emerald-300 shadow-[0_0_20px_rgba(5,150,105,0.3)] border border-emerald-500/30' : 'text-neutral-500 hover:text-white hover:bg-white/5 border border-transparent'}`}
                  ><ShoppingBag size={14}/> Marketplace</button>
                </div>
                           
                {lobbyTab === 'play' ? (
                  <div className="flex flex-col">
                    <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                       <Star size={14} className="text-amber-500" /> Favorites
+                     <h3 className="text-xs uppercase tracking-widest font-bold text-neutral-400 mb-4 flex items-center gap-2">
+                       <Star size={14} className="text-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.8)]" /> Favorites
                      </h3>
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                        {favoriteServers.length > 0 ? favoriteServers.map(srv => (
-                         <div key={srv} onClick={() => joinServer(srv)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 p-4 rounded-2xl cursor-pointer transition-all flex items-center justify-between group">
-                           <span className="font-bold text-neutral-200 group-hover:text-white transition-colors">{srv}</span>
-                           <button onClick={(e) => toggleFavorite(srv, e)} className="text-amber-500 hover:text-amber-400 p-1">
-                             <Star size={18} fill="currentColor" />
+                         <div key={srv} onClick={() => joinServer(srv)} className="bg-neutral-900/60 backdrop-blur-md hover:bg-neutral-800/80 border border-neutral-800 hover:border-amber-500/40 hover:shadow-[0_0_15px_rgba(245,158,11,0.15)] p-5 rounded-2xl cursor-pointer transition-all duration-300 flex items-center justify-between group">
+                           <span className="font-bold text-neutral-300 group-hover:text-amber-100 transition-colors">{srv}</span>
+                           <button onClick={(e) => toggleFavorite(srv, e)} className="text-amber-500 hover:text-amber-300 p-1 transition-transform group-hover:scale-110">
+                             <Star size={18} fill="currentColor" className="drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
                            </button>
                          </div>
                        )) : <p className="text-neutral-600 text-sm italic py-2">No favorites yet.</p>}
                      </div>
                    </div>
                    <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                       <Globe size={14} className="text-blue-500" /> Public Realms
+                     <h3 className="text-xs uppercase tracking-widest font-bold text-neutral-400 mb-4 flex items-center gap-2">
+                       <Globe size={14} className="text-blue-400 drop-shadow-[0_0_5px_rgba(96,165,250,0.8)]" /> Public Realms
                      </h3>
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                        {publicServers.map(srv => (
-                         <div key={srv.id} onClick={() => joinServer(srv.id)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 p-4 rounded-2xl cursor-pointer transition-all flex items-center justify-between group">
+                         <div key={srv.id} onClick={() => joinServer(srv.id)} className="bg-neutral-900/60 backdrop-blur-md hover:bg-neutral-800/80 border border-neutral-800 hover:border-blue-500/40 hover:shadow-[0_0_15px_rgba(59,130,246,0.15)] p-5 rounded-2xl cursor-pointer transition-all duration-300 flex items-center justify-between group">
                            <div>
-                             <div className="font-bold text-neutral-200 group-hover:text-white transition-colors">{srv.id}</div>
-                             <div className="text-xs text-neutral-500 mt-1 flex items-center gap-1.5"><User size={12} /> {srv.players} online</div>
+                             <div className="font-bold text-neutral-300 group-hover:text-blue-100 transition-colors text-lg">{srv.id}</div>
+                             <div className="text-xs text-neutral-500 mt-1.5 flex items-center gap-1.5 font-medium"><User size={12} className="text-blue-400/70" /> {srv.players} online</div>
                            </div>
-                           <button onClick={(e) => toggleFavorite(srv.id, e)} className="text-neutral-600 hover:text-amber-500 p-1 transition-colors">
-                             <Star size={18} fill={favoriteServers.includes(srv.id) ? "currentColor" : "none"} />
+                           <button onClick={(e) => toggleFavorite(srv.id, e)} className="text-neutral-600 hover:text-amber-400 p-1 transition-all group-hover:scale-110">
+                             <Star size={18} fill={favoriteServers.includes(srv.id) ? "currentColor" : "none"} className={favoriteServers.includes(srv.id) ? "text-amber-500 drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]" : ""} />
                            </button>
                          </div>
                        ))}
@@ -1497,6 +1517,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                           setActiveProfileId(p.id);
                           setNickname(p.name || 'Player');
                           setCharacterSkin(p.skin || 'orange');
+                          setCharacterJob(p.job || 'novice');
                           if (p.hotbar) setHotbar(JSON.parse(p.hotbar));
                           if (p.leftActionBar) setLeftActionBar(JSON.parse(p.leftActionBar));
                           if (p.rightActionBar) setRightActionBar(JSON.parse(p.rightActionBar));
@@ -1522,6 +1543,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       const newId = 'prof_' + Date.now();
                       const newName = nickname || 'New Profile';
                       const newSkin = characterSkin || 'orange';
+                      const newJob = characterJob || 'novice';
                       
                       const defaultHotbar = [
                          { type: 103 /* BlockType.Fists */, count: 1 },
@@ -1532,6 +1554,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                          id: newId,
                          name: newName,
                          skin: newSkin,
+                         job: newJob,
                          health: 100,
                          hotbar: JSON.stringify(defaultHotbar),
                          backpack: JSON.stringify(Array(27).fill(null)),
@@ -1545,6 +1568,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       setActiveProfileId(newId);
                       setNickname(newName);
                       setCharacterSkin(newSkin);
+                      setCharacterJob(newJob);
                       setHotbar(defaultHotbar);
                       setLeftActionBar(Array(10).fill(null));
                       setRightActionBar(Array(10).fill(null));
@@ -1554,7 +1578,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       setXp(0);
                       setLevel(1);
                       setSkillPoints(0);
-                      setSkills({ strength: 0, dexterity: 0, intelligence: 0 });
+                      const startingSkills = availableJobs.find(j => j.id === newJob)?.skills || { strength: 0, dexterity: 0, intelligence: 0 };
+                      setSkills(startingSkills);
                       setQuests(defaultQuests);
                    }}
                    className="px-4 py-2 rounded-xl text-sm font-bold border border-emerald-500/30 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-800/40 transition-all flex items-center justify-center gap-1 w-full"
@@ -1571,21 +1596,26 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       }
                       if (!window.confirm("Are you sure you want to delete this profile? This action cannot be undone.")) return;
                       
-                      const newProfiles = profiles.filter(p => p.id !== activeProfileId);
-                      setProfiles(newProfiles);
-                      
-                      const newActive = newProfiles[0];
-                      setActiveProfileId(newActive.id);
-                      setNickname(newActive.name || 'Player');
-                      setCharacterSkin(newActive.skin || 'orange');
-                      if (newActive.hotbar) setHotbar(JSON.parse(newActive.hotbar));
-                      if (newActive.leftActionBar) setLeftActionBar(JSON.parse(newActive.leftActionBar));
-                      if (newActive.rightActionBar) setRightActionBar(JSON.parse(newActive.rightActionBar));
-                      if (newActive.backpack) setBackpack(JSON.parse(newActive.backpack));
-                      if (newActive.health !== undefined) setHealth(newActive.health);
-                      if (newActive.quests) setQuests(JSON.parse(newActive.quests));
-                      
-                          deleteDoc(doc(db, 'users', currentUser.uid, 'profiles', activeProfileId));
+                      try {
+                          await deleteDoc(doc(db, 'users', currentUser.uid, 'profiles', activeProfileId));
+                          
+                          const newProfiles = profiles.filter(p => p.id !== activeProfileId);
+                          setProfiles(newProfiles);
+                          
+                          const newActive = newProfiles[0];
+                          setActiveProfileId(newActive.id);
+                          setNickname(newActive.name || 'Player');
+                          setCharacterSkin(newActive.skin || 'orange');
+                          if (newActive.hotbar) setHotbar(JSON.parse(newActive.hotbar));
+                          if (newActive.leftActionBar) setLeftActionBar(JSON.parse(newActive.leftActionBar));
+                          if (newActive.rightActionBar) setRightActionBar(JSON.parse(newActive.rightActionBar));
+                          if (newActive.backpack) setBackpack(JSON.parse(newActive.backpack));
+                          if (newActive.health !== undefined) setHealth(newActive.health);
+                          if (newActive.quests) setQuests(JSON.parse(newActive.quests));
+                      } catch (err) {
+                          console.error('Failed to delete profile', err);
+                          alert('Failed to delete profile');
+                      }
                    }}
                    className="px-4 py-2 rounded-xl text-sm font-bold border border-red-500/30 bg-red-900/20 text-red-400 hover:bg-red-800/40 transition-all flex items-center justify-center gap-1"
                  >
@@ -1632,6 +1662,30 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                      ))}
                   </div>
                 </div>
+
+                <div>
+                  <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 mt-4 block">Starting Class (Job)</label>
+                  <div className="grid grid-cols-2 gap-2">
+                     {availableJobs.map(job => (
+                        <button 
+                          key={job.id}
+                          onClick={() => {
+                            setCharacterJob(job.id);
+                            if (activeProfileId) {
+                               setProfiles(profiles.map(p => p.id === activeProfileId ? { ...p, job: job.id } : p));
+                            }
+                          }}
+                          className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${characterJob === job.id ? 'border-amber-500/50 bg-amber-900/20 text-amber-100 shadow-[0_0_15px_rgba(245,158,11,0.15)] scale-[1.02]' : 'border-neutral-800 hover:border-neutral-700 text-neutral-400 bg-black/40 hover:bg-neutral-900/50'}`}
+                          title={job.desc}
+                        >
+                          <span className="text-2xl mb-1">{job.icon}</span>
+                          <span className="text-xs font-bold">{job.name}</span>
+                        </button>
+                     ))}
+                  </div>
+                  <p className="text-[10px] text-neutral-500 mt-2 italic text-center">* Job bonuses only apply when creating a NEW profile.</p>
+                </div>
+
                 {activeProfileId && (
                   <button
                     onClick={saveProgress}
@@ -1807,6 +1861,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
       
       {/* Main Game Area */}
       <div className="flex-1 relative">
+        {levelUpFlash && (
+          <div className="fixed inset-0 pointer-events-none z-[100] flex items-center justify-center animate-pulse" style={{background: 'radial-gradient(circle, rgba(255,215,0,0.3) 0%, transparent 70%)'}}>
+            <div className="text-yellow-300 text-6xl font-black drop-shadow-[0_0_20px_gold] absolute top-1/4 -translate-y-1/2">LEVEL UP!</div>
+          </div>
+        )}
 
         <GameCanvas
           helmet={helmetType}
@@ -1818,8 +1877,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           selectedBlock={selectedBlock} 
           roomId={serverName} 
           userId={currentUser?.uid}
+          email={currentUser?.email}
           profileId={activeProfileId || undefined}
-          isInventoryOpen={inventoryOpen || showInstructions || furnaceOpen || chestOpen || merchantOpen}
+          isInventoryOpen={inventoryOpen || showInstructions || furnaceOpen || chestOpen || merchantOpen || instancesOpen}
           onHealthChange={setHealth}
           skills={skills}
           mana={mana}
@@ -1842,7 +1902,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               setActiveTrade(null);
               // Maybe add a toast/chat notification for the reason?
           }}
-          onGangInvite={(senderId, senderName) => addNotification('gang', senderId, senderName)}
+          onPartyInvite={(senderId, senderName) => addNotification('party', senderId, senderName)}
           onFriendRequest={(senderId, senderName) => addNotification('friend', senderId, senderName)}
 
           onDuelRequest={(senderId, senderName) => addNotification('duel', senderId, senderName)}
@@ -1862,25 +1922,30 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                 newKills[type] = (newKills[type] || 0) + 1;
                 return newKills;
              });
-             const xpGain = type === 'golem_boss' ? 250 : type === 'slime' ? 10 : 25;
-             setXp(prevXp => {
-                let nextXp = prevXp + xpGain;
-                setLevel(prevLevel => {
-                   let currentLevel = prevLevel;
-                   let newSkillPoints = 0;
-                   while (nextXp >= currentLevel * 100) {
-                      nextXp -= currentLevel * 100;
-                      currentLevel++;
-                      newSkillPoints++;
-                   }
-                   if (newSkillPoints > 0) {
-                      setSkillPoints(sp => sp + newSkillPoints);
-                      addNotification('system', 'System', 'System', 'Level Up! Press E to upgrade skills.');
-                   }
-                   return currentLevel;
-                });
-                return nextXp;
-             });
+          }}
+          onGiveSp={(amount) => setSkillPoints(sp => sp + amount)}
+          onGiveXp={(amount) => {
+            setXp(prevXp => {
+              let nextXp = prevXp + amount;
+              setLevel(prevLevel => {
+                let currentLevel = prevLevel;
+                let newSp = 0;
+                while (nextXp >= currentLevel * 100) { nextXp -= currentLevel * 100; currentLevel++; newSp++; }
+                if (newSp > 0) { 
+                  setSkillPoints(sp => sp + newSp); 
+                  addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
+                  setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
+                }
+                return currentLevel;
+              });
+              return nextXp;
+            });
+          }}
+          onGiveLevel={(amount) => {
+            setLevel(prev => prev + amount);
+            setSkillPoints(sp => sp + amount);
+            addNotification('level_up', 'System', 'System', `Admin granted ${amount} level(s)!`);
+            setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
           }}
           onChestUpdated={(tx, ty, inventory) => {
              if (activeChestCoords?.tx === tx && activeChestCoords?.ty === ty) {
@@ -1921,6 +1986,30 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             if (minedBlockType === BlockType.CoalOre) blockType = BlockType.Coal;
             if (minedBlockType === BlockType.DiamondOre) blockType = BlockType.Diamond;
             Sounds.mineBlock();
+            
+            if (minedBlockType === 999) { // XP Orb
+               const xpGain = 10;
+               setXp(prevXp => {
+                  let nextXp = prevXp + xpGain;
+                  setLevel(prevLevel => {
+                     let currentLevel = prevLevel;
+                     let newSkillPoints = 0;
+                     while (nextXp >= currentLevel * 100) {
+                        nextXp -= currentLevel * 100;
+                        currentLevel++;
+                        newSkillPoints++;
+                     }
+                     if (newSkillPoints > 0) {
+                        setSkillPoints(sp => sp + newSkillPoints);
+                        addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.');
+                        setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
+                     }
+                     return currentLevel;
+                  });
+                  return nextXp;
+               });
+               return; // Do not add to inventory
+            }
             
             // Add Woodcutting XP if applicable
             if (minedBlockType === BlockType.Wood || minedBlockType === BlockType.Leaves) {
@@ -2301,6 +2390,37 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             );
           })}
         </div>
+        
+        {/* Instances Modal */}
+        {instancesOpen && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+             <div className="bg-[#0A0A0B]/90 border-2 border-neutral-800 rounded-3xl p-6 shadow-2xl max-w-2xl w-full mx-4">
+                <div className="flex justify-between items-center mb-6">
+                   <h2 className="text-2xl font-black text-white">Dungeons & Instances</h2>
+                   <button onClick={() => setInstancesOpen(false)} className="text-neutral-500 hover:text-white"><X size={24}/></button>
+                </div>
+                <p className="text-neutral-400 mb-6">Select a dungeon or instance to queue into.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 hover:border-emerald-500/50 cursor-pointer transition-all">
+                      <h3 className="text-emerald-400 font-bold text-lg mb-1">Goblin Caves</h3>
+                      <p className="text-neutral-500 text-sm mb-3">Recommended Level: 1-10</p>
+                      <button onClick={() => { setInstancesOpen(false); joinServer('dungeon_goblin_caves'); }} className="w-full bg-emerald-600/20 text-emerald-400 py-2 rounded-lg font-bold hover:bg-emerald-500 hover:text-white transition-all">Enter Instance</button>
+                   </div>
+                   <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 hover:border-purple-500/50 cursor-pointer transition-all">
+                      <h3 className="text-purple-400 font-bold text-lg mb-1">Wizard Tower</h3>
+                      <p className="text-neutral-500 text-sm mb-3">Recommended Level: 10-25</p>
+                      <button onClick={() => { setInstancesOpen(false); joinServer('dungeon_wizard_tower'); }} className="w-full bg-purple-600/20 text-purple-400 py-2 rounded-lg font-bold hover:bg-purple-500 hover:text-white transition-all">Enter Instance</button>
+                   </div>
+                   <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 hover:border-red-500/50 cursor-pointer transition-all">
+                      <h3 className="text-red-400 font-bold text-lg mb-1">Corrupted Lands</h3>
+                      <p className="text-neutral-500 text-sm mb-3">Recommended Level: 25+</p>
+                      <button onClick={() => { setInstancesOpen(false); joinServer('dungeon_corrupted_lands'); }} className="w-full bg-red-600/20 text-red-400 py-2 rounded-lg font-bold hover:bg-red-500 hover:text-white transition-all">Enter Instance</button>
+                   </div>
+                </div>
+             </div>
+          </div>
+        )}
+
         {/* Inventory Modal Overlay */}
         {inventoryOpen && (
           <div 
@@ -2822,7 +2942,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               <button 
                 onClick={() => {
                   if (socketRef.current) socketRef.current.emit('send_trade_request', { targetId: interactPlayerId });
-                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'trade', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Trade request sent.' } as any]);
+                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'system', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Trade request sent.' } as any]);
                   setInteractPlayerId(null);
                 }}
                 className="w-full bg-amber-600/20 hover:bg-amber-600/40 text-amber-500 py-3 rounded-xl font-bold border border-amber-500/30 transition-colors"
@@ -2831,13 +2951,13 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               </button>
               <button 
                 onClick={() => {
-                  if (socketRef.current) socketRef.current.emit('send_gang_invite', { targetId: interactPlayerId });
-                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'gang', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Gang invite sent.' } as any]);
+                  if (socketRef.current) socketRef.current.emit('send_party_invite', { targetId: interactPlayerId });
+                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'system', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Party invite sent.' } as any]);
                   setInteractPlayerId(null);
                 }}
                 className="w-full bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 py-3 rounded-xl font-bold border border-blue-500/30 transition-colors"
               >
-                Invite to Gang
+                Invite to Party
               </button>
               <button 
                 onClick={() => {
@@ -2855,7 +2975,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               <button 
                 onClick={() => {
                   if (socketRef.current) socketRef.current.emit('send_duel_request', { targetId: interactPlayerId });
-                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'duel', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Duel request sent.' } as any]);
+                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'system', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Duel request sent.' } as any]);
                   setInteractPlayerId(null);
                 }}
                 className="w-full bg-red-600/20 hover:bg-red-600/40 text-red-400 py-3 rounded-xl font-bold border border-red-500/30 transition-colors flex items-center justify-center gap-2"
@@ -3041,7 +3161,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              <div className="flex items-center gap-3">
                {n.type === 'trade' ? <Star className="text-amber-500 w-5 h-5" /> : n.type === 'friend' ? <Heart className="text-emerald-500 w-5 h-5" /> : <Shield className="text-blue-500 w-5 h-5" />}
                <div>
-                 <p className="text-sm font-bold text-white">{n.msg ? n.msg : (n.type === 'trade' ? 'Trade Request' : n.type === 'friend' ? 'Friend Request' : 'Gang Invite')}</p>
+                 <p className="text-sm font-bold text-white">{n.msg ? n.msg : (n.type === 'trade' ? 'Trade Request' : n.type === 'friend' ? 'Friend Request' : 'Party Invite')}</p>
                  <p className="text-xs text-neutral-400">{n.msg ? '' : `From ${n.senderName}`}</p>
                </div>
              </div>
@@ -3060,9 +3180,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                                 chatInputRef.current.value = 'I accept your trade request!';
                                 chatInputRef.current.focus();
                             }
-                        } else if (n.type === 'gang') {
-                            setSendChatMsg({text: 'I joined your gang!', timestamp: Date.now()});
-                            if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your gang!', room: serverName });
+                        } else if (n.type === 'party') {
+                            setSendChatMsg({text: 'I joined your party!', timestamp: Date.now()});
+                            if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your party!', room: serverName });
                         } else if (n.type === 'friend') {
                             setSendChatMsg({text: 'I accepted your friend request!', timestamp: Date.now()});
                             if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I accepted your friend request!', room: serverName });
@@ -3235,6 +3355,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                     <h3 className="text-sm uppercase tracking-widest text-neutral-500 font-bold mb-4">Inventory & UI</h3>
                     <ul className="space-y-4">
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">E</span> <span className="text-sm text-neutral-300">Open Inventory/Crafting</span></li>
+                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">I</span> <span className="text-sm text-neutral-300">Instances & Dungeons</span></li>
+                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">Esc</span> <span className="text-sm text-neutral-300">Close Menus</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">Q</span> <span className="text-sm text-neutral-300">Toss Item</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">1-9</span> <span className="text-sm text-neutral-300">Select Hotbar Slot</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">↵</span> <span className="text-sm text-neutral-300">Open Global Chat</span></li>

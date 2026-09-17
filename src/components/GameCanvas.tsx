@@ -16,6 +16,7 @@ interface GameProps {
   selectedBlock: BlockType | null;
   roomId: string;
   userId?: string;
+  email?: string;
   profileId?: string;
   isInventoryOpen: boolean;
   onHealthChange: (health: number) => void;
@@ -32,7 +33,7 @@ interface GameProps {
   onTradeUpdated?: (trade: any) => void;
   onTradeCompleted?: (result: any) => void;
   onTradeCancelled?: (reason: string) => void;
-  onGangInvite?: (senderId: string, senderName: string) => void;
+  onPartyInvite?: (senderId: string, senderName: string) => void;
   onFriendRequest?: (senderId: string, senderName: string) => void;
 
   onDuelRequest?: (senderId: string, senderName: string) => void;
@@ -40,8 +41,10 @@ interface GameProps {
   onChestData?: (tx: number, ty: number, inventory: any[]) => void;
   onChestUpdated?: (tx: number, ty: number, inventory: any[]) => void;
   onMobKilled?: (type: string) => void;
-
-  currentGang?: any;
+  onGiveSp?: (amount: number) => void;
+  onGiveXp?: (amount: number) => void;
+  onGiveLevel?: (amount: number) => void;
+  currentParty?: any;
   onFireWeapon?: (weaponType: number) => void;
   currentAmmoCount?: number;
   skills?: { strength: number, dexterity: number, intelligence: number };
@@ -63,7 +66,7 @@ interface Particle {
   size: number;
 }
 
-export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentGang, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, onToolDurabilityLoss }: GameProps) {
+export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -77,6 +80,21 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     maxLife: number;
     color?: string;
     size?: number;
+    vx?: number;
+    vy?: number;
+    isCrit?: boolean;
+    scale?: number;
+  }
+
+  interface AttackEffect {
+    id: string;
+    x: number;
+    y: number;
+    angle: number;
+    life: number;
+    maxLife: number;
+    type: 'slash' | 'punch' | 'magic';
+    facingRight: boolean;
   }
 
   // Ref for mutable game state to avoid re-renders
@@ -111,6 +129,7 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     mobs: Record<string, any>;
     items: Record<string, any>;
     damageTexts: DamageText[];
+    attackEffects: AttackEffect[];
     explored: boolean[][];
     showMap: boolean;
     
@@ -167,6 +186,7 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     mobs: {},
     items: {},
     damageTexts: [],
+    attackEffects: [],
     explored: [],
     showMap: false,
     
@@ -198,7 +218,7 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
     }
 
     socket.on('connect', () => {
-      socket.emit('join_room', { roomId, nickname: propsRef.current.nickname, uid: propsRef.current.userId, profileId: propsRef.current.profileId });
+      socket.emit('join_room', { roomId, nickname: propsRef.current.nickname, uid: propsRef.current.userId, email: propsRef.current.email, profileId: propsRef.current.profileId });
     });
 
     socket.on('kicked', (data: { reason: string }) => {
@@ -256,9 +276,16 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
 
     socket.on('player_joined', (player: any) => {
       gameState.current.otherPlayers[player.id] = player;
+      if (propsRef.current.onChatMessage) {
+        propsRef.current.onChatMessage({ sender: 'System', text: `${player.name || 'A player'} joined the game.` });
+      }
     });
 
     socket.on('player_left', (id: string) => {
+      const p = gameState.current.otherPlayers[id];
+      if (p && propsRef.current.onChatMessage) {
+        propsRef.current.onChatMessage({ sender: 'System', text: `${p.name || 'A player'} left the game.` });
+      }
       delete gameState.current.otherPlayers[id];
     });
 
@@ -307,9 +334,9 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
       if (propsRef.current.onTradeCancelled) propsRef.current.onTradeCancelled(data.reason);
     });
     
-    socket.on('gang_invite', (data: { senderId: string, senderName: string }) => {
-      if (propsRef.current.onGangInvite) {
-        propsRef.current.onGangInvite(data.senderId, data.senderName);
+    socket.on('party_invite', (data: { senderId: string, senderName: string }) => {
+      if (propsRef.current.onPartyInvite) {
+        propsRef.current.onPartyInvite(data.senderId, data.senderName);
       }
     });
 
@@ -375,7 +402,21 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
     });
 
     socket.on('items_update', (items: Record<string, any>) => {
-      gameState.current.items = items;
+      const current = gameState.current.items;
+      // Add new items from server; remove items no longer on server
+      const serverIds = new Set(Object.keys(items));
+      // Remove items deleted server-side
+      for (const id in current) {
+        if (!serverIds.has(id)) delete current[id];
+      }
+      // Add new items, but preserve client-side position/velocity for existing ones
+      for (const id in items) {
+        if (!current[id]) {
+          // Brand new item — add it with a local spawnTime so pickup delay works
+          current[id] = { ...items[id], spawnTime: Date.now() };
+        }
+        // existing items: keep client physics, just update type/count from server
+      }
     });
 
     socket.on('item_collected', (data: { id: string, type: number, playerId: string }) => {
@@ -419,16 +460,52 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
       }
     });
 
-    socket.on('damage_indicator', (data: { id: string, x: number, y: number, damage: number }) => {
+    socket.on('give_sp', (amount: number) => {
+      if (propsRef.current.onGiveSp) propsRef.current.onGiveSp(amount);
+    });
 
+    socket.on('give_xp', (amount: number) => {
+      if (propsRef.current.onGiveXp) propsRef.current.onGiveXp(amount);
+    });
+
+    socket.on('give_level', (amount: number) => {
+      if (propsRef.current.onGiveLevel) propsRef.current.onGiveLevel(amount);
+    });
+
+    socket.on('damage_indicator', (data: { id: string, x: number, y: number, damage: number }) => {
+      const isHeal = data.damage < 0;
+      const amount = Math.abs(data.damage);
+      const isCrit = amount > 9 && !isHeal;
+      
       gameState.current.damageTexts.push({
         id: data.id,
-        x: data.x,
-        y: data.y,
-        damage: data.damage,
+        x: data.x + (Math.random() - 0.5) * 16,
+        y: data.y - 20,
+        damage: amount,
+        text: isHeal ? `+${amount}` : undefined,
         life: 0,
-        maxLife: 60 // ~1 second at 60fps
+        maxLife: isCrit ? 60 : 45,
+        color: isHeal ? '#2ECC40' : (isCrit ? '#FFD700' : '#FF4444'),
+        size: isCrit ? 22 : (isHeal ? 16 : 14),
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: -1.5,
+        isCrit: isCrit,
+        scale: isCrit ? 1.4 : 1,
       });
+      
+      // Spawn hit particles for everyone when someone takes damage
+      if (!isHeal) {
+        for (let p = 0; p < (isCrit ? 6 : 3); p++) {
+           gameState.current.particles.push({
+             x: data.x + 12, y: data.y,
+             vx: (Math.random() - 0.5) * 6,
+             vy: -Math.random() * 4 - 1,
+             life: 0, maxLife: 20,
+             color: isCrit ? '#FFD700' : '#FF4444',
+             size: isCrit ? 4 : 2,
+           });
+        }
+      }
     });
 
     return () => {
@@ -453,10 +530,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss };
-  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onGangInvite, onDepthChange, onBlockPlaced, currentGang, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -981,13 +1058,108 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                          propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
                      }
                  }
-             }
-        }
-        }
+         }
+         }
+         else if (state.interactionCooldown <= 0) {
+           const mx = state.cameraX + state.mouseX;
+           const my = state.cameraY + state.mouseY;
+           for (const mobId in state.mobs) {
+              const mob = state.mobs[mobId];
+              const mLeft = mob.x; const mRight = mob.x + 24;
+              const mTop = mob.y - 24;
+              const mBottom = mob.y + 24;
+              
+              if (mx >= mLeft && mx <= mRight && my >= mTop && my <= mBottom) {
+                 const sel = propsRef.current.selectedBlock;
+                 const isFist = sel === BlockType.Fists || sel === 0;
+                 const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
+                 const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
+                 const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
+                 
+                 if (!isFist && !isSword && !isPickaxe && !isAxe) continue; // Cannot fight with this item
+                 
+                 if (state.socket) {
+                    const baseDmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
+                             : isAxe ? (sel === BlockType.IronAxe ? 6 : 4)
+                             : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : 3)
+                             : 1;
+                    const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
+                    const isCrit = Math.random() < 0.15;
+                    const finalDmg = isCrit ? dmg * 2 : dmg;
+                    state.socket.emit('hit_mob', { mobId, damage: finalDmg, facingRight: player.x < mob.x, playerId: state.socket.id });
+                    
+                    // Attack swing VFX
+                    const effectType = isFist ? 'punch' : isSword ? 'slash' : 'slash';
+                    state.attackEffects.push({
+                      id: Math.random().toString(),
+                      x: mob.x + 12,
+                      y: mob.y - 12,
+                      angle: player.facingRight ? 0 : Math.PI,
+                      life: 0,
+                      maxLife: 12,
+                      type: effectType,
+                      facingRight: player.facingRight,
+                    });
+                    
+                    // Camera shake
+                    state.shakeTimer = isCrit ? 12 : 6;
+                 }
+                 state.interactionCooldown = 300; // Attack cooldown
+                 hitMob = true;
+                 break;
+              }
+           }
+           
+          // 1.5 Check PvP Hit
+          if (!hitMob && state.socket && propsRef.current.duelingOpponents && propsRef.current.duelingOpponents.length > 0) {
+             for (const otherId in state.otherPlayers) {
+                if (propsRef.current.duelingOpponents.includes(otherId)) {
+                   const other = state.otherPlayers[otherId];
+                   const dx = other.x - player.x;
+                   const dy = other.y - player.y;
+                   const distToOther = Math.sqrt(dx*dx + dy*dy);
+                   const ATTACK_RANGE = 48;
+                   if (distToOther <= ATTACK_RANGE) {
+                      const sel = propsRef.current.selectedBlock;
+                      const isFist = sel === BlockType.Fists || sel === 0;
+                      const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403;
+                      const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
+                      const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
+                      
+                      if (!isFist && !isSword && !isPickaxe && !isAxe) continue;
 
-        // 2. Block interaction if no mob hit and in reach
-        if (!hitMob && dist <= MAX_REACH) {
-          const currentBlock = world[targetTx][targetTy];
+                      // Hit them!
+                      const baseDmg = isSword ? (sel === 403 ? 10 : sel === 402 ? 7 : sel === BlockType.IronSword ? 6 : sel === BlockType.StoneSword ? 5 : 4)
+                               : isAxe ? (sel === BlockType.IronAxe ? 6 : sel === BlockType.StoneAxe ? 4 : 3)
+                               : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : sel === BlockType.StonePickaxe ? 4 : 3)
+                               : 1;
+                      const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
+                      state.socket.emit('hit_player', { targetId: otherId, damage: dmg, facingRight: player.x < other.x });
+                      
+                      const effectType = isFist ? 'punch' : isSword ? 'slash' : 'slash';
+                      state.attackEffects.push({
+                        id: Math.random().toString(),
+                        x: other.x + 12,
+                        y: other.y - 12,
+                        angle: player.facingRight ? 0 : Math.PI,
+                        life: 0,
+                        maxLife: 12,
+                        type: effectType,
+                        facingRight: player.facingRight,
+                      });
+                      
+                      state.interactionCooldown = 300;
+                      hitMob = true; // reusing this to skip block mining
+                      break;
+                   }
+                }
+             }
+          }
+         }
+
+         // 2. Block interaction if no mob hit and in reach
+         if (!hitMob && dist <= MAX_REACH) {
+           const currentBlock = world[targetTx][targetTy];
           
           // Block Placing (Ensure selectedBlock is not null)
           const sel = propsRef.current.selectedBlock;
@@ -1113,6 +1285,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
             // Do NOT call onBlockMined directly here. 
             // It will be called when the player physically collects the spawned item via the 'item_collected' socket event.
           }
+        }
         }
         }
       } else {
@@ -1241,7 +1414,12 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       }
 
       ctx.save();
-      ctx.translate(-Math.floor(state.cameraX), -Math.floor(state.cameraY));
+      // Screen shake
+      const shakeAmt = state.shakeTimer > 0 ? (state.shakeTimer / 20) * 6 : 0;
+      const shakeX = shakeAmt > 0 ? (Math.random() - 0.5) * shakeAmt : 0;
+      const shakeY = shakeAmt > 0 ? (Math.random() - 0.5) * shakeAmt : 0;
+      if (state.shakeTimer > 0) state.shakeTimer--;
+      ctx.translate(-Math.floor(state.cameraX) + shakeX, -Math.floor(state.cameraY) + shakeY);
       
       const startCol = Math.max(0, Math.floor(state.cameraX / TILE_SIZE));
       const endCol = Math.min(WORLD_WIDTH - 1, Math.floor((state.cameraX + dimensions.width) / TILE_SIZE));
@@ -1453,7 +1631,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
 
       
       
-      const drawPlayer = (pX: number, pY: number, pVx: number, facingRight: boolean, skin: string, name: string, tool: BlockType | null = null, isMining: boolean = false, isGangMember: boolean = false, helmetTier: number | null = null, chestTier: number | null = null) => {
+      const drawPlayer = (pX: number, pY: number, pVx: number, facingRight: boolean, skin: string, name: string, tool: BlockType | null = null, isMining: boolean = false, isPartyMember: boolean = false, helmetTier: number | null = null, chestTier: number | null = null, attackTimer: number = 0) => {
 
         const pWidth = player.width;
         const pHeight = player.height;
@@ -1478,7 +1656,6 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         // Back Leg
         ctx.fillStyle = darkColor;
         ctx.fillRect(
-
           pX + 4, 
           pY + pHeight - 8 + (isMoving ? -walkCycle : 0), 
           8, 
@@ -1533,8 +1710,13 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         ctx.translate(armX + 4, armY + 4);
         
         let armRotation = 0;
-        if (isMining) {
-           // Swing animation
+        if (attackTimer > 0) {
+           // Smooth slash arc from up to down
+           const progress = 1 - (attackTimer / 300); // 0 to 1
+           armRotation = -Math.PI / 2 + (Math.PI * progress);
+           if (!facingRight) armRotation = -armRotation;
+        } else if (isMining) {
+           // Standard mining bob
            armRotation = (Math.sin(timestamp * 0.03) * 0.8) - 0.4;
            if (!facingRight) armRotation = -armRotation;
         }
@@ -1640,6 +1822,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         other.x += other.vx; // simple prediction
         other.y += other.vy;
         other.vy += 0.4; // simple gravity
+        other.vx *= 0.8; // dampen horizontal prediction to prevent sliding away on lag
         // Clamp to floor for prediction (crude)
         const topTy = Math.floor(other.y / TILE_SIZE);
         const botTy = Math.floor((other.y + player.height) / TILE_SIZE);
@@ -1649,8 +1832,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            other.y = botTy * TILE_SIZE - player.height - 0.01;
         }
 
-        const isGang = propsRef.current.currentGang?.members?.includes(other.id);
-        drawPlayer(other.x, other.y, other.vx, other.facingRight, (other as any).skin || 'blue', (other as any).name || other.id.substring(0, 4), other.tool, other.isMining, isGang, (other as any).helmet, (other as any).chest);
+        const isParty = propsRef.current.currentParty?.members?.includes(other.id);
+        drawPlayer(other.x, other.y, other.vx, other.facingRight, (other as any).skin || 'blue', (other as any).name || other.id.substring(0, 4), other.tool, other.isMining, isParty, (other as any).helmet, (other as any).chest);
       });
 
       // Random tick near player for farming
@@ -1691,17 +1874,80 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
          ctx.translate(item.x + 8, item.y + 8);
          ctx.rotate(timestamp * 0.002);
          ctx.fillStyle = BlockColors[item.type as BlockType] || '#FFF';
-         if (item.type === BlockType.CarrotSeed) ctx.fillRect(-2, -2, 4, 4);
+         if (item.type === 999) { // XP Orb
+             ctx.shadowBlur = 10;
+             ctx.shadowColor = '#4CAF50';
+             ctx.fillStyle = '#B2FF59'; // Bright green/yellow glow
+             ctx.beginPath();
+             ctx.arc(0, 0, 4 + Math.sin(timestamp * 0.01) * 1.5, 0, Math.PI*2);
+             ctx.fill();
+             ctx.shadowBlur = 0;
+         } else if (item.type === BlockType.CarrotSeed) ctx.fillRect(-2, -2, 4, 4);
          else if (item.type === BlockType.Apple) {
              ctx.beginPath();
              ctx.arc(0, 0, 6, 0, Math.PI*2);
              ctx.fill();
          } else ctx.fillRect(-6, -6, 12, 12);
+         
+         // Rarity Glow for dropped items
+         if (item.type !== 999) {
+             const legendaryTypes = [411, 405, 418, 409, 410]; // Boss Relic, Wizard Staff, Diamond gear
+             const epicTypes = [412, 407, 408, 108]; // Gold gear, Bow
+             const rareTypes = [104, 106, 401, 403, 300, 301, 303, 304]; // Iron gear, Bones, Bullet, Grenade
+             if (legendaryTypes.includes(item.type)) {
+                 ctx.shadowBlur = 20; ctx.shadowColor = '#FFB300'; // Amber/Gold
+                 ctx.strokeStyle = '#FFCA28'; ctx.lineWidth = 2;
+                 ctx.strokeRect(-8, -8, 16, 16);
+                 ctx.shadowBlur = 0;
+             } else if (epicTypes.includes(item.type)) {
+                 ctx.shadowBlur = 15; ctx.shadowColor = '#E040FB'; // Purple
+                 ctx.strokeStyle = '#E040FB'; ctx.lineWidth = 2;
+                 ctx.strokeRect(-7, -7, 14, 14);
+                 ctx.shadowBlur = 0;
+             } else if (rareTypes.includes(item.type)) {
+                 ctx.shadowBlur = 10; ctx.shadowColor = '#42A5F5'; // Blue
+                 ctx.strokeStyle = '#64B5F6'; ctx.lineWidth = 1;
+                 ctx.strokeRect(-7, -7, 14, 14);
+                 ctx.shadowBlur = 0;
+             }
+         }
+         
          ctx.restore();
 
          // Check collection distance
          const dist = Math.hypot(item.x + 8 - (player.x + player.width / 2), item.y + 8 - (player.y + player.height / 2));
-         if (dist < 32 && state.socket) {
+         const canCollect = !item.spawnTime || Date.now() - item.spawnTime > 600;
+         
+         if (item.type === 999 && canCollect) {
+            // XP orb: magnetic - attract toward player within 100px, collect at 28px
+            if (dist < 100) {
+              const angle = Math.atan2((player.y + player.height / 2) - (item.y + 8), (player.x + player.width / 2) - (item.x + 8));
+              item.vx += Math.cos(angle) * 1.5;
+              item.vy += Math.sin(angle) * 1.5;
+              // cap speed
+              const speed = Math.hypot(item.vx, item.vy);
+              if (speed > 8) { item.vx = item.vx / speed * 8; item.vy = item.vy / speed * 8; }
+            }
+            if (dist < 28 && state.socket) {
+              state.damageTexts.push({
+                id: Math.random().toString(),
+                x: item.x + 8,
+                y: item.y - 10,
+                damage: 10,
+                text: '+10 XP',
+                life: 0,
+                maxLife: 40,
+                color: '#4CAF50',
+                size: 14,
+                vx: 0,
+                vy: -1.2,
+                isCrit: false,
+                scale: 1,
+              });
+              state.socket.emit('collect_item', item.id);
+              delete state.items[item.id];
+            }
+         } else if (canCollect && dist < 32 && state.socket) {
             state.socket.emit('collect_item', item.id);
             delete state.items[item.id]; // optimistic
          }
@@ -1801,6 +2047,31 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
          }
          
          ctx.restore();
+         
+         // Draw HP bar above mob
+         if (mob.hp !== undefined && mob.hp < (mob.maxHp || 10)) {
+           const maxHp = mob.maxHp || (mob.type === 'golem_boss' ? 300 : 10);
+           const hpRatio = Math.max(0, mob.hp / maxHp);
+           const barW = 36;
+           const barH = 5;
+           const bx = mob.x - 6;
+           const by = mob.y - 40;
+           // Background
+           ctx.fillStyle = 'rgba(0,0,0,0.6)';
+           ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+           // Red empty
+           ctx.fillStyle = '#5C0000';
+           ctx.fillRect(bx, by, barW, barH);
+           // Green filled
+           const hpColor = hpRatio > 0.5 ? '#2ECC40' : hpRatio > 0.25 ? '#FF851B' : '#FF4136';
+           ctx.fillStyle = hpColor;
+           ctx.fillRect(bx, by, barW * hpRatio, barH);
+           // mob name
+           ctx.fillStyle = 'rgba(255,255,255,0.8)';
+           ctx.font = 'bold 9px sans-serif';
+           ctx.textAlign = 'center';
+           ctx.fillText(mob.type?.toUpperCase() || 'MOB', mob.x + 12, mob.y - 43);
+         }
 
       });
       // Draw local player
@@ -1845,7 +2116,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            player.isGrappling = false;
       }
       
-      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, false);
+      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0 || state.interactionCooldown > 150, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, state.interactionCooldown);
 
       // Draw block highlight outline
       if (inBounds && dist <= MAX_REACH) {
@@ -1871,31 +2142,111 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         ctx.strokeRect(targetTx * TILE_SIZE, targetTy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
       }
 
-      // Draw Damage Texts
+      // Draw Attack Effects (slash/punch VFX)
+      for (let i = state.attackEffects.length - 1; i >= 0; i--) {
+        const fx = state.attackEffects[i];
+        fx.life++;
+        const progress = fx.life / fx.maxLife; // 0 -> 1
+        const alpha = 1 - progress;
+        const sx = fx.x - state.cameraX;
+        const sy = fx.y - state.cameraY;
+        
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(sx, sy);
+        ctx.rotate(fx.facingRight ? -0.4 * progress * Math.PI : 0.4 * progress * Math.PI);
+        
+        if (fx.type === 'slash') {
+          // Draw a slash arc
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 3 - progress * 2;
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = '#FF4444';
+          ctx.beginPath();
+          const arcDir = fx.facingRight ? 1 : -1;
+          ctx.arc(0, 0, 20 + progress * 10, -Math.PI * 0.5 * arcDir, Math.PI * 0.3 * arcDir);
+          ctx.stroke();
+          // Second arc
+          ctx.strokeStyle = '#FF4444';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, 28 + progress * 8, -Math.PI * 0.4 * arcDir, Math.PI * 0.2 * arcDir);
+          ctx.stroke();
+        } else if (fx.type === 'punch') {
+          // Draw a punch impact circle
+          ctx.strokeStyle = '#FFA500';
+          ctx.lineWidth = 2;
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#FFA500';
+          const r = progress * 24;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.stroke();
+          // Star lines
+          for (let line = 0; line < 5; line++) {
+            const a = (line / 5) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(a) * (r * 0.5), Math.sin(a) * (r * 0.5));
+            ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+            ctx.stroke();
+          }
+        }
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        
+        if (fx.life >= fx.maxLife) state.attackEffects.splice(i, 1);
+      }
+
+      // Draw Damage Texts (floating numbers)
       for (let i = state.damageTexts.length - 1; i >= 0; i--) {
         const dtTxt = state.damageTexts[i];
         dtTxt.life++;
-        dtTxt.y -= 0.5; // float upwards
+        // Apply velocity
+        dtTxt.y += (dtTxt.vy || -0.5);
+        dtTxt.x += (dtTxt.vx || 0);
+        dtTxt.vy = (dtTxt.vy || -0.5) * 0.95; // slow down
+        dtTxt.vx = (dtTxt.vx || 0) * 0.92;
         
-        const alpha = 1 - (dtTxt.life / dtTxt.maxLife);
-        ctx.fillStyle = dtTxt.color ? dtTxt.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba') : `rgba(255, 50, 50, ${alpha})`;
-        if (dtTxt.color && dtTxt.color.startsWith('#')) {
-            // Can't easily add alpha to hex here without parsing, but it will still be drawn
-            ctx.globalAlpha = alpha;
-            ctx.fillStyle = dtTxt.color;
+        const progress = dtTxt.life / dtTxt.maxLife;
+        const alpha = progress > 0.6 ? 1 - ((progress - 0.6) / 0.4) : 1; // fade out last 40%
+        const scale = dtTxt.isCrit ? (1 + (1 - progress) * 0.5) : 1; // crits pop in big then shrink
+        
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(dtTxt.x - state.cameraX, dtTxt.y - state.cameraY);
+        ctx.scale(scale, scale);
+        
+        const fontSize = dtTxt.size || 15;
+        ctx.font = `bold ${fontSize}px 'Arial Black', Arial, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const displayTxt = dtTxt.text ? dtTxt.text : (dtTxt.isCrit ? `💥 ${dtTxt.damage}!` : `-${dtTxt.damage}`);
+        
+        // Text shadow / stroke for readability
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.lineWidth = 3;
+        ctx.strokeText(displayTxt, 0, 0);
+        ctx.fillStyle = dtTxt.color || '#FF5555';
+        ctx.fillText(displayTxt, 0, 0);
+        
+        // "CRIT!" label above for critical hits
+        if (dtTxt.isCrit && dtTxt.life < 20) {
+          ctx.font = 'bold 9px sans-serif';
+          ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+          ctx.lineWidth = 2;
+          ctx.strokeText('CRITICAL!', 0, -fontSize - 4);
+          ctx.fillStyle = '#FFD700';
+          ctx.fillText('CRITICAL!', 0, -fontSize - 4);
         }
         
-        ctx.font = `bold ${dtTxt.size || 16}px sans-serif`;
-        ctx.textAlign = 'center';
-        
-        const displayTxt = dtTxt.text ? dtTxt.text : `-${dtTxt.damage}`;
-        ctx.fillText(displayTxt, dtTxt.x - state.cameraX + 12, dtTxt.y - state.cameraY);
-        
-        ctx.globalAlpha = 1.0;
+        ctx.restore();
         
         if (dtTxt.life >= dtTxt.maxLife) {
           state.damageTexts.splice(i, 1);
         }
+
       }
 
       ctx.restore();

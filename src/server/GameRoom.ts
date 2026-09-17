@@ -1,7 +1,6 @@
 import { ECSWorld } from '../lib/ecs';
 import { World, generateWorld } from '../lib/world';
 import { Server as SocketIOServer } from 'socket.io';
-import { firestore } from 'firebase-admin';
 
 import { ProjectileSystem, ItemPhysicsSystem } from './systems';
 import { Position, Velocity, Projectile, ItemDrop } from './components';
@@ -13,7 +12,7 @@ export class GameRoom {
     public mobs: Record<string, any> = {};
     public items: Record<string, any> = {};
     public chests: Record<string, any[]> = {};
-    public gangs: Record<string, any> = {};
+    public parties: Record<string, any> = {};
     public trades: Record<string, any> = {};
     public projectiles: Record<string, any> = {};
     
@@ -24,9 +23,9 @@ export class GameRoom {
     
     // We keep io reference here so GameRoom can broadcast
     public io: SocketIOServer;
-    public db: firestore.Firestore;
+    public db: any;
 
-    constructor(id: string, io: SocketIOServer, db: firestore.Firestore) {
+    constructor(id: string, io: SocketIOServer, db: any) {
         this.id = id;
         this.world = generateWorld(id);
         this.createdAt = Date.now();
