@@ -1115,7 +1115,6 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           }
         }
         }
-        } // close !hitMob block
       } else {
         // Reset mining progress if mouse is up or out of bounds
         state.miningProgress = 0;
