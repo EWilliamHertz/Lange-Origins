@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BlockType, BlockColors, BlockNames } from './lib/constants';
 import { getBlockIcon } from './lib/icons';
 import GameCanvas from './components/GameCanvas';
+import { ModernHUD } from './components/ModernHUD';
 import LandingPage from './components/LandingPage';
 import { Heart, MessageSquare, ArrowRight, Hand, LogOut, User, Star, Clock, Globe, Scroll, X, Book, Shield, Plus, Layers, ShoppingBag, Volume2, VolumeX, Sword } from 'lucide-react';
 import { checkRecipe, RECIPES } from './lib/crafting';
@@ -2258,90 +2259,21 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           }}
         />
         
-        {/* UI Overlay - Top Left */}
-        <div className="absolute top-4 left-4 bg-black/50 text-white px-4 py-2 rounded-lg pointer-events-none text-sm border border-white/10">
-          Playing on server: <span className="font-bold text-blue-400">{serverName}</span>
-        </div>
+        <ModernHUD 
+          health={health} 
+          maxHealth={100 + skills.strength * 10} 
+          mana={mana} 
+          maxMana={100 + skills.intelligence * 10} 
+          level={level} 
+          xp={xp} 
+          job={characterJob}
+          onSkillUse={(skillId) => {
+             // In the future, this will trigger the combat system
+             addNotification('system', 'System', 'System', `Used skill: ${skillId}`);
+          }}
+        />
 
-                {/* Left Action Bar */}
-        <div className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 p-2 rounded-xl border border-white/10 flex flex-col gap-1 z-10">
-           
-           {leftActionBar.map((slot, index) => (
-             <button
-               key={'l'+index}
-               onClick={() => { if (inventoryOpen) handleSlotClick('leftActionBar', index); }}
-               onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('leftActionBar', index, true); }}
-               className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
-             >
-               {renderBlockIcon(slot)}
-             </button>
-           ))}
-        </div>
 
-        {/* Right Action Bar */}
-        <div className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 p-2 rounded-xl border border-white/10 flex flex-col gap-1 z-10">
-           
-           {rightActionBar.map((slot, index) => (
-             <button
-               key={'r'+index}
-               onClick={() => { if (inventoryOpen) handleSlotClick('rightActionBar', index); }}
-               onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('rightActionBar', index, true); }}
-               className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
-             >
-               {renderBlockIcon(slot)}
-             </button>
-           ))}
-        </div>
-
-                {/* Player Status HUD */}
-        <div className="absolute top-4 right-4 flex flex-col gap-3 w-64 bg-black/50 p-4 rounded-xl border border-white/10 backdrop-blur-md shadow-2xl">
-           
-           {/* Level & XP */}
-           <div className="flex justify-between items-center mb-1">
-             <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-300 flex items-center justify-center font-black text-black shadow-[0_0_10px_rgba(251,191,36,0.5)]">
-                   {level}
-                </div>
-                <div className="flex flex-col">
-                   <span className="text-xs font-bold text-white uppercase tracking-wider">{nickname || 'Player'}</span>
-                   <span className="text-[10px] text-amber-400 font-bold">{xp} / {level * 100} XP</span>
-                </div>
-             </div>
-           </div>
-           
-           {/* XP Progress Bar */}
-           <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden shadow-inner -mt-1">
-              <div className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 transition-all duration-300" style={{ width: `${(xp / (level * 100)) * 100}%` }}></div>
-           </div>
-
-           {/* Health Bar */}
-           <div className="flex flex-col gap-1 mt-1">
-             <div className="flex justify-between items-center px-1">
-                <span className="text-[10px] uppercase font-black text-red-400 tracking-wider flex items-center gap-1"><Heart size={10} className="fill-red-400" /> HP</span>
-                <span className="text-[10px] font-bold text-neutral-300">{health} / {20 + (skills.strength || 0) * 10}</span>
-             </div>
-             <div className="w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-red-900/30">
-                <div className="h-full bg-gradient-to-r from-red-600 to-rose-400 transition-all duration-300 relative" style={{ width: `${(health / (20 + (skills.strength || 0) * 10)) * 100}%` }}>
-                   <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.2)_50%,transparent_100%)] w-full h-full animate-[shimmer_2s_infinite]"></div>
-                </div>
-             </div>
-           </div>
-
-           {/* Mana Bar */}
-           {quests.find(q => q.id === 'q5')?.completed && (
-             <div className="flex flex-col gap-1">
-               <div className="flex justify-between items-center px-1">
-                  <span className="text-[10px] uppercase font-black text-blue-400 tracking-wider flex items-center gap-1">MP</span>
-                  <span className="text-[10px] font-bold text-neutral-300">{mana} / {100 + (skills.intelligence || 0) * 20}</span>
-               </div>
-               <div className="w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-blue-900/30">
-                  <div className="h-full bg-gradient-to-r from-blue-700 to-cyan-400 transition-all duration-300 relative" style={{ width: `${(mana / (100 + (skills.intelligence || 0) * 20)) * 100}%` }}>
-                     <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.2)_50%,transparent_100%)] w-full h-full animate-[shimmer_2s_infinite]"></div>
-                  </div>
-               </div>
-             </div>
-           )}
-        </div>
         {/* Chat System */}
         <div className="absolute bottom-24 left-4 w-72 z-10 flex flex-col justify-end pointer-events-none">
            <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
