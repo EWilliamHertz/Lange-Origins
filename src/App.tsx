@@ -390,7 +390,14 @@ export default function App() {
   const [notifications, setNotifications] = useState<{id: string, type: string, senderId: string, senderName: string, msg?: string, timestamp: number}[]>([]);
   
   const addNotification = (type: 'trade'|'party'|'friend'|'duel'|'system'|'level_up', senderId: string, senderName: string, msg?: string) => {
-     setNotifications(prev => [...prev, { id: Math.random().toString(), type, senderId, senderName, msg, timestamp: Date.now() }]);
+     const id = Math.random().toString();
+     setNotifications(prev => [...prev, { id, type, senderId, senderName, msg, timestamp: Date.now() }]);
+     
+     if (type === 'level_up' || type === 'system') {
+       setTimeout(() => {
+         setNotifications(prev => prev.filter(n => n.id !== id));
+       }, 3000);
+     }
   };
 
   const [chatMessages, setChatMessages] = useState<{sender: string, text: string}[]>([]);
@@ -3166,11 +3173,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                </div>
              </div>
              <div className="flex flex-col gap-1">
-               {n.type === 'system' || n.type === 'level_up' ? (
-                  <button onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))} className="bg-neutral-600/80 hover:bg-neutral-500 text-white text-[10px] px-2 py-0.5 rounded transition-colors">
-                    Dismiss
-                  </button>
-               ) : (
+               {n.type === 'system' || n.type === 'level_up' ? null : (
                   <>
                      <button onClick={() => {
                         setNotifications(prev => prev.filter(x => x.id !== n.id));
