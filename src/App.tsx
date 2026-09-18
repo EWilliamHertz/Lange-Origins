@@ -885,9 +885,9 @@ export default function App() {
         return;
       }
 
-      // Q key - Dedicated Drop/Toss item (Never opens quests)
+      // Q key - Dedicated Drop/Toss item (Quests are checked via E and Tab)
       if (e.key.toLowerCase() === 'q') {
-        // 1. If holding cursor item
+        // 1. If holding cursor item -> drop cursor item
         if (cursorItem && cursorItem.type !== BlockType.Air) {
           const dropCount = e.ctrlKey ? (cursorItem.count || 1) : 1;
           window.dispatchEvent(new CustomEvent('toss_item', { detail: { type: cursorItem.type, count: dropCount } }));
@@ -900,7 +900,7 @@ export default function App() {
           return;
         }
 
-        // 2. If hovering an inventory or action bar slot
+        // 2. If hovering an inventory or action bar slot -> drop hovered item
         if (hoveredSlotRef.current) {
           const { type: sType, index: sIdx } = hoveredSlotRef.current;
           let targetItem: InventorySlot = null;
@@ -2508,13 +2508,26 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             stamina: stamina,
             maxStamina: maxStamina,
             kills: kills || {},
+            statPoints: statPoints,
             skillPoints: skillPoints,
             skills: skills,
+            abilities: abilities,
             onAllocateSkill: (stat) => {
-              if (skillPoints <= 0) return;
+              if (statPoints <= 0 && skillPoints <= 0) return;
               if (stat === 'dexterity' && (skills.dexterity || 0) >= 10) return;
-              setSkillPoints(sp => sp - 1);
+              if (statPoints > 0) {
+                setStatPoints(sp => Math.max(0, sp - 1));
+              } else {
+                setSkillPoints(sp => Math.max(0, sp - 1));
+              }
               setSkills(s => ({ ...s, [stat]: (s[stat] || 0) + 1 }));
+              Sounds.levelUp();
+            },
+            onAllocateAbility: (ability) => {
+              if (skillPoints <= 0) return;
+              if (ability === 'double_jump' && (abilities.double_jump || 0) >= 1) return;
+              setSkillPoints(sp => Math.max(0, sp - 1));
+              setAbilities(a => ({ ...a, [ability]: (a[ability] || 0) + 1 }));
               Sounds.levelUp();
             }
           }}

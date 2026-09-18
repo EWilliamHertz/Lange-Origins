@@ -11,6 +11,10 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
 
+    match /users/{userId}/characters_v2/{characterId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
     match /users/{userId} {
       allow read, write: if isSignedIn() && request.auth.uid == userId;
     }

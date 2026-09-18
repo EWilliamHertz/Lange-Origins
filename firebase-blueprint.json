@@ -1,5 +1,84 @@
 {
   "entities": {
+    "CharacterProfile": {
+      "title": "Character Profile",
+      "description": "User character profile including class, race, gear, and RPG progression.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique character ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Character display name"
+        },
+        "skin": {
+          "type": "string",
+          "description": "Visual character skin or color"
+        },
+        "playerClass": {
+          "type": "string",
+          "description": "Character class (warrior, mage, rogue)"
+        },
+        "race": {
+          "type": "string",
+          "description": "Character race (human, elf, dwarf, orc)"
+        },
+        "health": {
+          "type": "number",
+          "description": "Current player health"
+        },
+        "level": {
+          "type": "number",
+          "description": "Character level"
+        },
+        "xp": {
+          "type": "number",
+          "description": "Current experience points"
+        },
+        "statPoints": {
+          "type": "number",
+          "description": "Unallocated stat points"
+        },
+        "skillPoints": {
+          "type": "number",
+          "description": "Unallocated skill points"
+        },
+        "skills": {
+          "type": "string",
+          "description": "JSON string of core stats"
+        },
+        "abilities": {
+          "type": "string",
+          "description": "JSON string of unlocked abilities"
+        },
+        "equipment": {
+          "type": "string",
+          "description": "JSON string of equipped armor"
+        },
+        "hotbar": {
+          "type": "string",
+          "description": "JSON string of the hotbar inventory"
+        },
+        "backpack": {
+          "type": "string",
+          "description": "JSON string of the backpack inventory"
+        },
+        "quests": {
+          "type": "string",
+          "description": "JSON string of the player's quests state"
+        },
+        "lastRoom": {
+          "type": "string",
+          "description": "The last room the player was in"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp of the last update"
+        }
+      }
+    },
     "UserProfile": {
       "title": "User Profile",
       "description": "User profiles containing their persisted game state.",
@@ -51,6 +130,10 @@
     "users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "User documents"
+    },
+    "users/{userId}/characters_v2/{characterId}": {
+      "schema": { "$ref": "#/entities/CharacterProfile" },
+      "description": "User character profiles for multi-character slots"
     },
     "rooms/{roomId}/chests/{chestId}": {
       "schema": { "$ref": "#/entities/RoomChest" },

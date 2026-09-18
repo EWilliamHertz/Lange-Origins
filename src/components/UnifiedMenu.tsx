@@ -47,12 +47,12 @@ interface UnifiedMenuProps {
     stamina: number;
     maxStamina: number;
     kills?: Record<string, number>;
-    statPoints: number;
-    skillPoints: number;
-    skills: { strength: number; dexterity: number; intelligence: number };
-    abilities: { slash: number; fireball: number; heal: number; double_jump: number };
-    onAllocateSkill: (stat: 'strength' | 'dexterity' | 'intelligence') => void;
-    onAllocateAbility: (ability: 'slash' | 'fireball' | 'heal' | 'double_jump') => void;
+    statPoints?: number;
+    skillPoints?: number;
+    skills?: { strength?: number; dexterity?: number; intelligence?: number };
+    abilities?: { slash?: number; fireball?: number; heal?: number; double_jump?: number };
+    onAllocateSkill?: (stat: 'strength' | 'dexterity' | 'intelligence') => void;
+    onAllocateAbility?: (ability: 'slash' | 'fireball' | 'heal' | 'double_jump') => void;
   };
   quests: any[];
   keybinds: Record<string, string>;
@@ -112,6 +112,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
   if (!isOpen) return null;
 
+  // Safe fallbacks for player stats & abilities to prevent any runtime crashes
+  const safeSkills = player.skills || { strength: 0, dexterity: 0, intelligence: 0 };
+  const safeAbilities = player.abilities || { slash: 0, fireball: 0, heal: 0, double_jump: 0 };
+  const safeStatPoints = player.statPoints ?? 0;
+  const safeSkillPoints = player.skillPoints ?? 0;
+
   // Compute player combat stats
   const helmetType = equipment[0]?.type || null;
   const chestplateType = equipment[1]?.type || null;
@@ -121,7 +127,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
   const currentWeapon = hotbar[selectedSlotIndex]?.type || null;
   const baseWeaponDmg = currentWeapon ? (getItemMetadata(currentWeapon).attack || 1) : 1;
-  const totalAttackPower = baseWeaponDmg + (player.skills.strength || 0) * 2;
+  const totalAttackPower = baseWeaponDmg + (safeSkills.strength || 0) * 2;
   const totalKills = Object.values(player.kills || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
 
   // Tab configurations
@@ -139,7 +145,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
       id: 'skills', 
       label: 'Skill Tree', 
       icon: <Sparkles size={18} />, 
-      badge: player.skillPoints > 0 ? player.skillPoints : undefined 
+      badge: safeSkillPoints > 0 ? safeSkillPoints : undefined 
     },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
@@ -467,7 +473,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               <div className="bg-gradient-to-r from-blue-950/40 via-neutral-900/80 to-blue-950/40 p-4 rounded-xl border border-blue-500/40 flex items-center justify-between mt-4">
                 <div>
                   <h4 className="text-sm font-bold text-blue-300 flex items-center gap-1.5">
-                    <Sparkles size={16} /> Available Skill Points: <span className="text-white text-base ml-1 font-mono">{player.skillPoints}</span>
+                    <Sparkles size={16} /> Available Skill Points: <span className="text-white text-base ml-1 font-mono">{safeSkillPoints}</span>
                   </h4>
                   <p className="text-xs text-neutral-400 mt-0.5">
                     1 level up grants exactly 1 skill point. Allocate points to unlock and upgrade combat abilities.
@@ -486,7 +492,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <Swords size={16} className="text-red-400" /> Slash
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.abilities.slash || 0}
+                        Lv {safeAbilities.slash || 0}
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -494,8 +500,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('slash'); }}
+                    disabled={safeSkillPoints <= 0}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('slash'); }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >
                     <Plus size={14} /> Upgrade (1 Point)
@@ -510,7 +516,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <Zap size={16} className="text-orange-400" /> Fireball
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.abilities.fireball || 0}
+                        Lv {safeAbilities.fireball || 0}
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -518,8 +524,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('fireball'); }}
+                    disabled={safeSkillPoints <= 0}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('fireball'); }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >
                     <Plus size={14} /> Upgrade (1 Point)
@@ -534,7 +540,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <Heart size={16} className="text-rose-400" /> Heal
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.abilities.heal || 0}
+                        Lv {safeAbilities.heal || 0}
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -542,8 +548,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('heal'); }}
+                    disabled={safeSkillPoints <= 0}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('heal'); }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >
                     <Plus size={14} /> Upgrade (1 Point)
@@ -558,7 +564,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <ArrowRight size={16} className="text-blue-400 rotate-[-90deg]" /> Double Jump
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.abilities.double_jump || 0} / 1
+                        Lv {safeAbilities.double_jump || 0} / 1
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -566,8 +572,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0 || (player.abilities.double_jump || 0) >= 1}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('double_jump'); }}
+                    disabled={safeSkillPoints <= 0 || (safeAbilities.double_jump || 0) >= 1}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('double_jump'); }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >
                     <Plus size={14} /> Unlock (1 Point)
@@ -887,7 +893,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               <div className="bg-gradient-to-r from-amber-950/40 via-neutral-900/80 to-amber-950/40 p-4 rounded-xl border border-amber-500/40 flex items-center justify-between">
                 <div>
                   <h4 className="text-sm font-bold text-amber-300 flex items-center gap-1.5">
-                    <Sparkles size={16} /> Available Stat Points: <span className="text-white text-base ml-1 font-mono">{player.statPoints}</span>
+                    <Sparkles size={16} /> Available Stat Points: <span className="text-white text-base ml-1 font-mono">{safeStatPoints}</span>
                   </h4>
                   <p className="text-xs text-neutral-400 mt-0.5">
                     1 level up grants exactly 1 stat point. Allocate points to empower your character.
@@ -906,7 +912,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <Swords size={16} className="text-rose-400" /> Strength
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.skills.strength || 0}
+                        Lv {safeSkills.strength || 0}
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -914,10 +920,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.statPoints <= 0}
+                    disabled={safeStatPoints <= 0}
                     onClick={() => {
                       Sounds.slotClick();
-                      player.onAllocateSkill('strength');
+                      player.onAllocateSkill?.('strength');
                     }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >
@@ -933,7 +939,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <Zap size={16} className="text-emerald-400" /> Dexterity
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.skills.dexterity || 0} / 10
+                        Lv {safeSkills.dexterity || 0} / 10
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -941,10 +947,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.statPoints <= 0 || (player.skills.dexterity || 0) >= 10}
+                    disabled={safeStatPoints <= 0 || (safeSkills.dexterity || 0) >= 10}
                     onClick={() => {
                       Sounds.slotClick();
-                      player.onAllocateSkill('dexterity');
+                      player.onAllocateSkill?.('dexterity');
                     }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >
@@ -960,7 +966,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         <Sparkles size={16} className="text-cyan-400" /> Intelligence
                       </h5>
                       <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {player.skills.intelligence || 0}
+                        Lv {safeSkills.intelligence || 0}
                       </span>
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
@@ -968,10 +974,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.statPoints <= 0}
+                    disabled={safeStatPoints <= 0}
                     onClick={() => {
                       Sounds.slotClick();
-                      player.onAllocateSkill('intelligence');
+                      player.onAllocateSkill?.('intelligence');
                     }}
                     className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
                   >

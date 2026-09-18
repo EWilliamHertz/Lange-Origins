@@ -6,6 +6,7 @@ import { World } from '../lib/world';
 import { PlayerState, updatePhysics } from '../lib/physics';
 import { computeLighting, LightMap } from '../lib/lighting';
 import { Sounds } from '../lib/audio';
+import { Sprites } from '../lib/sprites';
 import { Crosshair } from 'lucide-react';
 
 interface GameProps {
@@ -1552,8 +1553,11 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                  ctx.fillStyle = '#E91E63'; // shirt
                  ctx.fillRect(x * TILE_SIZE + TILE_SIZE/4, y * TILE_SIZE + TILE_SIZE/2, TILE_SIZE/2, TILE_SIZE/2);
                } else {
-                 ctx.fillStyle = BlockColors[block];
-                 ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                 const spriteDrawn = Sprites.drawSprite(ctx, `/sprites/blocks/${block}.png`, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                 if (!spriteDrawn) {
+                   ctx.fillStyle = BlockColors[block];
+                   ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                 }
                  
                  // Draw some internal texturing / borders to make it look like blocks
                  if (block !== BlockType.Leaves && block !== BlockType.Glass && block !== BlockType.Torch) {
@@ -1891,20 +1895,25 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         ctx.restore();
 
         // --- HEALTH BAR & NAME ABOVE HEAD ---
+        // Ensure no leftover shadows or opacity effects obscure overhead bars
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+        ctx.globalAlpha = 1;
+
         const safeMax = Math.max(1, maxHp);
         const safeCurrent = Math.max(0, Math.min(safeMax, currentHp));
         const hpRatio = safeCurrent / safeMax;
         const barW = 38;
         const barH = 5;
         const barX = Math.round(pX + pWidth / 2 - barW / 2);
-        // Position comfortably above the player head & helmet with clean breathing room
-        const barY = Math.round(pY - 25 + bodyYOffset);
+        // Position comfortably above the player head & helmet with clear breathing room
+        const barY = Math.round(pY - 28 + bodyYOffset);
 
-        // 1. Health Bar (Clean border & high-contrast visible track, no obscuring shadow box)
-        ctx.fillStyle = '#0f172a';
+        // 1. Health Bar (Crisp 1px black outline & high-contrast visible red track, no shadow box)
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
         ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
-        // Background track
-        ctx.fillStyle = '#331010';
+        // High-contrast background track
+        ctx.fillStyle = '#5c1010';
         ctx.fillRect(barX, barY, barW, barH);
         // Filled Health with dynamic color gradient logic
         const fillW = Math.max(0, Math.round(barW * hpRatio));
@@ -1913,16 +1922,18 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         ctx.fillRect(barX, barY, fillW, barH);
         // Gloss highlight line on top
         if (fillW > 0) {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
           ctx.fillRect(barX, barY, fillW, 1);
         }
 
         // 2. Overhead Stamina Bar (Rendered below health bar when not full or sprinting)
         if (currentStamina !== undefined && maxStaminaVal !== undefined && (currentStamina < maxStaminaVal - 1 || isSprinting)) {
+           ctx.shadowBlur = 0;
+           ctx.shadowColor = 'transparent';
            const sRatio = Math.max(0, Math.min(1, currentStamina / Math.max(1, maxStaminaVal)));
            const sBarH = 2;
            const sBarY = barY + barH + 2;
-           ctx.fillStyle = '#0f172a';
+           ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
            ctx.fillRect(barX - 1, sBarY - 1, barW + 2, sBarH + 2);
            ctx.fillStyle = '#1e293b';
            ctx.fillRect(barX, sBarY, barW, sBarH);
@@ -1932,6 +1943,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         }
 
         // 3. Nametag with clean crisp text outline (no heavy shadow box obscuring the health bar)
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
         ctx.font = 'bold 9px "Segoe UI", system-ui, -apple-system, sans-serif';
         const displayName = isPartyMember ? `[Party] ${name}` : name;
         const textMetrics = ctx.measureText(displayName);
