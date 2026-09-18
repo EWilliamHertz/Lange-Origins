@@ -1231,7 +1231,15 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           if (!canMine) {
               state.miningProgress = 0;
           } else {
-              const timeRequired = hardness * 300; // 300ms per hardness unit
+              let timeRequired = hardness * 300; // 300ms per hardness unit
+              
+              if (currentBlock === BlockType.Wood || currentBlock === BlockType.Leaves) {
+                  const wcLevel = propsRef.current.skills?.woodcutting || 1;
+                  timeRequired = timeRequired / (1 + (wcLevel * 0.1)); // 10% faster per level
+              } else {
+                  const miningLevel = propsRef.current.skills?.mining || 1;
+                  timeRequired = timeRequired / (1 + (miningLevel * 0.1));
+              }
               
               state.miningProgress += dt * toolMultiplier;
               

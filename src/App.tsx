@@ -86,7 +86,10 @@ export default function App() {
     { id: 'q2', title: 'Wood Gatherer', description: 'Chop down 3 Wood Logs.', goal: 3, current: 0, completed: false, rewardText: 'Access to Tools', prerequisiteId: 'q1' },
     { id: 'q3', title: 'First Tool', description: 'Craft a Wooden Pickaxe.', goal: 1, current: 0, completed: false, rewardText: 'Mining Capability', prerequisiteId: 'q2' },
     { id: 'q4', title: 'Upgrades', description: 'Craft an Iron Pickaxe.', goal: 1, current: 0, completed: false, rewardText: 'Mining Efficiency', prerequisiteId: 'q3' },
-    { id: 'q5', title: 'Magician\'s Journey', description: 'Mine 5 Blue Crystals to unlock the secrets of magic.', goal: 5, current: 0, completed: false, rewardText: 'Unlock Magic & Mana', prerequisiteId: 'q4' }
+    { id: 'q5', title: 'Magician\'s Journey', description: 'Mine 5 Blue Crystals to unlock the secrets of magic.', goal: 5, current: 0, completed: false, rewardText: 'Unlock Magic & Mana', prerequisiteId: 'q4' },
+    { id: 'q6', title: 'Monster Hunter', description: 'Slay 3 Skeletons or Creepers.', goal: 3, current: 0, completed: false, rewardText: 'Warrior\'s Pride', prerequisiteId: 'q5' },
+    { id: 'q7', title: 'Master Miner', description: 'Mine 5 Diamond Ores.', goal: 5, current: 0, completed: false, rewardText: 'Unmatched Wealth', prerequisiteId: 'q6' },
+    { id: 'q8', title: 'Boss Slayer', description: 'Slay the Giant Golem.', goal: 1, current: 0, completed: false, rewardText: 'Legendary Status', prerequisiteId: 'q7' }
   ];
 
   const [quests, setQuests] = useState<Quest[]>(defaultQuests);
@@ -433,6 +436,7 @@ export default function App() {
 
   const [questLogOpen, setQuestLogOpen] = useState(false);
   const [showNPCMessage, setShowNPCMessage] = useState(false);
+  const [showDurelScroll, setShowDurelScroll] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   
@@ -1933,21 +1937,25 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           }}
           onGiveSp={(amount) => setSkillPoints(sp => sp + amount)}
           onGiveXp={(amount) => {
-            setXp(prevXp => {
-              let nextXp = prevXp + amount;
-              setLevel(prevLevel => {
-                let currentLevel = prevLevel;
-                let newSp = 0;
-                while (nextXp >= currentLevel * 100) { nextXp -= currentLevel * 100; currentLevel++; newSp++; }
-                if (newSp > 0) { 
-                  setSkillPoints(sp => sp + newSp); 
-                  addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
-                  setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
-                }
-                return currentLevel;
-              });
-              return nextXp;
-            });
+            let currentLevel = saveStateRef.current.level;
+            let currentXp = saveStateRef.current.xp;
+            let currentSp = saveStateRef.current.skillPoints;
+
+            currentXp += amount;
+            let newSp = 0;
+            while (currentXp >= currentLevel * 100) {
+               currentXp -= currentLevel * 100;
+               currentLevel++;
+               newSp++;
+            }
+            
+            setXp(currentXp);
+            if (newSp > 0) {
+               setLevel(currentLevel);
+               setSkillPoints(currentSp + newSp);
+               addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
+               setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
+            }
           }}
           onGiveLevel={(amount) => {
             setLevel(prev => prev + amount);
@@ -1997,25 +2005,27 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             
             if (minedBlockType === 999) { // XP Orb
                const xpGain = 10;
-               setXp(prevXp => {
-                  let nextXp = prevXp + xpGain;
-                  setLevel(prevLevel => {
-                     let currentLevel = prevLevel;
-                     let newSkillPoints = 0;
-                     while (nextXp >= currentLevel * 100) {
-                        nextXp -= currentLevel * 100;
-                        currentLevel++;
-                        newSkillPoints++;
-                     }
-                     if (newSkillPoints > 0) {
-                        setSkillPoints(sp => sp + newSkillPoints);
-                        addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.');
-                        setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
-                     }
-                     return currentLevel;
-                  });
-                  return nextXp;
-               });
+               
+            let currentLevel = saveStateRef.current.level;
+            let currentXp = saveStateRef.current.xp;
+            let currentSp = saveStateRef.current.skillPoints;
+
+            currentXp += xpGain;
+            let newSp = 0;
+            while (currentXp >= currentLevel * 100) {
+               currentXp -= currentLevel * 100;
+               currentLevel++;
+               newSp++;
+            }
+            
+            setXp(currentXp);
+            if (newSp > 0) {
+               setLevel(currentLevel);
+               setSkillPoints(currentSp + newSp);
+               addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
+               setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
+            }
+
                return; // Do not add to inventory
             }
             
@@ -2038,26 +2048,48 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                });
             }
 
+                        // Add Mining XP if applicable
+            if ([BlockType.Stone, BlockType.CoalOre, BlockType.IronOre, BlockType.GoldOre, BlockType.DiamondOre, BlockType.Dirt].includes(minedBlockType)) {
+               const miningXpGain = (minedBlockType === BlockType.DiamondOre) ? 50 : (minedBlockType === BlockType.GoldOre) ? 35 : (minedBlockType === BlockType.IronOre || minedBlockType === BlockType.CoalOre) ? 20 : 5;
+               setSkills(prev => {
+                  let currentLevel = prev.mining || 1;
+                  let nextXp = (prev.miningXp || 0) + miningXpGain;
+                  let levelUp = false;
+                  while (nextXp >= currentLevel * 50) {
+                     nextXp -= currentLevel * 50;
+                     currentLevel++;
+                     levelUp = true;
+                  }
+                  if (levelUp) {
+                     addNotification('system', 'System', 'System', `Mining Level Up! Now level ${currentLevel}.`);
+                  }
+                  return { ...prev, mining: currentLevel, miningXp: nextXp };
+               });
+            }
+
             // Add general XP for mining
             const xpGain = (minedBlockType === BlockType.DiamondOre) ? 15 : (minedBlockType === BlockType.GoldOre) ? 10 : (minedBlockType === BlockType.IronOre || minedBlockType === BlockType.CoalOre) ? 5 : 1;
-            setXp(prevXp => {
-                let nextXp = prevXp + xpGain;
-                setLevel(prevLevel => {
-                   let currentLevel = prevLevel;
-                   let newSkillPoints = 0;
-                   while (nextXp >= currentLevel * 100) {
-                      nextXp -= currentLevel * 100;
-                      currentLevel++;
-                      newSkillPoints++;
-                   }
-                   if (newSkillPoints > 0) {
-                      setSkillPoints(sp => sp + newSkillPoints);
-                      addNotification('system', 'System', 'System', 'Level Up! Press E to upgrade skills.');
-                   }
-                   return currentLevel;
-                });
-                return nextXp;
-             });
+            
+            let currentLevel = saveStateRef.current.level;
+            let currentXp = saveStateRef.current.xp;
+            let currentSp = saveStateRef.current.skillPoints;
+
+            currentXp += xpGain;
+            let newSp = 0;
+            while (currentXp >= currentLevel * 100) {
+               currentXp -= currentLevel * 100;
+               currentLevel++;
+               newSp++;
+            }
+            
+            setXp(currentXp);
+            if (newSp > 0) {
+               setLevel(currentLevel);
+               setSkillPoints(currentSp + newSp);
+               addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
+               setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
+            }
+
 
             // Update quests
             if (blockType === BlockType.Dirt) {
@@ -2076,6 +2108,15 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                    if (newCount >= q.goal && !q.completed) {
                      setNotifications(n => [...n, { id: Math.random().toString(), type: 'system', senderName: 'System', timestamp: Date.now(), msg: 'Magic Unlocked!' }]);
                    }
+                   return { ...q, current: newCount, completed: newCount >= q.goal };
+                 }
+                 return q;
+               }));
+            }
+            if (blockType === BlockType.DiamondOre) {
+               setQuests(prev => prev.map(q => {
+                 if (q.id === 'q7' && !q.completed && q.prerequisiteId && prev.find(p => p.id === q.prerequisiteId)?.completed) {
+                   const newCount = q.current + 1;
                    return { ...q, current: newCount, completed: newCount >= q.goal };
                  }
                  return q;
@@ -2190,7 +2231,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               setShowNPCMessage(true);
             }
             if (blockType === BlockType.DurelNPC) {
-              const killMsg = Object.entries(kills).map(([mob, count]) => `${count} ${mob}(s)`).join(', ');
+              setShowDurelScroll(true);
+            } ${mob}(s)`).join(', ');
               alert("DUREL: YOU HAVE SLAIN: " + (killMsg || "NOTHING YET!"));
             }
             if (blockType === BlockType.TreeSeed || blockType === BlockType.CarrotSeed) {
@@ -2698,6 +2740,35 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                                <Plus size={18} /> Allocate (1 SP)
                            </button>
                        </div>
+                       
+                       {/* Woodcutting */}
+                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
+                           <div className="flex justify-between items-start">
+                               <div>
+                                   <h4 className="text-lg font-bold text-green-400 drop-shadow">Woodcutting</h4>
+                                   <p className="text-neutral-400 text-sm">Passively increases chopping speed by 10% per level.</p>
+                                   <div className="w-full bg-neutral-900 rounded-full h-1.5 mt-2 overflow-hidden border border-neutral-700">
+                                       <div className="bg-green-500 h-full" style={{ width: `${Math.min(100, ((skills.woodcuttingXp || 0) / ((skills.woodcutting || 1) * 50)) * 100)}%` }} />
+                                   </div>
+                               </div>
+                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.woodcutting || 1}</span>
+                           </div>
+                       </div>
+                       
+                       {/* Mining */}
+                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
+                           <div className="flex justify-between items-start">
+                               <div>
+                                   <h4 className="text-lg font-bold text-gray-400 drop-shadow">Mining</h4>
+                                   <p className="text-neutral-400 text-sm">Passively increases mining speed by 10% per level.</p>
+                                   <div className="w-full bg-neutral-900 rounded-full h-1.5 mt-2 overflow-hidden border border-neutral-700">
+                                       <div className="bg-gray-500 h-full" style={{ width: `${Math.min(100, ((skills.miningXp || 0) / ((skills.mining || 1) * 50)) * 100)}%` }} />
+                                   </div>
+                               </div>
+                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.mining || 1}</span>
+                           </div>
+                       </div>
+                       
                    </div>
                 </div>
              ) : null}
