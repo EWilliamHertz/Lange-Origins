@@ -1,3 +1,4 @@
+import { isUnarmed } from '../lib/profile';
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { BlockType, BlockColors, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, BlockHardness, SolidBlocks } from '../lib/constants';
@@ -73,21 +74,6 @@ interface Particle {
   size: number;
 }
 
-
-const SpriteCache: Record<string, HTMLImageElement> = {};
-const getPlayerSprite = (race: string, pClass: string, chest: number | null) => {
-   let equipStr = 'none';
-   if (chest === 401 || chest === 408 || chest === 410) equipStr = 'iron_armor';
-   else if (chest) equipStr = 'leather_tunic';
-   const url = `/assets/sprites/${(race || 'human').toLowerCase()}_${(pClass || 'warrior').toLowerCase()}_${equipStr}.png`;
-   
-   if (!SpriteCache[url]) {
-      const img = new Image();
-      img.src = url;
-      SpriteCache[url] = img;
-   }
-   return SpriteCache[url];
-};
 
 export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -548,7 +534,7 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
       socket.disconnect();
       gameState.current.socket = null;
     };
-  }, [roomId]);
+  }, [roomId, profileId]);
 
   // Window resize handler
   useEffect(() => {
@@ -925,7 +911,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
               const dist = Math.sqrt(dx*dx + dy*dy);
               if (dist <= ATTACK_RANGE) {
                   const sel = propsRef.current.selectedBlock;
-                  const isFist = sel === BlockType.Fists; // Strictly require Fists
+                  const isFist = isUnarmed(sel);
                   const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
                   const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
                   const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
@@ -1136,7 +1122,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
               
               if (mx >= mLeft && mx <= mRight && my >= mTop && my <= mBottom) {
                  const sel = propsRef.current.selectedBlock;
-                 const isFist = sel === BlockType.Fists || sel === 0;
+                 const isFist = isUnarmed(sel);
                  const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
                  const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
                  const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
@@ -1186,7 +1172,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                    const ATTACK_RANGE = 48;
                    if (distToOther <= ATTACK_RANGE) {
                       const sel = propsRef.current.selectedBlock;
-                      const isFist = sel === BlockType.Fists || sel === 0;
+                      const isFist = isUnarmed(sel);
                       const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403;
                       const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
                       const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
@@ -1263,7 +1249,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           const selected = propsRef.current.selectedBlock;
           
           let canMine = false;
-          const isFist = selected === BlockType.Fists;
+          const isFist = isUnarmed(selected);
           const isPickaxe = selected === BlockType.WoodPickaxe || selected === BlockType.StonePickaxe || selected === BlockType.IronPickaxe;
           const isAxe = selected === BlockType.WoodAxe || selected === BlockType.StoneAxe || selected === BlockType.IronAxe;
           const isHoe = selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe;

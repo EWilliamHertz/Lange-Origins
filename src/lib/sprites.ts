@@ -1,29 +1,34 @@
+// Resolve only shipped character assets; missing variants fall back before requesting.
+const playerAssets = new Set(Object.keys(import.meta.glob('/public/assets/sprites/*.png')).map(path => path.replace('/public', '')));
+
 // Sprite Manager & Atlas Loader for Lange: Origins
 // Supports both individual sprite files and Atlas / Sprite Sheet grids
 
 class SpriteManager {
   private cache = new Map<string, HTMLImageElement>();
-  private failed = new Set<string>();
+  private failed = new Map<string, number>();
 
   /**
    * Load an image asset from URL with caching
    */
   getImage(src: string): HTMLImageElement | null {
-    if (this.failed.has(src)) return null;
+    if (Date.now() < (this.failed.get(src) || 0)) return null;
+    this.failed.delete(src);
     const existing = this.cache.get(src);
     if (existing) {
       return existing.complete && existing.naturalWidth > 0 ? existing : null;
     }
 
     const img = new Image();
-    img.src = src;
     img.onload = () => {
       this.cache.set(src, img);
     };
     img.onerror = () => {
-      this.failed.add(src);
+      this.cache.delete(src);
+      this.failed.set(src, Date.now() + 30000);
     };
     this.cache.set(src, img);
+    img.src = src;
     return null;
   }
 
@@ -43,7 +48,12 @@ class SpriteManager {
     else if (chestTier) equipStr = 'leather_tunic';
     const r = (race || 'human').toLowerCase();
     const c = (pClass || 'warrior').toLowerCase();
-    return `/assets/sprites/${r}_${c}_${equipStr}.png`;
+    return [
+      `/assets/sprites/${r}_${c}_${equipStr}.png`,
+      `/assets/sprites/${r}_${c}_none.png`,
+      `/assets/sprites/human_${c}_none.png`,
+      '/assets/sprites/human_warrior_none.png',
+    ].find(path => playerAssets.has(path)) || '/assets/sprites/human_warrior_none.png';
   }
 
   /**

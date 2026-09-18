@@ -167,6 +167,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
       <button
         key={`${type}-${index}`}
         id={`slot-${type}-${index}`}
+        aria-label={`${type} slot ${index + 1}${slot ? "" : " (empty)"}`}
         onClick={() => {
           if (isEquipped) {
             Sounds.equipGear();
@@ -470,7 +471,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               </div>
 
               {/* Ability Point Allocation Banner */}
-              <div className="bg-gradient-to-r from-blue-950/40 via-neutral-900/80 to-blue-950/40 p-4 rounded-xl border border-blue-500/40 flex items-center justify-between mt-4">
+              <div className="md:col-span-12 min-w-0 bg-gradient-to-r from-blue-950/40 via-neutral-900/80 to-blue-950/40 p-4 rounded-xl border border-blue-500/40 flex items-center justify-between mt-4">
                 <div>
                   <h4 className="text-sm font-bold text-blue-300 flex items-center gap-1.5">
                     <Sparkles size={16} /> Available Skill Points: <span className="text-white text-base ml-1 font-mono">{safeSkillPoints}</span>
@@ -482,7 +483,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               </div>
 
               {/* Abilities Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-12 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 
                 {/* Slash */}
                 <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
@@ -639,7 +640,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                 <span className="text-xs uppercase font-bold tracking-wider text-amber-400">
                   Backpack Storage (27 Slots)
                 </span>
-                <div className="grid grid-cols-9 gap-2 bg-neutral-900/40 p-4 rounded-xl border border-neutral-800/80">
+                <div className="grid grid-cols-3 sm:grid-cols-9 gap-2 bg-neutral-900/40 p-4 rounded-xl border border-neutral-800/80">
                   {backpack.map((slot, i) => renderSlot('backpack', i, slot))}
                 </div>
               </div>
@@ -647,7 +648,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               {/* Hotbar (10 slots) */}
               <div className="flex flex-col gap-2">
                 <span className="text-xs uppercase font-bold tracking-wider text-amber-400">
-                  Primary Hotbar (Keys 1-9, 0)
+                  Primary Hotbar (Keys 1-9, 0) — Empty slots: mine / punch
                 </span>
                 <div className="flex flex-wrap gap-2 bg-neutral-900/40 p-4 rounded-xl border border-neutral-800/80">
                   {hotbar.map((slot, i) => 
@@ -655,6 +656,19 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                   )}
                 </div>
               </div>
+
+              <p className="text-xs text-neutral-400">Click to pick up or swap an item. Right-click to split a stack. Empty hotbar slots let you punch and mine soft blocks.</p>
+              {[
+                { type: 'leftActionBar', label: 'Left Action Bar', slots: leftActionBar, visible: showLeftActionBar },
+                { type: 'rightActionBar', label: 'Right Action Bar', slots: rightActionBar, visible: showRightActionBar },
+              ].filter(bar => bar.visible).map(bar => (
+                <div key={bar.type} className="flex flex-col gap-2">
+                  <span className="text-xs uppercase font-bold tracking-wider text-amber-400">{bar.label}</span>
+                  <div className="flex flex-wrap gap-2 bg-neutral-900/40 p-4 rounded-xl border border-neutral-800/80">
+                    {bar.slots.map((slot, i) => renderSlot(bar.type, i, slot))}
+                  </div>
+                </div>
+              ))}
 
               {/* Toss / Drop Item Zone */}
               <div 
@@ -997,7 +1011,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {MMO_ABILITIES.filter(a => a.class === playerClass).map(ability => {
-                    const statReq = ability.class === 'warrior' ? player.skills.strength : ability.class === 'archer' ? player.skills.dexterity : player.skills.intelligence;
+                    const statReq = ability.class === 'warrior' ? safeSkills.strength : ability.class === 'archer' ? safeSkills.dexterity : safeSkills.intelligence;
                     const isUnlocked = (statReq || 0) >= ability.req;
                     const boundKey = Object.entries(keybinds).find(([k, v]) => v === ability.id)?.[0];
 
