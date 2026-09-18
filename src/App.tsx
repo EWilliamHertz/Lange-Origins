@@ -12,6 +12,8 @@ import { Sounds } from './lib/audio';
 import { auth, logout, db } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, deleteDoc, updateDoc, increment, orderBy, query, limit } from 'firebase/firestore';
+import { createDefaultCharacterDoc, decodeCharacterDoc, encodeCharacterFields } from './lib/characterSchema';
+import { CharacterMissingError, StaleCharacterError, createCharacterDoc, readCharacterRevision, saveCharacterDoc } from './lib/characterPersistence';
 import { Socket } from 'socket.io-client';
 import { UnifiedMenu, UnifiedMenuTab } from './components/UnifiedMenu';
 import { ItemTooltip } from './components/ItemTooltip';
@@ -177,38 +179,24 @@ export default function App() {
         try {
           const profilesRef = collection(db, 'users', user.uid, 'characters_v2');
           const profilesSnap = await getDocs(profilesRef);
-          const loadedProfiles = profilesSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+          // Every stored document passes through the versioned schema: legacy
+          // docs migrate forward, forged/corrupt fields are rejected.
+          const loadedProfiles = profilesSnap.docs.map(d => {
+              const { data } = decodeCharacterDoc({ ...d.data(), id: d.id });
+              characterRevisions.current[d.id] = data.revision;
+              return data;
+          });
           if (loadedProfiles.length > 0) {
               setProfiles(loadedProfiles);
               const remembered = localStorage.getItem(`activeCharacter:${user.uid}`);
               const active = loadedProfiles.find(p => p.id === remembered) || loadedProfiles[0];
               selectProfile(active);
           } else {
-             // Create initial profile
+             // Create initial profile through the schema's default document.
              const newId = 'prof_' + Date.now();
-             const defaultHotbar = [
-                         null,
-                         null, null, null, null, null, null, null, null, null
-             ];
-             const newProfile = {
-                         id: newId,
-                         name: 'Player',
-                         skin: 'orange',
-                         health: 100,
-                         equipment: JSON.stringify([null, null]),
-                         hotbar: JSON.stringify([null, null, null, null, null, null, null, null, null, null]),
-                         backpack: JSON.stringify(Array(27).fill(null)),
-                         quests: JSON.stringify(defaultQuests),
-                         kills: 0,
-                         xp: 0,
-                         level: 1,
-                         statPoints: 0,
-                         skillPoints: 0,
-                         skills: JSON.stringify({ strength: 0, dexterity: 0, intelligence: 0 }),
-                         abilities: JSON.stringify({ slash: 0, fireball: 0, heal: 0, double_jump: 0 }),
-                         updatedAt: Date.now()
-             };
-             await setDoc(doc(db, 'users', user.uid, 'characters_v2', newId), newProfile);
+             const newProfile = createDefaultCharacterDoc({ id: newId, questsJson: JSON.stringify(defaultQuests) });
+             const initialRevision = await createCharacterDoc(db, user.uid, newProfile);
+             characterRevisions.current[newId] = initialRevision;
              setProfiles([newProfile]);
              selectProfile(newProfile);
           }
@@ -258,6 +246,8 @@ export default function App() {
   const [deletingProfile, setDeletingProfile] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deletedProfileIds = useRef(new Set<string>());
+  // Per-character write-revision last known to this tab (stale-write guard).
+  const characterRevisions = useRef<Record<string, number>>({});
 
   function selectProfile(p: any) {
     setActiveProfileId(p.id);
@@ -306,6 +296,7 @@ export default function App() {
     deletedProfileIds.current.add(id);
     try {
       await deleteDoc(doc(db, 'users', currentUser.uid, 'characters_v2', id));
+      delete characterRevisions.current[id];
       const remaining = profiles.filter(p => p.id !== id);
       setProfiles(remaining);
       if (remaining.length) selectProfile(remaining[0]);
@@ -401,36 +392,64 @@ export default function App() {
   const saveProgress = async () => {
     const latest = saveStateRef.current;
     if (!latest.currentUser || !latest.activeProfileId || deletedProfileIds.current.has(latest.activeProfileId)) return;
+    const profileId = latest.activeProfileId;
+    const uid = latest.currentUser.uid;
     try {
-      const docRef = doc(db, 'users', latest.currentUser.uid, 'characters_v2', latest.activeProfileId);
-      const saved = {
+      // Validate through the versioned schema before anything reaches Firestore.
+      const fields = encodeCharacterFields({
         gold: latest.gold,
-        equipment: JSON.stringify(latest.equipment),
-        hotbar: JSON.stringify(latest.hotbar),
-        leftActionBar: JSON.stringify(latest.leftActionBar),
-        rightActionBar: JSON.stringify(latest.rightActionBar),
-        backpack: JSON.stringify(latest.backpack),
+        equipment: latest.equipment,
+        hotbar: latest.hotbar,
+        leftActionBar: latest.leftActionBar,
+        rightActionBar: latest.rightActionBar,
+        backpack: latest.backpack,
         health: latest.health,
-        quests: JSON.stringify(latest.quests),
-        keybinds: JSON.stringify(latest.keybinds),
+        quests: latest.quests,
+        keybinds: latest.keybinds,
         kills: latest.kills,
         xp: latest.xp,
         level: latest.level,
         statPoints: latest.statPoints,
         skillPoints: latest.skillPoints,
-        skills: JSON.stringify(latest.skills),
-        abilities: JSON.stringify(latest.abilities),
+        skills: latest.skills,
+        abilities: latest.abilities,
         name: latest.nickname,
         skin: latest.characterSkin,
         lastRoom: latest.serverName || 'public-lobby',
         updatedAt: serverTimestamp()
-      };
+      });
       // Keep the lobby snapshot current, including when leaving before autosave fires.
-      setProfiles(items => items.map(p => p.id === latest.activeProfileId ? { ...p, ...saved } : p));
-      await updateDoc(docRef, saved);
-      console.log("Progress auto-saved.");
+      setProfiles(items => items.map(p => p.id === profileId ? { ...p, ...fields } : p));
+
+      // Revision-guarded save: a lagging tab cannot clobber a newer write.
+      const expected = characterRevisions.current[profileId] ?? 0;
+      try {
+        characterRevisions.current[profileId] = await saveCharacterDoc(db, uid, profileId, fields, expected);
+        setProfileError('');
+        console.log("Progress auto-saved.");
+        return;
+      } catch (e) {
+        if (e instanceof CharacterMissingError) {
+          setProfileError('This character no longer exists; it may have been deleted in another session.');
+          return;
+        }
+        if (!(e instanceof StaleCharacterError)) throw e;
+      }
+      // Another session wrote first: adopt its revision, then retry once.
+      const remote = await readCharacterRevision(db, uid, profileId);
+      if (remote === null) {
+        setProfileError('This character no longer exists; it may have been deleted in another session.');
+        return;
+      }
+      characterRevisions.current[profileId] = await saveCharacterDoc(db, uid, profileId, fields, remote);
+      setProfileError('');
+      console.log("Progress auto-saved after revision sync.");
     } catch (e) {
-      console.error("Failed to auto-save progress", e);
+      if (e instanceof StaleCharacterError) {
+        setProfileError('Another session saved this character at the same time; your changes are still in memory and will save on the next change.');
+      } else {
+        console.error("Failed to auto-save progress", e);
+      }
     }
   };
 
@@ -1779,23 +1798,19 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                      <button
                         onClick={async () => {
                           const newId = `char_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-                          
-                          const newProfile = {
-                             id: newId,
-                             name: nickname,
-                             skin: characterSkin || 'orange',
-                             playerClass: playerClass || 'warrior',
-                             race: creatorRace || 'human',
-                             health: 20,
-                             gold: 0,
-                             hotbar: JSON.stringify([null, null, null, null, null, null, null, null, null, null]),
-                             backpack: JSON.stringify(Array(27).fill(null)),
-                             quests: JSON.stringify(defaultQuests),
-                             updatedAt: Date.now()
-                          };
+                          const newProfile = createDefaultCharacterDoc({
+                            id: newId,
+                            name: nickname,
+                            skin: characterSkin || 'orange',
+                            playerClass: playerClass || 'warrior',
+                            race: creatorRace || 'human',
+                            health: 20,
+                            questsJson: JSON.stringify(defaultQuests),
+                          });
                           
                           try {
-                            await setDoc(doc(db, 'users', currentUser.uid, 'characters_v2', newId), newProfile);
+                            const initialRevision = await createCharacterDoc(db, currentUser.uid, newProfile);
+                            characterRevisions.current[newId] = initialRevision;
                           } catch (error) {
                             setProfileError('Could not create character. Please try again.');
                             return;

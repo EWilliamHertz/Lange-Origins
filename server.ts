@@ -6,12 +6,30 @@ import http from 'http';
 import { generateWorld, World } from './src/lib/world';
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import { createAuthenticator, adminEmailsFromEnv, extractBearerToken, type SocketIdentity } from './src/server/auth';
+import {
+    canUseAbility, isKnownAbility, sanitizeProjectile, tradeRoleOf, validateBlockEdit, validateMeleeHit,
+    CHEST_SIZE,
+} from './src/server/combatValidation';
+import { sanitizeInventoryPayload, sanitizeSlot, sanitizeSlots } from './src/lib/characterSchema';
 
 // Initialize Firebase Admin
 initializeApp({
     credential: applicationDefault(),
 });
 const db = getFirestore("ai-studio-langeorigins-54731c1b-d12d-444f-a752-9f96409d3384");
+
+// Server-authoritative identity: Firebase ID tokens only, never client input.
+// Without credentials (local dev), verification fails closed for token-bearing
+// connections while token-less connections play as non-admin guests.
+const authenticator = createAuthenticator({
+    verifyIdToken: async (token) => {
+        const decoded = await getAuth().verifyIdToken(token);
+        return decoded;
+    },
+    adminEmails: adminEmailsFromEnv(process.env.ADMIN_EMAILS),
+});
 
 
 async function startServer() {
@@ -25,11 +43,20 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Verify the bearer token on an admin REST request; null when not admin.
+  async function adminIdentityFromReq(req: express.Request): Promise<SocketIdentity | null> {
+    const token = extractBearerToken(req.headers.authorization);
+    if (!token) return null;
+    const identity = await authenticator.tryAuthenticate(token);
+    return identity?.isAdmin ? identity : null;
+  }
+
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
   });
 
   app.post('/api/servers/:id/reset', async (req, res) => {
+    if (!(await adminIdentityFromReq(req))) return res.status(403).json({ error: 'Unauthorized' });
     const roomId = req.params.id;
     if (activeRooms[roomId]) {
       // Regenerate the world
@@ -73,8 +100,8 @@ async function startServer() {
 
   // --- Admin Endpoints ---
   app.post('/api/admin/wipe', async (req, res) => {
-    const { email, roomId } = req.body;
-    if (email !== 'ewilliamhe@gmail.com' && email !== 'zudran@gmail.com') return res.status(403).json({error: "Unauthorized"});
+    const { roomId } = req.body;
+    if (!(await adminIdentityFromReq(req))) return res.status(403).json({error: "Unauthorized"});
     
     const targetRoom = roomId || 'public-lobby';
     if (activeRooms[targetRoom]) {
@@ -103,9 +130,8 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/players', (req, res) => {
-    const { email } = req.body;
-    if (email !== 'ewilliamhe@gmail.com' && email !== 'zudran@gmail.com') return res.status(403).json({error: "Unauthorized"});
+  app.post('/api/admin/players', async (req, res) => {
+    if (!(await adminIdentityFromReq(req))) return res.status(403).json({error: "Unauthorized"});
     
     const allPlayers = [];
     for (const roomId in activeRooms) {
@@ -116,9 +142,9 @@ async function startServer() {
     res.json({ players: allPlayers });
   });
 
-  app.post('/api/admin/kick', (req, res) => {
-    const { email, playerId, roomId } = req.body;
-    if (email !== 'ewilliamhe@gmail.com' && email !== 'zudran@gmail.com') return res.status(403).json({error: "Unauthorized"});
+  app.post('/api/admin/kick', async (req, res) => {
+    const { playerId, roomId } = req.body;
+    if (!(await adminIdentityFromReq(req))) return res.status(403).json({error: "Unauthorized"});
     
     io.to(playerId).emit('kicked', { reason: "Admin kick" });
     // The disconnect event will handle the rest, but we can forcefully disconnect the socket
@@ -553,17 +579,42 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
     }
   }, 50);
 
+  // Verify identity at the socket handshake. A presented-but-invalid token
+  // rejects the connection; no token plays as a non-admin guest (dev mode).
+  io.use(async (socket, next) => {
+    const token = (socket.handshake as any).auth?.token;
+    if (typeof token === 'string' && token.length > 0) {
+      const identity = await authenticator.tryAuthenticate(token);
+      if (!identity) return next(new Error('authentication failed'));
+      socket.data.identity = identity;
+    } else {
+      socket.data.identity = null;
+    }
+    next();
+  });
+
   io.on('connection', (socket) => {
     let currentRoom: string | null = null;
 
     socket.on('join_room', (data: { roomId: string, nickname?: string, uid?: string, email?: string, profileId?: string } | string) => { 
       const roomId = typeof data === 'string' ? data : data.roomId; 
       const nickname = typeof data === 'string' ? 'Player' : (data.nickname || 'Player');
-      const uid = typeof data === 'string' ? undefined : data.uid;
-      const email = typeof data === 'string' ? '' : (data.email || '');
       const profileId = typeof data === 'string' ? undefined : data.profileId;
-      const isAdmin = email.toLowerCase() === 'ewilliamhe@gmail.com' || email.toLowerCase() === 'zudran@gmail.com';
-      console.log(`Player joining: nickname=${nickname}, email="${email}", isAdmin=${isAdmin}`);
+
+      // Identity comes exclusively from the verified token. Client-asserted
+      // emails are ignored; a claimed uid that contradicts the token rejects.
+      const identity = (socket.data.identity as SocketIdentity | null) || null;
+      const claimedUid = typeof data === 'string' ? undefined : data.uid;
+      if (claimedUid && identity && claimedUid !== identity.uid) {
+        socket.emit('auth_error', { reason: 'identity mismatch' });
+        return;
+      }
+      // Only the verified uid is ever recorded — guest-claimed uids are
+      // dropped so unauthenticated sockets cannot address other accounts'
+      // characters (e.g. through trades).
+      const uid = identity?.uid;
+      const isAdmin = identity?.isAdmin ?? false;
+      console.log(`Player joining: nickname=${nickname}, uid=${uid ?? 'guest'}, isAdmin=${isAdmin}`);
       // Leave previous room if any
       if (currentRoom) {
         socket.leave(currentRoom);
@@ -661,7 +712,7 @@ socket.on('open_chest', async (data: { tx: number, ty: number }) => {
         try {
           const chestDoc = await db.collection('rooms').doc(currentRoom).collection('chests').doc(chestKey).get();
           if (chestDoc.exists) {
-            activeRooms[currentRoom].chests[chestKey] = JSON.parse(chestDoc.data()?.inventory || "[]");
+            activeRooms[currentRoom].chests[chestKey] = sanitizeInventoryPayload(chestDoc.data()?.inventory, CHEST_SIZE);
           } else {
             // Generate random loot for wild chest
             const inv = Array(27).fill(null);
@@ -690,25 +741,38 @@ socket.on('open_chest', async (data: { tx: number, ty: number }) => {
     socket.on('update_chest', (data: { tx: number, ty: number, inventory: any[] }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
       const chestKey = `${data.tx}_${data.ty}`;
-      activeRooms[currentRoom].chests[chestKey] = data.inventory;
-      socket.to(currentRoom).emit('chest_updated', { tx: data.tx, ty: data.ty, inventory: data.inventory });
+      // Chests are shared world state; never trust the client payload shape.
+      const inventory = sanitizeInventoryPayload(data.inventory, CHEST_SIZE);
+      activeRooms[currentRoom].chests[chestKey] = inventory;
+      socket.to(currentRoom).emit('chest_updated', { tx: data.tx, ty: data.ty, inventory });
       db.collection('rooms').doc(currentRoom).collection('chests').doc(chestKey).set({
-        inventory: JSON.stringify(data.inventory),
+        inventory: JSON.stringify(inventory),
         updatedAt: Date.now()
       }).catch(console.error);
     });
 
     socket.on('spawn_item', (data: { type: number, x: number, y: number, vx?: number, vy?: number }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
+      // Spawning free items is an admin power, verified from the token.
+      const identity = (socket.data.identity as SocketIdentity | null) || null;
+      if (!identity?.isAdmin) return;
+      if (!Number.isFinite(data?.type) || !Number.isFinite(data?.x) || !Number.isFinite(data?.y)) return;
+      const clean = sanitizeSlot({ type: data.type, count: 1 });
+      if (!clean) return;
       const id = 'item_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
-      activeRooms[currentRoom].items[id] = { id, type: data.type, x: data.x, y: data.y, vx: data.vx || 0, vy: data.vy || 0 };
+      activeRooms[currentRoom].items[id] = { id, type: clean.type, x: data.x, y: data.y, vx: data.vx || 0, vy: data.vy || 0 };
     });
 
     socket.on('collect_item', (id: string) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
       const room = activeRooms[currentRoom];
-      if (room.items[id]) {
-        const type = room.items[id].type;
+      const player = room.players[socket.id];
+      const item = room.items[id];
+      if (item && player) {
+        // Pickups require the player to actually stand near the drop.
+        const dist = Math.hypot(item.x - player.x, item.y - player.y);
+        if (!Number.isFinite(dist) || dist > 96) return;
+        const type = item.type;
         delete room.items[id];
         io.to(currentRoom).emit('item_collected', { id, type, playerId: socket.id });
       }
@@ -853,32 +917,39 @@ socket.on('chat_message', (message: string) => {
 
     socket.on('block_update', (data: { tx: number, ty: number, blockType: number }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
-      const { world } = activeRooms[currentRoom];
-      
-      if (data.tx >= 0 && data.tx < world.length && data.ty >= 0 && data.ty < world[0].length) {
-        world[data.tx][data.ty] = data.blockType;
-        // Broadcast to everyone in room including sender (or maybe sender predicts locally? Sender can predict locally, so broadcast to others)
-        socket.to(currentRoom).emit('world_updated', data);
-      }
+      const { world, players } = activeRooms[currentRoom];
+      const player = players[socket.id];
+      if (!player) return;
+
+      // World edits must originate near the player; AdminBrick is admin-only.
+      const identity = (socket.data.identity as SocketIdentity | null) || null;
+      const verdict = validateBlockEdit({
+        playerX: player.x, playerY: player.y,
+        tx: data.tx, ty: data.ty, blockType: data.blockType,
+        isAdmin: identity?.isAdmin ?? false,
+        worldWidth: world.length, worldHeight: world[0].length,
+      });
+      if (!verdict.ok) return;
+
+      world[data.tx][data.ty] = data.blockType;
+      // Broadcast to everyone else in room (sender predicts locally)
+      socket.to(currentRoom).emit('world_updated', data);
     });
 
     
     socket.on('fire_projectile', (data: { type: string, x: number, y: number, vx: number, vy: number, damage?: number }) => {
-        if (currentRoom && activeRooms[currentRoom]) {
-            const room = activeRooms[currentRoom];
-            const pId = 'proj_' + Math.random().toString(36).substr(2, 9);
-            room.projectiles[pId] = {
-                id: pId,
-                ownerId: socket.id,
-                type: data.type,
-                x: data.x,
-                y: data.y,
-                vx: data.vx,
-                vy: data.vy,
-                life: data.type === 'trap' ? 1000 : (data.type === 'grenade' ? 60 : (data.type === 'fireball' || data.type === 'frostbolt' || data.type === 'arcane_blast' ? 80 : (data.type === 'poison_arrow' ? 45 : 40))),
-                damage: data.damage !== undefined ? data.damage : (data.type === 'bullet' ? 15 : (data.type === 'arrow' ? 8 : (data.type === 'fireball' ? 30 : 0)))
-            };
-        }
+        if (!currentRoom || !activeRooms[currentRoom]) return;
+        const room = activeRooms[currentRoom];
+        const player = room.players[socket.id];
+        if (!player) return;
+
+        // Damage, lifetime and speed are server-authoritative; the client's
+        // claimed values are clamped or ignored entirely.
+        const clean = sanitizeProjectile(data, { x: player.x, y: player.y });
+        if (!clean) return;
+
+        const pId = 'proj_' + Math.random().toString(36).substr(2, 9);
+        room.projectiles[pId] = { id: pId, ownerId: socket.id, ...clean };
     });
 
 
@@ -891,47 +962,67 @@ socket.on('chat_message', (message: string) => {
     socket.on('hit_player', (data: { targetId: string, damage: number, facingRight: boolean }) => {
       if (currentRoom && activeRooms[currentRoom]) {
         const room = activeRooms[currentRoom];
+        const attacker = room.players[socket.id];
         const targetPlayer = room.players[data.targetId];
-        if (targetPlayer) {
-            // Apply damage locally on their client
-            io.to(data.targetId).emit('take_damage', { amount: data.damage || 5, facingRight: data.facingRight });
-            // Emit damage indicator
-            io.to(currentRoom).emit('damage_indicator', {
-                id: Math.random().toString(),
-                x: targetPlayer.x,
-                y: targetPlayer.y,
-                damage: data.damage || 5, isPlayer: true
-            });
-        }
+        if (!attacker || !targetPlayer) return;
+
+        const now = Date.now();
+        const verdict = validateMeleeHit({
+          attackerX: attacker.x, attackerY: attacker.y,
+          targetX: targetPlayer.x, targetY: targetPlayer.y,
+          claimedDamage: data.damage, now, lastHitAt: attacker.lastHitAt,
+        });
+        if (!verdict.ok) return;
+        attacker.lastHitAt = now;
+
+        // Apply damage locally on their client
+        io.to(data.targetId).emit('take_damage', { amount: verdict.damage, facingRight: data.facingRight });
+        // Emit damage indicator
+        io.to(currentRoom).emit('damage_indicator', {
+            id: Math.random().toString(),
+            x: targetPlayer.x,
+            y: targetPlayer.y,
+            damage: verdict.damage, isPlayer: true
+        });
       }
     });
 
     socket.on('hit_mob', (data: { mobId: string, damage: number, facingRight: boolean, playerId?: string }) => {
       if (currentRoom && activeRooms[currentRoom]) {
         const room = activeRooms[currentRoom];
+        const attacker = room.players[socket.id];
         const primaryMob = room.mobs[data.mobId];
-        if (primaryMob) {
-          const hitX = primaryMob.x;
-          const hitY = primaryMob.y;
-          const splashRadius = 64; // ~2 blocks splash damage
+        if (!attacker || !primaryMob) return;
 
-          for (const mId in room.mobs) {
-            const m = room.mobs[mId];
-            const dist = Math.sqrt(Math.pow(m.x - hitX, 2) + Math.pow(m.y - hitY, 2));
-            if (dist <= splashRadius) {
-              m.hp -= (data.damage || 1);
-              m.vy = -6;
-              m.vx = (m.x > hitX) ? 8 : (m.x < hitX) ? -8 : (data.facingRight ? 8 : -8);
-              m.lastHitBy = socket.id; // Always use authoritative socket.id
-              
-              // Emit damage indicator
-              io.to(currentRoom).emit('damage_indicator', { 
-                id: Math.random().toString(), 
-                x: m.x, 
-                y: m.y, 
-                damage: data.damage || 1, isPlayer: false 
-              });
-            }
+        const now = Date.now();
+        const verdict = validateMeleeHit({
+          attackerX: attacker.x, attackerY: attacker.y,
+          targetX: primaryMob.x, targetY: primaryMob.y,
+          claimedDamage: data.damage, now, lastHitAt: attacker.lastHitAt,
+        });
+        if (!verdict.ok) return;
+        attacker.lastHitAt = now;
+
+        const hitX = primaryMob.x;
+        const hitY = primaryMob.y;
+        const splashRadius = 64; // ~2 blocks splash damage
+
+        for (const mId in room.mobs) {
+          const m = room.mobs[mId];
+          const dist = Math.sqrt(Math.pow(m.x - hitX, 2) + Math.pow(m.y - hitY, 2));
+          if (dist <= splashRadius) {
+            m.hp -= verdict.damage;
+            m.vy = -6;
+            m.vx = (m.x > hitX) ? 8 : (m.x < hitX) ? -8 : (data.facingRight ? 8 : -8);
+            m.lastHitBy = socket.id; // Always use authoritative socket.id
+            
+            // Emit damage indicator
+            io.to(currentRoom).emit('damage_indicator', { 
+              id: Math.random().toString(), 
+              x: m.x, 
+              y: m.y, 
+              damage: verdict.damage, isPlayer: false 
+            });
           }
         }
       }
@@ -942,6 +1033,13 @@ socket.on('chat_message', (message: string) => {
       const room = activeRooms[currentRoom];
       const player = room.players[socket.id];
       if (!player) return;
+
+      // Reject unknown abilities and enforce server-side cooldowns.
+      if (!isKnownAbility(data.ability)) return;
+      const now = Date.now();
+      player.abilityCooldowns = player.abilityCooldowns || {};
+      if (!canUseAbility(data.ability, player.abilityCooldowns[data.ability], now)) return;
+      player.abilityCooldowns[data.ability] = now;
 
       if (data.ability === 'heal') {
           player.hp = Math.min(100, (player.hp || 100) + 20);
@@ -1191,16 +1289,21 @@ socket.on('chat_message', (message: string) => {
     socket.on('update_trade_item', (data: { tradeId: string, role: 'p1'|'p2', index: number, item: any }) => {
        if (currentRoom && activeRooms[currentRoom]) {
            const trade = activeRooms[currentRoom].trades[data.tradeId];
-           if (trade) {
-               if (data.role === 'p1') {
-                   trade.p1Items[data.index] = data.item;
-                   trade.p1Confirm = false;
-                   trade.p2Confirm = false;
+           // Role is derived from membership — a third socket cannot touch a trade.
+           const role = trade ? tradeRoleOf(trade, socket.id) : null;
+           if (trade && role) {
+               // Trade offers pass through the schema sanitizer: unknown item
+               // types and forged counts never reach the Firestore swap.
+               const index = Number(data.index);
+               if (!Number.isInteger(index) || index < 0 || index >= trade.p1Items.length) return;
+               const item = sanitizeSlot(data.item);
+               if (role === 'p1') {
+                   trade.p1Items[index] = item;
                } else {
-                   trade.p2Items[data.index] = data.item;
-                   trade.p1Confirm = false;
-                   trade.p2Confirm = false;
+                   trade.p2Items[index] = item;
                }
+               trade.p1Confirm = false;
+               trade.p2Confirm = false;
                io.to(trade.p1).emit('trade_updated', trade);
                io.to(trade.p2).emit('trade_updated', trade);
            }
@@ -1210,8 +1313,9 @@ socket.on('chat_message', (message: string) => {
     socket.on('toggle_trade_confirm', (data: { tradeId: string, role: 'p1'|'p2' }) => {
        if (currentRoom && activeRooms[currentRoom]) {
            const trade = activeRooms[currentRoom].trades[data.tradeId];
-           if (trade) {
-               if (data.role === 'p1') trade.p1Confirm = !trade.p1Confirm;
+           const role = trade ? tradeRoleOf(trade, socket.id) : null;
+           if (trade && role) {
+               if (role === 'p1') trade.p1Confirm = !trade.p1Confirm;
                else trade.p2Confirm = !trade.p2Confirm;
                
                if (trade.p1Confirm && trade.p2Confirm) {
@@ -1229,7 +1333,7 @@ socket.on('chat_message', (message: string) => {
     socket.on('cancel_trade', (data: { tradeId: string }) => {
        if (currentRoom && activeRooms[currentRoom]) {
            const trade = activeRooms[currentRoom].trades[data.tradeId];
-           if (trade) {
+           if (trade && tradeRoleOf(trade, socket.id)) {
                io.to(trade.p1).emit('trade_cancelled', { returnedItems: trade.p1Items });
                io.to(trade.p2).emit('trade_cancelled', { returnedItems: trade.p2Items });
                delete activeRooms[currentRoom].trades[data.tradeId];
@@ -1282,10 +1386,16 @@ async function processTrade(trade: any, room: any, io: any, db: any) {
         return;
     }
 
+    // Trades mutate stored characters, whose docs are client-writable; parse
+    // every inventory through the schema sanitizer before touching it.
+    const inventorySizes: Record<string, number> = { hotbar: 10, backpack: 27, leftActionBar: 10, rightActionBar: 10 };
+    const inventories = ['hotbar', 'backpack', 'leftActionBar', 'rightActionBar'];
+    const parseInventories = (data: any) => inventories.map(k => sanitizeSlots(data[k], inventorySizes[k]));
+
     try {
         await db.runTransaction(async (t) => {
-            const p1Ref = db.doc(`users/${p1.uid}/profiles/${p1.profileId}`);
-            const p2Ref = db.doc(`users/${p2.uid}/profiles/${p2.profileId}`);
+            const p1Ref = db.doc(`users/${p1.uid}/characters_v2/${p1.profileId}`);
+            const p2Ref = db.doc(`users/${p2.uid}/characters_v2/${p2.profileId}`);
             
             const p1Doc = await t.get(p1Ref);
             const p2Doc = await t.get(p2Ref);
@@ -1298,8 +1408,7 @@ async function processTrade(trade: any, room: any, io: any, db: any) {
             // Helper to deduct items
             const deductItems = (data: any, itemsToDeduct: any[]) => {
                 let success = true;
-                const inventories = ['hotbar', 'backpack', 'leftActionBar', 'rightActionBar'];
-                const parsed = inventories.map(k => data[k] ? JSON.parse(data[k]) : []);
+                const parsed = parseInventories(data);
                 
                 for (const item of itemsToDeduct) {
                     if (!item) continue;
@@ -1337,8 +1446,7 @@ async function processTrade(trade: any, room: any, io: any, db: any) {
             // Helper to add items
             const addItems = (data: any, itemsToAdd: any[]) => {
                 let success = true;
-                const inventories = ['hotbar', 'backpack', 'leftActionBar', 'rightActionBar'];
-                const parsed = inventories.map(k => data[k] ? JSON.parse(data[k]) : []);
+                const parsed = parseInventories(data);
                 
                 for (const item of itemsToAdd) {
                     if (!item) continue;

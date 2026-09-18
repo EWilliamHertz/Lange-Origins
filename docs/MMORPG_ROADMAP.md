@@ -60,6 +60,11 @@ economy — with server-authoritative rules so that progress means something.
 *Exit criteria:* a modified client cannot grant itself damage, items, XP or admin rights;
 character state round-trips through the emulator test suite.
 
+*Status (2026-09-18):* identity, combat validation, the v2 character schema with
+revision-guarded saves, and the emulator lifecycle suite with CI are in. Remaining:
+running stat math fully server-side (damage bonuses are currently capped rather than
+computed) and the visible save-state feedback in the HUD.
+
 ## Phase 2 — Progression depth
 
 *Goal: make leveling and loot feel like an MMO.*
@@ -118,9 +123,9 @@ observability (frame time, socket traffic, error rates) in place.
 
 | Order | Item | Phase |
 | --- | --- | --- |
-| 1 | Token-verified socket auth + server-side combat validation | 1 |
-| 2 | Versioned character schema + migrations | 1 |
-| 3 | Emulator-based lifecycle tests in CI | 1 |
+| 1 | ✅ Token-verified socket auth + server-side combat validation | 1 |
+| 2 | ✅ Versioned character schema + migrations (v2, revision-guarded saves) | 1 |
+| 3 | ✅ Emulator-based lifecycle tests in CI | 1 |
 | 4 | Unified ability progression view in the skills tab | 2 |
 | 5 | Loadout presets for the three action bars | 2 |
 | 6 | Party system groundwork (invites, shared XP) | 3 |
