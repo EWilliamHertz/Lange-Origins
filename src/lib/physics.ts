@@ -12,27 +12,70 @@ export interface PlayerState {
   facingRight: boolean;
   health: number;
   maxHealth: number;
+  stamina: number;
+  maxStamina: number;
+  isSprinting?: boolean;
   invulnerableTimer: number;
   isGrappling?: boolean;
 }
 
 const GRAVITY = 0.4;
 const MAX_FALL_SPEED = 18; // Increased for fall damage
-const MAX_SPEED = 2.5; // Reduced from 3.5
-const ACCELERATION = 0.5; // Reduced from 0.8
+const SPRINT_MAX_SPEED = 2.5; // The previous standard speed is now the sprint speed
+const WALK_MAX_SPEED = 1.3; // Significantly reduced for deliberate, steady walking
+const SPRINT_ACCELERATION = 0.5; // Responsive sprint burst
+const WALK_ACCELERATION = 0.22; // Controlled, smooth walk acceleration
 const FRICTION = 0.8;
 const JUMP_POWER = -7.5; // Slightly reduced jump to match speed
 
 export function updatePhysics(player: PlayerState, world: World, keys: Record<string, boolean>, speedBonus: number = 0) {
   if (player.invulnerableTimer > 0) player.invulnerableTimer--;
 
-  // Movement Input
-  if (keys['a'] || keys['ArrowLeft']) {
-    player.vx -= ACCELERATION;
+  // Initialize stamina if needed
+  if (player.stamina === undefined) player.stamina = 100;
+  if (player.maxStamina === undefined) player.maxStamina = 100;
+
+  // Movement Input Checks
+  const isMovingLeft = Boolean(keys['a'] || keys['ArrowLeft']);
+  const isMovingRight = Boolean(keys['d'] || keys['ArrowRight']);
+  const isMovingHorizontally = isMovingLeft || isMovingRight;
+  const isShiftPressed = Boolean(keys['shift'] || keys['Shift'] || keys['ShiftLeft'] || keys['ShiftRight']);
+
+  // Sprinting evaluation: Shift held, moving horizontally, and has stamina
+  const canSprint = isShiftPressed && isMovingHorizontally && player.stamina > 1.5;
+
+  if (canSprint) {
+    player.isSprinting = true;
+    // Drain stamina while sprinting (~21 per second at 60fps)
+    player.stamina = Math.max(0, player.stamina - 0.35);
+    if (player.stamina <= 0) {
+      player.isSprinting = false;
+    }
+  } else {
+    player.isSprinting = false;
+    // Regenerate stamina when not sprinting
+    if (!isShiftPressed) {
+      if (!isMovingHorizontally && Math.abs(player.vx) < 0.2) {
+        // Faster recharge while resting stationary (~24/sec)
+        player.stamina = Math.min(player.maxStamina, player.stamina + 0.4);
+      } else {
+        // Steady recharge while walking (~15/sec)
+        player.stamina = Math.min(player.maxStamina, player.stamina + 0.25);
+      }
+    }
+  }
+
+  // Active acceleration & max speed based on sprint vs walk
+  const currentAccel = player.isSprinting ? SPRINT_ACCELERATION : WALK_ACCELERATION;
+  const baseMaxSpeed = player.isSprinting ? SPRINT_MAX_SPEED : WALK_MAX_SPEED;
+  const currentMaxSpeed = baseMaxSpeed + (speedBonus * (player.isSprinting ? 0.25 : 0.12));
+
+  if (isMovingLeft) {
+    player.vx -= currentAccel;
     player.facingRight = false;
   }
-  if (keys['d'] || keys['ArrowRight']) {
-    player.vx += ACCELERATION;
+  if (isMovingRight) {
+    player.vx += currentAccel;
     player.facingRight = true;
   }
   
@@ -40,35 +83,36 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
   if ((keys['w'] || keys['ArrowUp'] || keys[' ']) && player.grounded) {
     player.vy = JUMP_POWER;
     player.grounded = false;
+    // Small stamina consumption on sprint jump
+    if (player.isSprinting && player.stamina >= 3) {
+      player.stamina -= 3;
+    }
   }
 
   // Falling through platforms
   const isHoldingDown = keys['s'] || keys['ArrowDown'];
 
   // Friction when no input
-  if (!keys['a'] && !keys['ArrowLeft'] && !keys['d'] && !keys['ArrowRight']) {
+  if (!isMovingHorizontally) {
     player.vx *= FRICTION;
   }
 
-  // Velocity Clamping
-  const currentMaxSpeed = MAX_SPEED + (speedBonus * 0.25);
-  // Instead of hard clamping, we apply friction if we're over max speed
-  // This allows impulses (like from the Grappling Hook) to briefly exceed max speed.
+  // Velocity Clamping & Drag
+  // When above max speed (e.g. dropping out of sprint, or grapple boost), apply smooth drag
   if (player.vx > currentMaxSpeed) {
-      if (!keys['a'] && !keys['ArrowLeft'] && !keys['d'] && !keys['ArrowRight']) {
+      if (!isMovingHorizontally) {
           // already applying friction
       } else {
-          // If they are inputting, we still slowly drag them back to max speed
-          player.vx *= 0.95;
+          player.vx *= 0.94;
       }
   } else if (player.vx < -currentMaxSpeed) {
-      if (!keys['a'] && !keys['ArrowLeft'] && !keys['d'] && !keys['ArrowRight']) {
+      if (!isMovingHorizontally) {
           // already applying friction
       } else {
-          player.vx *= 0.95;
+          player.vx *= 0.94;
       }
   }
-  if (Math.abs(player.vx) < 0.1) player.vx = 0;
+  if (Math.abs(player.vx) < 0.05) player.vx = 0;
 
   // Gravity
   if (!player.isGrappling) {

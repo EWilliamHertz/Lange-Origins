@@ -1,13 +1,6 @@
-lines = open('src/components/GameCanvas.tsx').read().split('\n')
-start = 872
-
-brace_level = 0
-for i in range(start, 1125):
-    line = lines[i]
-    for char in line:
-        if char == '{':
-            brace_level += 1
-        elif char == '}':
-            brace_level -= 1
-    if i >= 1110:
-        print(f"Line {i+1}: {line} (level after line = {brace_level})")
+lines = open('src/App.tsx').read().split('\n')
+for i in range(len(lines)):
+    if "if (!inventoryOpen && !furnaceOpen && !questLogOpen && !npcDialog) {" in lines[i]:
+        del lines[i-6:i] # delete the duplicate above
+        break
+open('src/App.tsx', 'w').write('\n'.join(lines))

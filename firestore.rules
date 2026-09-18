@@ -5,60 +5,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
     
-    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
 
-    function isValidUserProfile(data) {
-      return data.keys().hasAll(['health', 'hotbar', 'backpack', 'equipment', 'quests', 'lastRoom', 'updatedAt'])
-        && data.keys().size() == 7
-        && data.health is number
-        && data.health >= 0
-        && data.health <= 100
-        && data.equipment is string && data.equipment.size() <= 5000
-        && data.hotbar is string
-        && data.hotbar.size() <= 10000
-        && data.backpack is string
-        && data.backpack.size() <= 20000
-        && data.quests is string
-        && data.quests.size() <= 20000
-        && data.lastRoom is string
-        && data.lastRoom.size() <= 100
-        && data.updatedAt == request.time;
-    }
-
-    
-    function isValidProfile(data) {
-      return data.keys().hasAll(['name', 'skin', 'health', 'hotbar', 'backpack', 'equipment', 'quests', 'updatedAt'])
-        && data.name is string
-        && data.name.size() <= 32
-        && data.skin is string
-        && data.skin.size() <= 16
-        && data.health is number
-        && data.health >= 0
-        && data.health <= 100
-        && data.equipment is string && data.equipment.size() <= 5000
-        && data.hotbar is string
-        && data.hotbar.size() <= 10000
-        && data.backpack is string
-        && data.backpack.size() <= 20000
-        && data.quests is string
-        && data.quests.size() <= 20000
-        && data.updatedAt == request.time;
-    }
-
     match /users/{userId}/profiles/{profileId} {
-      allow read: if isSignedIn() && request.auth.uid == userId;
-      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(profileId) && isValidProfile(incoming());
-      allow update: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidId(profileId) && isValidProfile(incoming());
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
 
     match /users/{userId} {
-      allow read: if isSignedIn() && request.auth.uid == userId;
-      allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidUserProfile(incoming());
-      allow update: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidUserProfile(incoming());
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
 
     match /market_blueprints/{blueprintId} {
@@ -67,7 +21,6 @@ service cloud.firestore {
     }
 
     match /rooms/{roomId}/chests/{chestId} {
-      // Accessed strictly by the admin SDK server
       allow read, write: if false;
     }
   }

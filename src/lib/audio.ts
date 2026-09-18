@@ -355,10 +355,40 @@ export const Sounds = {
     }
   },
   levelUp: () => {
-    playTone(400, 'sine', 0.1, 0.1);
-    setTimeout(() => playTone(500, 'sine', 0.1, 0.1), 100);
-    setTimeout(() => playTone(600, 'sine', 0.3, 0.1), 200);
+    playTone(523.25, 'triangle', 0.15, 0.18); // C5
+    setTimeout(() => playTone(659.25, 'triangle', 0.15, 0.18), 90); // E5
+    setTimeout(() => playTone(783.99, 'triangle', 0.18, 0.2), 180); // G5
+    setTimeout(() => {
+      playTone(1046.50, 'sine', 0.45, 0.25); // C6 bell
+      playTone(523.25, 'triangle', 0.45, 0.15); // C5 bass
+    }, 280);
   },
+  equipGear: () => {
+    playTone(700, 'sine', 0.08, 0.15);
+    setTimeout(() => playTone(1050, 'triangle', 0.12, 0.2), 40);
+  },
+  dropItem: () => {
+    playTone(280, 'sine', 0.08, 0.12);
+    setTimeout(() => playTone(180, 'sine', 0.12, 0.15), 35);
+  },
+  craftSuccess: () => {
+    playTone(440, 'triangle', 0.1, 0.18); // A4
+    setTimeout(() => playTone(554.37, 'triangle', 0.12, 0.2), 75); // C#5
+    setTimeout(() => playTone(659.25, 'sine', 0.25, 0.22), 150); // E5
+  },
+  slotClick: () => {
+    playTone(850, 'sine', 0.03, 0.08);
+  },
+  slotHover: (() => {
+    let lastHover = 0;
+    return () => {
+      const now = performance.now();
+      if (now - lastHover > 60) {
+        lastHover = now;
+        playTone(1200, 'sine', 0.02, 0.03);
+      }
+    };
+  })(),
   hurt: () => {
     playTone(150, 'sawtooth', 0.2, 0.3);
     setTimeout(() => playTone(120, 'square', 0.2, 0.3), 50);
@@ -366,5 +396,36 @@ export const Sounds = {
   openChest: () => {
     playTone(300, 'triangle', 0.2, 0.1);
     setTimeout(() => playTone(400, 'sine', 0.3, 0.1), 100);
-  }
+  },
+  sword: () => {
+    if (ctx.state === 'suspended') ctx.resume();
+    const source = ctx.createBufferSource();
+    source.buffer = getNoiseBuffer();
+    
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = 1200;
+    
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain);
+    
+    source.start();
+    source.stop(ctx.currentTime + 0.1);
+  },
+  fireball: () => {
+    playTone(200, 'sawtooth', 0.2, 0.2);
+    setTimeout(() => playTone(150, 'square', 0.2, 0.3), 100);
+  },
+  heal: () => {
+    playTone(500, 'sine', 0.2, 0.2);
+    setTimeout(() => playTone(700, 'sine', 0.3, 0.3), 100);
+  },
+  shoot: () => {
+    playTone(400, 'square', 0.1, 0.1);
+  },
 };

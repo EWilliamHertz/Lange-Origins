@@ -1,0 +1,121 @@
+        ctx.fillStyle = armColor;
+        ctx.fillRect(-4, -4, 8, 16);
+        
+        // Draw Tool
+        if (tool !== null && tool !== BlockType.Fists && tool !== BlockType.Air) {
+          ctx.save();
+          if (facingRight) {
+             ctx.translate(16, 20);
+             if (isMining) ctx.rotate((Date.now() % 400) / 400 * Math.PI / 2);
+             if (slashAnim > 0) ctx.rotate(Math.PI / 2 * (1 - slashAnim / 15));
+             ctx.drawImage(getBlockImage(tool), 0, -16, 16, 16);
+          } else {
+             ctx.translate(-16, 20);
+             if (isMining) ctx.rotate(-(Date.now() % 400) / 400 * Math.PI / 2);
+             if (slashAnim > 0) ctx.rotate(-Math.PI / 2 * (1 - slashAnim / 15));
+             ctx.scale(-1, 1);
+             ctx.drawImage(getBlockImage(tool), 0, -16, 16, 16);
+          }
+          ctx.restore();
+        } else if (slashAnim > 0) {
+          // Unarmed slash
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+          ctx.beginPath();
+          if (facingRight) ctx.arc(12, 18, 15, -Math.PI/2, Math.PI/2 * (1 - slashAnim/15));
+          else ctx.arc(-12, 18, 15, Math.PI/2 + Math.PI/2 * (slashAnim/15), Math.PI*1.5);
+          ctx.stroke();
+        }
+        
+        if (healAnim > 0) {
+            ctx.fillStyle = `rgba(0, 255, 100, ${healAnim / 30})`;
+            ctx.beginPath();
+            ctx.arc(0, 18, 25 + (30 - healAnim), 0, Math.PI * 2);
+            ctx.fill();
+        } else if (isPickaxe) {
+              // Pickaxe shape
+              ctx.fillStyle = '#8D6E63'; // Handle
+              ctx.fillRect(-2, 0, 4, 16);
+              ctx.fillStyle = BlockColors[tool]; // Head
+              ctx.fillRect(-10, -4, 20, 4);
+              ctx.fillRect(-10, -2, 4, 4);
+              ctx.fillRect(6, -2, 4, 4);
+           } else if (isAxe) {
+              // Axe shape
+              ctx.fillStyle = '#8D6E63'; // Handle
+              ctx.fillRect(-2, 0, 4, 16);
+              ctx.fillStyle = BlockColors[tool]; // Head
+              ctx.fillRect(facingRight ? 2 : -8, -8, 6, 8);
+           } else if (isHoe) {
+              // Hoe shape
+              ctx.fillStyle = '#8D6E63'; // Handle
+              ctx.fillRect(-2, 0, 4, 16);
+              ctx.fillStyle = BlockColors[tool]; // Head
+              ctx.fillRect(facingRight ? -2 : -8, -4, 10, 4);
+           } else if (isGrapple) {
+              ctx.fillStyle = '#455A64';
+              ctx.fillRect(-2, -4, 4, 10);
+              ctx.fillStyle = '#78909C';
+              ctx.fillRect(-6, -8, 12, 4);
+           } else if (isGun) {
+              ctx.fillStyle = '#212121';
+              ctx.fillRect(-4, -2, 12, 4);
+              ctx.fillRect(-4, -2, 4, 8);
+           } else if (isBow) {
+              ctx.strokeStyle = '#8D6E63';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(0, 0, 8, -Math.PI/2, Math.PI/2);
+              ctx.stroke();
+              ctx.strokeStyle = '#FFF';
+              ctx.beginPath();
+              ctx.moveTo(0, -8);
+              ctx.lineTo(0, 8);
+              ctx.stroke();
+           } else if (isStaff) {
+              ctx.fillStyle = '#5D4037';
+              ctx.fillRect(-2, -10, 4, 20);
+              ctx.fillStyle = '#9C27B0';
+              ctx.beginPath();
+              ctx.arc(0, -12, 4, 0, Math.PI*2);
+              ctx.fill();
+           } else {
+              // Normal block
+              if (tool < 100) {
+                 ctx.fillRect(-6, -6, 12, 12);
+              }
+           }
+        }
+        
+        ctx.restore();
+
+        // Nametag
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.font = '10px sans-serif';
+        const textWidth = ctx.measureText(name).width;
+        ctx.fillRect(pX + pWidth/2 - textWidth/2 - 4, pY - 26 + bodyYOffset, textWidth + 8, 14);
+        ctx.fillStyle = '#FFF';
+        ctx.fillText(name, pX + pWidth/2 - textWidth/2, pY - 16 + bodyYOffset);
+      };
+
+      // Draw other players
+      Object.values(state.otherPlayers).forEach((other: any) => {
+        // Interpolate or just draw at current pos
+        other.x += other.vx; // simple prediction
+        other.y += other.vy;
+        other.vy += 0.4; // simple gravity
+        // Clamp to floor for prediction (crude)
+        const topTy = Math.floor(other.y / TILE_SIZE);
+        const botTy = Math.floor((other.y + player.height) / TILE_SIZE);
+        const tx = Math.floor((other.x + player.width/2) / TILE_SIZE);
+        if (world[tx] && world[tx][botTy] && world[tx][botTy] !== BlockType.Air) {
+           other.vy = 0;
+           other.y = botTy * TILE_SIZE - player.height - 0.01;
+        }
+
+        const isGang = propsRef.current.currentGang?.members?.includes(other.id);
+        drawPlayer(other.x, other.y, other.vx, other.facingRight, (other as any).skin || 'blue', (other as any).name || other.id.substring(0, 4), other.tool, other.isMining, isGang, (other as any).helmet, (other as any).chest, (other as any).slashAnim || 0, (other as any).healAnim || 0);
+      });
+
+      // Random tick near player for farming
+      if (state.socket && Math.random() < 0.2) {
+         const cx = Math.floor(player.x / TILE_SIZE);

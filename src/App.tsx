@@ -1,16 +1,37 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BlockType, BlockColors, BlockNames } from './lib/constants';
 import { getBlockIcon } from './lib/icons';
 import GameCanvas from './components/GameCanvas';
-import { ModernHUD } from './components/ModernHUD';
 import LandingPage from './components/LandingPage';
-import { Heart, MessageSquare, ArrowRight, Hand, LogOut, User, Star, Clock, Globe, Scroll, X, Book, Shield, Plus, Layers, ShoppingBag, Volume2, VolumeX, Sword } from 'lucide-react';
+import { Heart, MessageSquare, ArrowRight, Hand, LogOut, User, Star, Clock, Globe, Scroll, X, Book, Shield, Plus, Layers, ShoppingBag, Volume2, VolumeX, Sword, Flame, Pickaxe , Wind, Snowflake, Crosshair, Tent, FastForward, Activity , Compass, LayoutGrid, Zap, Award, Package, Coins } from 'lucide-react';
 import { checkRecipe, RECIPES } from './lib/crafting';
 import { Sounds } from './lib/audio';
 import { auth, logout, db } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, deleteDoc, updateDoc, increment, orderBy, query, limit } from 'firebase/firestore';
 import { Socket } from 'socket.io-client';
+import { UnifiedMenu, UnifiedMenuTab } from './components/UnifiedMenu';
+import { ItemTooltip } from './components/ItemTooltip';
+
+export const MMO_ABILITIES = [
+
+    { id: 'ground_slam', class: 'warrior', name: 'Ground Slam', desc: 'Slam the ground to damage enemies.', req: 8, cost: 20, cd: 12, icon: <Activity size={24}/> },
+    { id: 'battle_shout', class: 'warrior', name: 'Battle Shout', desc: 'Heal yourself slightly and buff.', req: 10, cost: 25, cd: 20, icon: <Heart size={24} className="text-red-500" /> },
+    { id: 'arcane_blast', class: 'mage', name: 'Arcane Blast', desc: 'A huge blast of magic energy.', req: 8, cost: 30, cd: 15, icon: <Activity size={24} className="text-purple-500"/> },
+    { id: 'teleport', class: 'mage', name: 'Teleport', desc: 'Instantly travel a short distance.', req: 10, cost: 25, cd: 12, icon: <FastForward size={24} className="text-cyan-500"/> },
+    { id: 'multishot', class: 'archer', name: 'Multishot', desc: 'Fire multiple arrows at once.', req: 8, cost: 25, cd: 8, icon: <Crosshair size={24} className="text-yellow-500"/> },
+    { id: 'poison_arrow', class: 'archer', name: 'Poison Arrow', desc: 'Fire a toxic arrow.', req: 10, cost: 20, cd: 10, icon: <Crosshair size={24} className="text-green-500"/> },
+
+    { id: 'slash', class: 'warrior', name: 'Slash', desc: 'Melee attack dealing standard physical damage.', req: 0, cost: 0, cd: 3, icon: <Sword size={24}/> },
+    { id: 'whirlwind', class: 'warrior', name: 'Whirlwind', desc: 'Spinning attack damaging all nearby enemies.', req: 3, cost: 15, cd: 8, icon: <Wind size={24}/> },
+    { id: 'dash', class: 'warrior', name: 'Dash', desc: 'Lunge forward quickly.', req: 5, cost: 10, cd: 5, icon: <FastForward size={24}/> },
+    { id: 'fireball', class: 'mage', name: 'Fireball', desc: 'Shoot a flaming projectile.', req: 0, cost: 10, cd: 5, icon: <Flame size={24}/> },
+    { id: 'frostbolt', class: 'mage', name: 'Frostbolt', desc: 'Launch ice that slows enemies.', req: 3, cost: 15, cd: 6, icon: <Snowflake size={24}/> },
+    { id: 'heal', class: 'mage', name: 'Heal', desc: 'Restore 20 HP.', req: 5, cost: 20, cd: 10, icon: <Heart size={24}/> },
+    { id: 'shoot', class: 'archer', name: 'Shoot', desc: 'Fire a fast arrow.', req: 0, cost: 0, cd: 2, icon: <Crosshair size={24}/> },
+    { id: 'snipe', class: 'archer', name: 'Snipe', desc: 'A devastating heavy shot.', req: 3, cost: 20, cd: 10, icon: <Crosshair size={24} className="text-red-500" /> },
+    { id: 'trap', class: 'archer', name: 'Trap', desc: 'Place a trap that damages enemies.', req: 5, cost: 15, cd: 15, icon: <Tent size={24}/> },
+];
 
 
 const checkEquipable = (type: number) => (type >= 100 && type <= 109) || type === 302 || type === 400 || type === 401;
@@ -47,13 +68,13 @@ export default function App() {
   const [interactPlayerName, setInteractPlayerName] = useState<string | null>(null);
 
   const [activeTrade, setActiveTrade] = useState<any>(null);
-  const [currentParty, setCurrentParty] = useState<any>(null);
+  const [currentParty, setCurrentGang] = useState<any>(null);
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasLoadedSave, setHasLoadedSave] = useState(false);
   
   // Game states we want to save
-  type InventorySlot = { type: BlockType; count: number; durability?: number } | null;
+  type InventorySlot = { type?: BlockType; count?: number; durability?: number; isAbility?: boolean; abilityId?: string } | null;
   const [equipment, setEquipment] = useState<InventorySlot[]>([null, null]); // [helmet, chestplate]
   const [hotbar, setHotbar] = useState<InventorySlot[]>([
     { type: BlockType.Fists, count: 1 },
@@ -68,14 +89,16 @@ export default function App() {
   const [backpack, setBackpack] = useState<InventorySlot[]>(() => {
     return Array(27).fill(null);
   });
-  const [health, setHealth] = useState(10);
+  const [health, setHealth] = useState(20);
+  const [stamina, setStamina] = useState(100);
+  const [keybinds, setKeybinds] = useState<Record<string, string>>({'z':'slash'});
   const [kills, setKills] = useState<Record<string, number>>({});
   const [mana, setMana] = useState(100);
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(1);
   const [skillPoints, setSkillPoints] = useState(0);
   const [skills, setSkills] = useState({ strength: 0, dexterity: 0, intelligence: 0 });
-  const [levelUpFlash, setLevelUpFlash] = useState(false);
+  const maxStamina = 100 + (skills.dexterity || 0) * 10;
   
   interface Quest {
     id: string; title: string; description: string; goal: number; current: number; completed: boolean; rewardText: string; prerequisiteId?: string;
@@ -86,10 +109,7 @@ export default function App() {
     { id: 'q2', title: 'Wood Gatherer', description: 'Chop down 3 Wood Logs.', goal: 3, current: 0, completed: false, rewardText: 'Access to Tools', prerequisiteId: 'q1' },
     { id: 'q3', title: 'First Tool', description: 'Craft a Wooden Pickaxe.', goal: 1, current: 0, completed: false, rewardText: 'Mining Capability', prerequisiteId: 'q2' },
     { id: 'q4', title: 'Upgrades', description: 'Craft an Iron Pickaxe.', goal: 1, current: 0, completed: false, rewardText: 'Mining Efficiency', prerequisiteId: 'q3' },
-    { id: 'q5', title: 'Magician\'s Journey', description: 'Mine 5 Blue Crystals to unlock the secrets of magic.', goal: 5, current: 0, completed: false, rewardText: 'Unlock Magic & Mana', prerequisiteId: 'q4' },
-    { id: 'q6', title: 'Monster Hunter', description: 'Slay 3 Skeletons or Creepers.', goal: 3, current: 0, completed: false, rewardText: 'Warrior\'s Pride', prerequisiteId: 'q5' },
-    { id: 'q7', title: 'Master Miner', description: 'Mine 5 Diamond Ores.', goal: 5, current: 0, completed: false, rewardText: 'Unmatched Wealth', prerequisiteId: 'q6' },
-    { id: 'q8', title: 'Boss Slayer', description: 'Slay the Giant Golem.', goal: 1, current: 0, completed: false, rewardText: 'Legendary Status', prerequisiteId: 'q7' }
+    { id: 'q5', title: 'Magician\'s Journey', description: 'Mine 5 Blue Crystals to unlock the secrets of magic.', goal: 5, current: 0, completed: false, rewardText: 'Unlock Magic & Mana', prerequisiteId: 'q4' }
   ];
 
   const [quests, setQuests] = useState<Quest[]>(defaultQuests);
@@ -153,7 +173,7 @@ export default function App() {
         
         // Load data from Firestore
         try {
-          const profilesRef = collection(db, 'users', user.uid, 'profiles_v2');
+          const profilesRef = collection(db, 'users', user.uid, 'profiles');
           const profilesSnap = await getDocs(profilesRef);
           const loadedProfiles = profilesSnap.docs.map(d => d.data());
           if (loadedProfiles.length > 0) {
@@ -169,6 +189,7 @@ export default function App() {
               if (active.backpack) setBackpack(JSON.parse(active.backpack));
               if (active.quests) setQuests(JSON.parse(active.quests));
               if (active.health !== undefined) setHealth(active.health);
+              if (active.keybinds) setKeybinds(JSON.parse(active.keybinds));
               if (active.kills !== undefined) setKills(active.kills);
               if (active.xp !== undefined) setXp(active.xp);
               if (active.level !== undefined) setLevel(active.level);
@@ -197,7 +218,7 @@ export default function App() {
                          skills: JSON.stringify({ strength: 0, dexterity: 0, intelligence: 0 }),
                          updatedAt: Date.now()
              };
-             await setDoc(doc(db, 'users', user.uid, 'profiles_v2', newId), newProfile);
+             await setDoc(doc(db, 'users', user.uid, 'profiles', newId), newProfile);
              setProfiles([newProfile]);
              setActiveProfileId(newId);
              setEquipment([null, null]);
@@ -233,14 +254,7 @@ export default function App() {
   const [nickname, setNickname] = useState<string>(() => `Player${Math.floor(Math.random() * 10000)}`);
 
   const [characterSkin, setCharacterSkin] = useState<string>('orange');
-  const [characterJob, setCharacterJob] = useState<string>('warrior');
-  
-  const availableJobs = [
-    { id: 'warrior', name: 'Warrior', desc: '+5 Strength', icon: '⚔️', skills: { strength: 5, dexterity: 0, intelligence: 0 } },
-    { id: 'ranger', name: 'Ranger', desc: '+5 Dexterity', icon: '🏹', skills: { strength: 0, dexterity: 5, intelligence: 0 } },
-    { id: 'mage', name: 'Mage', desc: '+5 Intelligence', icon: '🪄', skills: { strength: 0, dexterity: 0, intelligence: 5 } },
-    { id: 'novice', name: 'Novice', desc: 'No starting bonus', icon: '👤', skills: { strength: 0, dexterity: 0, intelligence: 0 } }
-  ];
+  const [playerClass, setPlayerClass] = useState<string>('warrior');
 
   const [profiles, setProfiles] = useState<any[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
@@ -296,7 +310,6 @@ export default function App() {
   
   const [selectedSlotIndex, setSelectedSlotIndex] = useState(0);
   const [inventoryOpen, setInventoryOpen] = useState(false);
-  const [instancesOpen, setInstancesOpen] = useState(false);
   const [showEquipment, setShowEquipment] = useState(false);
   const [duelingOpponents, setDuelingOpponents] = useState<string[]>([]);
   const [inventoryTab, setInventoryTab] = useState<'crafting' | 'guide' | 'skills'>('crafting');
@@ -304,6 +317,10 @@ export default function App() {
   const [recipeSearchQuery, setRecipeSearchQuery] = useState('');
 
   const [furnaceOpen, setFurnaceOpen] = useState(false);
+
+  const [instancesOpen, setInstancesOpen] = useState(false);
+  const [readyCheck, setReadyCheck] = useState<{ instanceId: string } | null>(null);
+
   const [merchantOpen, setMerchantOpen] = useState(false);
   const [merchantPayment, setMerchantPayment] = useState<InventorySlot>(null);
   const [merchantOutput, setMerchantOutput] = useState<InventorySlot>(null);
@@ -314,16 +331,16 @@ export default function App() {
   const [showLeftActionBar, setShowLeftActionBar] = useState(false);
   const [showRightActionBar, setShowRightActionBar] = useState(false);
 
-  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, characterJob, kills, xp, level, skillPoints, skills });
+  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills, keybinds });
   useEffect(() => {
-    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, characterJob, kills, xp, level, skillPoints, skills };
-  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, characterJob, kills, xp, level, skillPoints, skills]);
+    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills, keybinds };
+  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills, keybinds]);
 
   const saveProgress = async () => {
     const latest = saveStateRef.current;
     if (!latest.currentUser || !latest.activeProfileId) return;
     try {
-      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles_v2', latest.activeProfileId);
+      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles', latest.activeProfileId);
       await setDoc(docRef, {
         equipment: JSON.stringify(latest.equipment),
         hotbar: JSON.stringify(latest.hotbar),
@@ -332,6 +349,7 @@ export default function App() {
         backpack: JSON.stringify(latest.backpack),
         health: latest.health,
         quests: JSON.stringify(latest.quests),
+        keybinds: JSON.stringify(latest.keybinds),
         kills: latest.kills,
         xp: latest.xp,
         level: latest.level,
@@ -339,7 +357,6 @@ export default function App() {
         skills: JSON.stringify(latest.skills),
         name: latest.nickname,
         skin: latest.characterSkin,
-        job: latest.characterJob,
         lastRoom: latest.serverName || 'public-lobby',
         updatedAt: serverTimestamp()
       }, { merge: true });
@@ -353,7 +370,7 @@ export default function App() {
     if (!currentUser || !hasLoadedSave || appState !== 'playing') return;
     const timeout = setTimeout(saveProgress, 2000);
     return () => clearTimeout(timeout);
-  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, skillPoints, skills, kills]);
+  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, skillPoints, skills, keybinds, kills]);
 
   const socketRef = useRef<Socket | null>(null);
   const hoveredSlotRef = useRef<{type: string, index: number} | null>(null);
@@ -393,16 +410,72 @@ export default function App() {
   
   const [notifications, setNotifications] = useState<{id: string, type: string, senderId: string, senderName: string, msg?: string, timestamp: number}[]>([]);
   
-  const addNotification = (type: 'trade'|'party'|'friend'|'duel'|'system'|'level_up', senderId: string, senderName: string, msg?: string) => {
-     const id = Math.random().toString();
+  const addNotification = useCallback((type: 'trade'|'party'|'friend'|'duel'|'system'|'level_up', senderId: string, senderName: string, msg?: string) => {
+     const id = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
      setNotifications(prev => [...prev, { id, type, senderId, senderName, msg, timestamp: Date.now() }]);
-     
-     if (type === 'level_up' || type === 'system') {
-       setTimeout(() => {
-         setNotifications(prev => prev.filter(n => n.id !== id));
-       }, 3000);
+     // Auto-dismiss after 2.5 seconds
+     setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+     }, 2500);
+  }, []);
+
+  const [unifiedMenuTab, setUnifiedMenuTab] = useState<UnifiedMenuTab>('character');
+  const [hoveredSlotItem, setHoveredSlotItem] = useState<any | null>(null);
+
+  const getXpForLevel = (lvl: number) => 150 + Math.max(0, lvl - 1) * 75;
+
+  const xpRef = useRef(xp);
+  const levelRef = useRef(level);
+  useEffect(() => { xpRef.current = xp; }, [xp]);
+  useEffect(() => { levelRef.current = level; }, [level]);
+
+  const grantPlayerXp = useCallback((amount: number) => {
+     if (amount <= 0) return;
+     let currentXp = xpRef.current + amount;
+     let currentLevel = levelRef.current;
+     let levelsGained = 0;
+     let reqXp = getXpForLevel(currentLevel);
+
+     while (currentXp >= reqXp) {
+        currentXp -= reqXp;
+        currentLevel++;
+        levelsGained++;
+        reqXp = getXpForLevel(currentLevel);
      }
-  };
+
+     xpRef.current = currentXp;
+     setXp(currentXp);
+
+     if (levelsGained > 0) {
+        levelRef.current = currentLevel;
+        setLevel(currentLevel);
+        // 1 level up gives exactly 1 point (1 skill / stat point)
+        setSkillPoints(sp => sp + levelsGained);
+        addNotification('level_up', 'System', 'System', `Level Up! Reached Level ${currentLevel} (+${levelsGained} Stat Point)`);
+        Sounds.levelUp();
+     }
+  }, [addNotification]);
+
+  const grantPlayerLevel = useCallback((amount: number) => {
+     if (amount <= 0) return;
+     const newLevel = levelRef.current + amount;
+     levelRef.current = newLevel;
+     setLevel(newLevel);
+     setSkillPoints(sp => sp + amount);
+     addNotification('level_up', 'System', 'System', `Level Up! Reached Level ${newLevel} (+${amount} Stat Point)`);
+     Sounds.levelUp();
+  }, [addNotification]);
+
+  const handleTossItem = useCallback((item: InventorySlot) => {
+    if (!item || item.type === BlockType.Air) return;
+    window.dispatchEvent(new CustomEvent('toss_item', { 
+      detail: { type: item.type, count: item.count || 1 } 
+    }));
+    Sounds.dropItem();
+    if (cursorItem === item) {
+      setCursorItem(null);
+    }
+  }, [cursorItem]);
 
   const [chatMessages, setChatMessages] = useState<{sender: string, text: string}[]>([]);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -410,7 +483,7 @@ export default function App() {
   
   const selectedBlock = hotbar[selectedSlotIndex] ? hotbar[selectedSlotIndex]!.type : BlockType.Air;
 
-  // Mouse tracking for cursor item
+  // Mouse tracking for cursor item and rich tooltips
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [hoveredTitle, setHoveredTitle] = useState<string | null>(null);
 
@@ -435,29 +508,10 @@ export default function App() {
   });
 
   const [questLogOpen, setQuestLogOpen] = useState(false);
-  const [showNPCMessage, setShowNPCMessage] = useState(false);
-  const [showDurelScroll, setShowDurelScroll] = useState(false);
+  const [npcDialog, setNpcDialog] = useState<{name: string, text: string, color: string, ringColor: string} | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   
-  useEffect(() => {
-    if (appState === 'serverBrowser') {
-      fetch('/api/servers').then(r => r.json()).then(data => {
-        if (data && data.servers) setPublicServers(data.servers);
-      }).catch(console.error);
-      
-      // Fetch blueprints
-      (async () => {
-
-         try {
-             const bpsSnap = await getDocs(query(collection(db, 'market_blueprints'), orderBy('likes', 'desc'), limit(50)));
-             setMarketBlueprints(bpsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-         } catch (err) {
-             console.error("Failed to load blueprints:", err);
-         }
-      });
-    }
-  }, [appState]);
 
 
   
@@ -515,6 +569,8 @@ export default function App() {
     });
 
     setServerName(srv);
+    window.location.hash = srv;
+    saveProgress();
     setAppState('playing');
   };
 
@@ -698,9 +754,7 @@ export default function App() {
         if (e.key === 'Escape') {
           setIsChatOpen(false);
         }
-        if (e.key !== 'Escape') {
-          return; // Disable other game keys while chatting unless it's escape
-        }
+        return; // Disable other game keys while chatting
       }
 
       if (e.key === 'Enter') {
@@ -708,12 +762,72 @@ export default function App() {
         setTimeout(() => chatInputRef.current?.focus(), 50);
         return;
       }
-      
-      if (e.key.toLowerCase() === 'i') {
-        setInstancesOpen(prev => !prev);
+
+      // Tab key - Consolidated Menu cycling or opening
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const tabOrder: UnifiedMenuTab[] = ['character', 'inventory', 'crafting', 'quests', 'skills', 'settings'];
+        if (inventoryOpen) {
+          const delta = e.shiftKey ? -1 : 1;
+          const currentIdx = tabOrder.indexOf(unifiedMenuTab);
+          const nextIdx = (currentIdx + delta + tabOrder.length) % tabOrder.length;
+          setUnifiedMenuTab(tabOrder[nextIdx]);
+          Sounds.slotClick();
+        } else {
+          setInventoryOpen(true);
+          Sounds.slotClick();
+        }
+        return;
+      }
+
+      // Escape key - Hierarchical close or open Settings
+      if (e.key === 'Escape') {
+        if (showInstructions) {
+          setShowInstructions(false);
+          return;
+        }
+        if (activeTrade) {
+          socketRef.current?.emit('cancel_trade', { tradeId: activeTrade.tradeId });
+          setActiveTrade(null);
+          return;
+        }
+        if (merchantOpen) {
+          setMerchantOpen(false);
+          if (cursorItem) returnCursorItemToInventory(cursorItem);
+          return;
+        }
+        if (furnaceOpen) {
+          setFurnaceOpen(false);
+          if (cursorItem) returnCursorItemToInventory(cursorItem);
+          return;
+        }
+        if (chestOpen) {
+          setChestOpen(false);
+          setActiveChestCoords(null);
+          if (cursorItem) returnCursorItemToInventory(cursorItem);
+          return;
+        }
+        if (npcDialog) {
+          setNpcDialog(null);
+          return;
+        }
+        if (instancesOpen) {
+          setInstancesOpen(false);
+          return;
+        }
+        if (inventoryOpen) {
+          setInventoryOpen(false);
+          if (cursorItem) returnCursorItemToInventory(cursorItem);
+          return;
+        }
+        // If nothing was open, open settings tab of unified menu
+        setUnifiedMenuTab('settings');
+        setInventoryOpen(true);
+        Sounds.slotClick();
         return;
       }
       
+      // E key - Toggle Consolidated Menu
       if (e.key.toLowerCase() === 'e') {
         if (merchantOpen) {
           setMerchantOpen(false);
@@ -722,83 +836,188 @@ export default function App() {
         }
         if (furnaceOpen) {
           setFurnaceOpen(false);
-          returnCursorItemToInventory(cursorItem);
+          setCursorItem(null);
           return;
         }
         if (chestOpen) {
           setChestOpen(false);
           setActiveChestCoords(null);
-          returnCursorItemToInventory(cursorItem);
+          if (cursorItem) returnCursorItemToInventory(cursorItem);
+          return;
+        }
+        if (npcDialog) {
+          setNpcDialog(null);
           return;
         }
         setInventoryOpen(prev => {
-          if (prev) returnCursorItemToInventory(cursorItem); 
+          if (prev && cursorItem) returnCursorItemToInventory(cursorItem);
           return !prev;
         });
+        Sounds.slotClick();
+        return;
+      }
+
+      // I key - Instances Finder
+      if (e.key.toLowerCase() === 'i') {
+        if (!inventoryOpen && !furnaceOpen && !isChatOpen) {
+          setInstancesOpen(prev => !prev);
+        }
+        return;
+      }
+
+      // Q key - Dedicated Drop/Toss item (Never opens quests)
+      if (e.key.toLowerCase() === 'q') {
+        // 1. If holding cursor item
+        if (cursorItem && cursorItem.type !== BlockType.Air) {
+          const dropCount = e.ctrlKey ? (cursorItem.count || 1) : 1;
+          window.dispatchEvent(new CustomEvent('toss_item', { detail: { type: cursorItem.type, count: dropCount } }));
+          Sounds.dropItem();
+          if ((cursorItem.count || 1) > dropCount) {
+            setCursorItem({ ...cursorItem, count: cursorItem.count - dropCount });
+          } else {
+            setCursorItem(null);
+          }
+          return;
+        }
+
+        // 2. If hovering an inventory or action bar slot
+        if (hoveredSlotRef.current) {
+          const { type: sType, index: sIdx } = hoveredSlotRef.current;
+          let targetItem: InventorySlot = null;
+          if (sType === 'hotbar') targetItem = hotbar[sIdx];
+          else if (sType === 'backpack') targetItem = backpack[sIdx];
+          else if (sType === 'leftActionBar') targetItem = leftActionBar[sIdx];
+          else if (sType === 'rightActionBar') targetItem = rightActionBar[sIdx];
+
+          if (targetItem && targetItem.type !== BlockType.Air && (targetItem.count || 1) > 0) {
+            const dropCount = e.ctrlKey ? (targetItem.count || 1) : 1;
+            window.dispatchEvent(new CustomEvent('toss_item', { detail: { type: targetItem.type, count: dropCount } }));
+            Sounds.dropItem();
+
+            const updateArr = (arr: InventorySlot[]) => {
+              const copy = [...arr];
+              const cur = copy[sIdx];
+              if (!cur) return arr;
+              if ((cur.count || 1) <= dropCount) {
+                copy[sIdx] = null;
+              } else {
+                copy[sIdx] = { ...cur, count: cur.count - dropCount };
+              }
+              return copy;
+            };
+
+            if (sType === 'hotbar') setHotbar(updateArr);
+            else if (sType === 'backpack') setBackpack(updateArr);
+            else if (sType === 'leftActionBar') setLeftActionBar(updateArr);
+            else if (sType === 'rightActionBar') setRightActionBar(updateArr);
+            return;
+          }
+        }
+
+        // 3. Normal gameplay: drop active selected hotbar item
+        if (!inventoryOpen && !furnaceOpen && !chestOpen && !merchantOpen && !isChatOpen) {
+          const curSlot = hotbar[selectedSlotIndex];
+          if (curSlot && curSlot.type !== BlockType.Air && (curSlot.count || 1) > 0) {
+            const dropCount = e.ctrlKey ? (curSlot.count || 1) : 1;
+            window.dispatchEvent(new CustomEvent('toss_item', { detail: { type: curSlot.type, count: dropCount } }));
+            Sounds.dropItem();
+            setHotbar(prev => {
+              const copy = [...prev];
+              const cur = copy[selectedSlotIndex];
+              if (!cur) return prev;
+              if ((cur.count || 1) <= dropCount) {
+                copy[selectedSlotIndex] = null;
+              } else {
+                copy[selectedSlotIndex] = { ...cur, count: cur.count - dropCount };
+              }
+              return copy;
+            });
+            return;
+          }
+        }
+        return;
+      }
+
+      // J or L key - Direct Quest Log shortcut (also accessible in Tab menu)
+      if ((e.key.toLowerCase() === 'j' || e.key.toLowerCase() === 'l') && !isChatOpen) {
+        if (!furnaceOpen && !chestOpen && !merchantOpen) {
+          setUnifiedMenuTab('quests');
+          setInventoryOpen(true);
+          Sounds.slotClick();
+        }
         return;
       }
       
-      if (e.key === 'Escape') {
-        if (instancesOpen) {
-          setInstancesOpen(false);
-          return;
+      if (hoveredSlotRef.current && (inventoryOpen || (!inventoryOpen && !isChatOpen))) {
+        if (hoveredSlotRef.current.type === 'ability') {
+           const key = e.key.toLowerCase();
+           if (key !== 'escape' && key !== 'tab' && key !== 'e' && key !== 'enter') {
+               setKeybinds(prev => {
+                   const next = { ...prev };
+                   for (const k in next) if (next[k] === hoveredSlotRef.current.index) delete next[k];
+                   next[key] = hoveredSlotRef.current.index;
+                   return next;
+               });
+           }
+           return;
         }
-        if (merchantOpen) {
-          setMerchantOpen(false);
-          returnCursorItemToInventory(cursorItem);
-          return;
-        }
-        if (furnaceOpen) {
-          setFurnaceOpen(false);
-          returnCursorItemToInventory(cursorItem);
-          return;
-        }
-        if (chestOpen) {
-          setChestOpen(false);
-          setActiveChestCoords(null);
-          returnCursorItemToInventory(cursorItem);
-          return;
-        }
-        if (inventoryOpen) {
-          setInventoryOpen(false);
-          returnCursorItemToInventory(cursorItem);
-          return;
-        }
-        if (questLogOpen) {
-          setQuestLogOpen(false);
-          return;
-        }
-        if (showNPCMessage) {
-          setShowNPCMessage(false);
-          return;
+        
+        const hRef = hoveredSlotRef.current;
+        const isActionBar = ['hotbar', 'leftActionBar', 'rightActionBar'].includes(hRef.type);
+        if (isActionBar) {
+            const targetArr = hRef.type === 'hotbar' ? [...hotbar] : hRef.type === 'leftActionBar' ? [...leftActionBar] : [...rightActionBar];
+            const slot = targetArr[hRef.index];
+            const pressedKey = e.key.toLowerCase();
+            
+            // If hovering an existing ability, bind it to the new key!
+            if (slot && typeof slot === 'object' && slot.isAbility && pressedKey !== 'escape' && pressedKey !== 'tab' && pressedKey !== 'e' && pressedKey !== 'enter') {
+                setKeybinds(prev => {
+                    const next = { ...prev };
+                    for (const k in next) if (next[k] === slot.abilityId) delete next[k];
+                    next[pressedKey] = slot.abilityId;
+                    return next;
+                });
+                return;
+            }
+            
+            // If empty or non-ability, and we pressed a key that is bound to an ability, put it in!
+            const boundAbility = keybinds[pressedKey];
+            if (boundAbility) {
+                targetArr[hRef.index] = { isAbility: true, abilityId: boundAbility };
+                if (hRef.type === 'hotbar') setHotbar(targetArr);
+                if (hRef.type === 'leftActionBar') setLeftActionBar(targetArr);
+                if (hRef.type === 'rightActionBar') setRightActionBar(targetArr);
+                return;
+            }
         }
       }
 
-      if (e.key.toLowerCase() === 'q') {
-        if (!inventoryOpen && !furnaceOpen && !isChatOpen) {
-          setQuestLogOpen(prev => !prev);
-        }
-        return;
-      }
-
-      if (!inventoryOpen && !furnaceOpen && !questLogOpen && !showNPCMessage) {
+      if (!inventoryOpen && !furnaceOpen && !questLogOpen && !npcDialog) {
         const num = parseInt(e.key);
         if (num >= 1 && num <= 9) {
-          setSelectedSlotIndex(num - 1);
+          const slot = hotbar[num - 1];
+          if (slot && typeof slot === 'object' && slot.isAbility) {
+             window.dispatchEvent(new CustomEvent('cast_ability', { detail: { abilityId: slot.abilityId } }));
+          } else {
+             setSelectedSlotIndex(num - 1);
+          }
         }
-      } else if (inventoryOpen && hoveredSlotRef.current) {
+      } else if (inventoryOpen) {
         const num = parseInt(e.key);
-        if (num >= 1 && num <= 9) {
+        if (hoveredSlotRef.current && num >= 1 && num <= 9) {
            const hotbarIdx = num - 1;
            const hRef = hoveredSlotRef.current;
-           // Dispatch event for hotbar swap
            window.dispatchEvent(new CustomEvent('swap_hotbar', { detail: { hotbarIdx, type: hRef.type, index: hRef.index } }));
+        } else if (!hoveredSlotRef.current && num >= 1 && num <= 6) {
+           const tabOrder: UnifiedMenuTab[] = ['character', 'inventory', 'crafting', 'quests', 'skills', 'settings'];
+           setUnifiedMenuTab(tabOrder[num - 1]);
+           Sounds.slotClick();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('swap_hotbar', handleSwap); };
-  }, [appState, inventoryOpen, furnaceOpen, isChatOpen]);
+  }, [appState, inventoryOpen, furnaceOpen, isChatOpen, unifiedMenuTab, cursorItem, chestOpen, merchantOpen, npcDialog, showInstructions, activeTrade, instancesOpen, hotbar, backpack, selectedSlotIndex, leftActionBar, rightActionBar, keybinds, returnCursorItemToInventory]);
 
   const handleChatSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -964,7 +1183,73 @@ export default function App() {
      setBackpack(newBackpack);
   };
 
+  const handleClearCraftingGrid = () => {
+     craftingGrid.forEach(slot => {
+        if (slot && slot.type !== BlockType.Air) {
+           returnCursorItemToInventory(slot);
+        }
+     });
+     setCraftingGrid(Array(9).fill(null));
+     Sounds.slotClick();
+  };
+
+  const handleQuickSort = () => {
+     handleSortInventory();
+     Sounds.craftSuccess();
+  };
+
+  const handleQuickStack = () => {
+     setHotbar(prevHb => {
+        const newHb = [...prevHb];
+        setBackpack(prevBp => {
+           const newBp = [...prevBp];
+           for (let b = 0; b < newBp.length; b++) {
+              const bItem = newBp[b];
+              if (!bItem || bItem.type === BlockType.Air) continue;
+              for (let h = 0; h < newHb.length; h++) {
+                 const hItem = newHb[h];
+                 if (hItem && hItem.type === bItem.type && hItem.count < 64) {
+                    const space = 64 - hItem.count;
+                    const transfer = Math.min(space, bItem.count);
+                    newHb[h] = { ...hItem, count: hItem.count + transfer };
+                    const rem = bItem.count - transfer;
+                    newBp[b] = rem > 0 ? { ...bItem, count: rem } : null;
+                    if (newBp[b] === null) break;
+                 }
+              }
+           }
+           return newBp;
+        });
+        return newHb;
+     });
+     Sounds.slotClick();
+  };
+
   const handleSlotClick = (type: 'hotbar' | 'leftActionBar' | 'rightActionBar' | 'backpack' | 'equipment' | 'crafting' | 'craftingResult' | 'furnaceInput' | 'furnaceFuel' | 'furnaceOutput' | 'chest' | 'merchantPayment' | 'merchantOutput', index: number, isRightClick: boolean = false) => {
+
+    if (!inventoryOpen) {
+        let arr = [];
+        if (type === 'hotbar') arr = hotbar;
+        if (type === 'leftActionBar') arr = leftActionBar;
+        if (type === 'rightActionBar') arr = rightActionBar;
+        const slot = arr[index];
+        if (slot && typeof slot === 'object' && slot.isAbility) {
+             window.dispatchEvent(new CustomEvent('cast_ability', { detail: { abilityId: slot.abilityId } }));
+        } else if (type === 'hotbar') {
+             setSelectedSlotIndex(index);
+             Sounds.slotClick();
+        }
+        return;
+    }
+
+    if (type === 'equipment') {
+        Sounds.equipGear();
+    } else if (type === 'craftingResult') {
+        Sounds.craftSuccess();
+    } else {
+        Sounds.slotClick();
+    }
+        
     
     // Helper to merge stacks
     const tryMerge = (target: InventorySlot, source: InventorySlot, isRightClick: boolean): { remainingTarget: InventorySlot, remainingSource: InventorySlot } => {
@@ -1141,6 +1426,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
   };
 
   const handleDragStart = (e: React.DragEvent, type: string, index: number) => {
+    e.dataTransfer.setData('text/plain', type + ',' + index);
     setDraggedItemInfo({ type, index });
   };
   
@@ -1149,14 +1435,39 @@ let targetArray = type === 'hotbar' ? [...hotbar]
   };
   
   const handleDrop = (e: React.DragEvent, targetType: string, targetIndex: number) => {
+
+    const dragDataStr = e.dataTransfer.getData('text/plain');
+    let srcType, srcIndex;
+    if (dragDataStr) {
+        const parts = dragDataStr.split(',');
+        srcType = parts[0];
+        srcIndex = parts[1];
+        if (srcType !== 'ability') srcIndex = parseInt(srcIndex);
+    } else if (draggedItemInfo) {
+        srcType = draggedItemInfo.type;
+        srcIndex = draggedItemInfo.index;
+    } else {
+        return;
+    }
+        
     e.preventDefault();
-    if (!draggedItemInfo) return;
+
     
     // Perform standard slot swap/merge by temporarily tricking handleSlotClick
     // Actually, we can just call handleSlotClick to pick up, then place.
     // Wait, handleSlotClick uses `cursorItem`. If we bypass cursorItem, we need to swap.
     
-    const { type: srcType, index: srcIndex } = draggedItemInfo;
+    // const { type: srcType, index: srcIndex } = draggedItemInfo;
+    if (srcType === 'ability') {
+        const targetArr = [...(targetType === 'backpack' ? backpack : targetType === 'hotbar' ? hotbar : targetType === 'leftActionBar' ? leftActionBar : targetType === 'rightActionBar' ? rightActionBar : targetType === 'equipment' ? equipment : [])];
+        targetArr[targetIndex] = { isAbility: true, abilityId: srcIndex as string };
+        if (targetType === 'backpack') setBackpack(targetArr);
+        if (targetType === 'hotbar') setHotbar(targetArr);
+        if (targetType === 'leftActionBar') setLeftActionBar(targetArr);
+        if (targetType === 'rightActionBar') setRightActionBar(targetArr);
+        setDraggedItemInfo(null);
+        return;
+    }
     if (srcType === targetType && srcIndex === targetIndex) {
         setDraggedItemInfo(null);
         return;
@@ -1216,6 +1527,13 @@ let targetArray = type === 'hotbar' ? [...hotbar]
     let type: BlockType;
     let count: number = 1;
     
+    if (typeof slot === 'object' && slot.isAbility) {
+       const ability = MMO_ABILITIES.find(a => a.id === slot.abilityId);
+       const Icon = ability ? React.cloneElement(ability.icon as React.ReactElement, { className: 'w-full h-full p-1 text-cyan-400 drop-shadow-md' }) : null;
+       if (!ability) return null;
+       const boundKey = Object.entries(keybinds).find(([k, v]) => v === slot.abilityId)?.[0];
+       return <div data-tooltip={ability.name} className="w-full h-full rounded-sm shadow-sm relative group flex items-center justify-center overflow-hidden bg-neutral-900 border border-cyan-500/30">{ability.icon}{boundKey && <span className="absolute top-0 right-0 bg-amber-500 text-black font-black text-[10px] px-1 rounded shadow-md z-10 leading-none">{boundKey.toUpperCase()}</span>}</div>;
+    }
     if (typeof slot === 'number') {
        type = slot;
     } else {
@@ -1389,56 +1707,56 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              
              <div className="flex items-center gap-4 mb-10 shrink-0">
                <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-900/30">
-                 <Globe size={28} className="text-blue-400 drop-shadow-[0_0_10px_rgba(96,165,250,0.8)]" />
+                 <Globe size={28} className="text-white" />
                </div>
                <div>
-                 <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 tracking-tight drop-shadow-sm">World Browser</h1>
-                 <p className="text-neutral-400 font-medium mt-1">Join an existing realm or start your own.</p>
+                 <h1 className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-neutral-500 tracking-tight">World Browser</h1>
+                 <p className="text-neutral-400 font-medium">Join an existing realm or start your own.</p>
                </div>
              </div>
 
              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar flex flex-col">
-               <div className="flex items-center gap-4 mb-6 border-b border-white/10 pb-4 shrink-0">
+               <div className="flex items-center gap-4 mb-6 border-b border-white/5 pb-4 shrink-0">
                  <button
                      onClick={() => setLobbyTab('play')}
-                     className={`text-sm font-bold uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all duration-300 ${lobbyTab === 'play' ? 'bg-blue-600/30 text-blue-300 shadow-[0_0_20px_rgba(37,99,235,0.3)] border border-blue-500/30' : 'text-neutral-500 hover:text-white hover:bg-white/5 border border-transparent'}`}
+                     className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all ${lobbyTab === 'play' ? 'bg-blue-600/20 text-blue-400' : 'text-neutral-500 hover:text-white'}`}
                  >Live Servers</button>
                  <button
                      onClick={() => setLobbyTab('marketplace')}
-                     className={`text-sm font-bold uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all duration-300 flex items-center gap-2 ${lobbyTab === 'marketplace' ? 'bg-emerald-600/30 text-emerald-300 shadow-[0_0_20px_rgba(5,150,105,0.3)] border border-emerald-500/30' : 'text-neutral-500 hover:text-white hover:bg-white/5 border border-transparent'}`}
+                     className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${lobbyTab === 'marketplace' ? 'bg-emerald-600/20 text-emerald-400' : 'text-neutral-500 hover:text-white'}`}
                  ><ShoppingBag size={14}/> Marketplace</button>
                </div>
                           
                {lobbyTab === 'play' ? (
                  <div className="flex flex-col">
                    <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-widest font-bold text-neutral-400 mb-4 flex items-center gap-2">
-                       <Star size={14} className="text-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.8)]" /> Favorites
+                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
+                       <Star size={14} className="text-amber-500" /> Favorites
                      </h3>
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                       {favoriteServers.length > 0 ? favoriteServers.map(srv => (
-                         <div key={srv} onClick={() => joinServer(srv)} className="bg-neutral-900/60 backdrop-blur-md hover:bg-neutral-800/80 border border-neutral-800 hover:border-amber-500/40 hover:shadow-[0_0_15px_rgba(245,158,11,0.15)] p-5 rounded-2xl cursor-pointer transition-all duration-300 flex items-center justify-between group">
-                           <span className="font-bold text-neutral-300 group-hover:text-amber-100 transition-colors">{srv}</span>
-                           <button onClick={(e) => toggleFavorite(srv, e)} className="text-amber-500 hover:text-amber-300 p-1 transition-transform group-hover:scale-110">
-                             <Star size={18} fill="currentColor" className="drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                        {favoriteServers.length > 0 ? favoriteServers.map((srv, idx) => (
+                          <div key={'fav-' + srv + '-' + idx} onClick={() => joinServer(srv)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 p-4 rounded-2xl cursor-pointer transition-all flex items-center justify-between group">
+                           <span className="font-bold text-neutral-200 group-hover:text-white transition-colors">{srv}</span>
+                           <button onClick={(e) => toggleFavorite(srv, e)} className="text-amber-500 hover:text-amber-400 p-1">
+                             <Star size={18} fill="currentColor" />
                            </button>
                          </div>
                        )) : <p className="text-neutral-600 text-sm italic py-2">No favorites yet.</p>}
                      </div>
                    </div>
                    <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-widest font-bold text-neutral-400 mb-4 flex items-center gap-2">
-                       <Globe size={14} className="text-blue-400 drop-shadow-[0_0_5px_rgba(96,165,250,0.8)]" /> Public Realms
+                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
+                       <Globe size={14} className="text-blue-500" /> Public Realms
                      </h3>
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                        {publicServers.map(srv => (
-                         <div key={srv.id} onClick={() => joinServer(srv.id)} className="bg-neutral-900/60 backdrop-blur-md hover:bg-neutral-800/80 border border-neutral-800 hover:border-blue-500/40 hover:shadow-[0_0_15px_rgba(59,130,246,0.15)] p-5 rounded-2xl cursor-pointer transition-all duration-300 flex items-center justify-between group">
+                         <div key={srv.id} onClick={() => joinServer(srv.id)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 p-4 rounded-2xl cursor-pointer transition-all flex items-center justify-between group">
                            <div>
-                             <div className="font-bold text-neutral-300 group-hover:text-blue-100 transition-colors text-lg">{srv.id}</div>
-                             <div className="text-xs text-neutral-500 mt-1.5 flex items-center gap-1.5 font-medium"><User size={12} className="text-blue-400/70" /> {srv.players} online</div>
+                             <div className="font-bold text-neutral-200 group-hover:text-white transition-colors">{srv.id}</div>
+                             <div className="text-xs text-neutral-500 mt-1 flex items-center gap-1.5"><User size={12} /> {srv.players} online</div>
                            </div>
-                           <button onClick={(e) => toggleFavorite(srv.id, e)} className="text-neutral-600 hover:text-amber-400 p-1 transition-all group-hover:scale-110">
-                             <Star size={18} fill={favoriteServers.includes(srv.id) ? "currentColor" : "none"} className={favoriteServers.includes(srv.id) ? "text-amber-500 drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]" : ""} />
+                           <button onClick={(e) => toggleFavorite(srv.id, e)} className="text-neutral-600 hover:text-amber-500 p-1 transition-colors">
+                             <Star size={18} fill={favoriteServers.includes(srv.id) ? "currentColor" : "none"} />
                            </button>
                          </div>
                        ))}
@@ -1449,8 +1767,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                        <Clock size={14} className="text-neutral-500" /> Recent
                      </h3>
                      <div className="flex flex-wrap gap-2">
-                       {recentServers.length > 0 ? recentServers.map(srv => (
-                         <button key={srv} onClick={() => joinServer(srv)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 px-4 py-2 rounded-xl text-sm font-medium text-neutral-300 hover:text-white transition-colors">
+                        {recentServers.length > 0 ? recentServers.map((srv, idx) => (
+                          <button key={'rec-' + srv + '-' + idx} onClick={() => joinServer(srv)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 px-4 py-2 rounded-xl text-sm font-medium text-neutral-300 hover:text-white transition-colors">
                            {srv}
                          </button>
                        )) : <p className="text-neutral-600 text-sm italic py-1">No recent servers.</p>}
@@ -1493,6 +1811,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                )}
              </div>
              
+
              <div className="mt-8 flex gap-3 shrink-0">
                <input
                  type="text"
@@ -1529,12 +1848,13 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                           setActiveProfileId(p.id);
                           setNickname(p.name || 'Player');
                           setCharacterSkin(p.skin || 'orange');
-                          setCharacterJob(p.job || 'novice');
+                          setPlayerClass(p.playerClass || 'warrior');
                           if (p.hotbar) setHotbar(JSON.parse(p.hotbar));
                           if (p.leftActionBar) setLeftActionBar(JSON.parse(p.leftActionBar));
                           if (p.rightActionBar) setRightActionBar(JSON.parse(p.rightActionBar));
                           if (p.backpack) setBackpack(JSON.parse(p.backpack));
                           if (p.health !== undefined) setHealth(p.health);
+                          if (p.keybinds) setKeybinds(JSON.parse(p.keybinds));
                           if (p.quests) setQuests(JSON.parse(p.quests));
                           if (p.xp !== undefined) setXp(p.xp);
                           if (p.level !== undefined) setLevel(p.level);
@@ -1544,7 +1864,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       }}
                       className={`px-4 py-3 rounded-xl text-left text-sm font-bold border transition-all ${activeProfileId === p.id ? 'border-blue-500/50 bg-blue-900/20 text-blue-100 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'border-neutral-800 hover:border-neutral-700 text-neutral-400 hover:text-neutral-200 bg-neutral-900/50'}`}
                     >
-                      {p.name || 'Unnamed'} {p.health <= 0 && <span className="text-red-500 font-normal text-xs ml-2">(Dead)</span>}
+                      {p.name || 'Unnamed'} {p.health <= 0 && <span className="text-red-500 font-normal text-xs ml-2">(Dead)</span>} <span className="text-xs text-neutral-500 block font-normal capitalize">Level {p.level || 1} {p.playerClass || 'Warrior'}</span>
                     </button>
                  ))}
               </div>
@@ -1555,7 +1875,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       const newId = 'prof_' + Date.now();
                       const newName = nickname || 'New Profile';
                       const newSkin = characterSkin || 'orange';
-                      const newJob = characterJob || 'novice';
+                      const newClass = playerClass || 'warrior';
                       
                       const defaultHotbar = [
                          { type: 103 /* BlockType.Fists */, count: 1 },
@@ -1566,7 +1886,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                          id: newId,
                          name: newName,
                          skin: newSkin,
-                         job: newJob,
+                         playerClass: newClass,
                          health: 100,
                          hotbar: JSON.stringify(defaultHotbar),
                          backpack: JSON.stringify(Array(27).fill(null)),
@@ -1574,13 +1894,13 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                          updatedAt: Date.now()
                       };
                       
-                          setDoc(doc(db, 'users', currentUser.uid, 'profiles_v2', newId), { ...newProfile, updatedAt: serverTimestamp() });
+                          setDoc(doc(db, 'users', currentUser.uid, 'profiles', newId), { ...newProfile, updatedAt: serverTimestamp() });
                       
                       setProfiles([...profiles, newProfile]);
                       setActiveProfileId(newId);
                       setNickname(newName);
                       setCharacterSkin(newSkin);
-                      setCharacterJob(newJob);
+                      setPlayerClass(newClass);
                       setHotbar(defaultHotbar);
                       setLeftActionBar(Array(10).fill(null));
                       setRightActionBar(Array(10).fill(null));
@@ -1590,8 +1910,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       setXp(0);
                       setLevel(1);
                       setSkillPoints(0);
-                      const startingSkills = availableJobs.find(j => j.id === newJob)?.skills || { strength: 0, dexterity: 0, intelligence: 0 };
-                      setSkills(startingSkills);
+                      setSkills({ strength: 0, dexterity: 0, intelligence: 0 });
                       setQuests(defaultQuests);
                    }}
                    className="px-4 py-2 rounded-xl text-sm font-bold border border-emerald-500/30 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-800/40 transition-all flex items-center justify-center gap-1 w-full"
@@ -1608,26 +1927,23 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                       }
                       if (!window.confirm("Are you sure you want to delete this profile? This action cannot be undone.")) return;
                       
-                      try {
-                          await deleteDoc(doc(db, 'users', currentUser.uid, 'profiles_v2', activeProfileId));
-                          
-                          const newProfiles = profiles.filter(p => p.id !== activeProfileId);
-                          setProfiles(newProfiles);
-                          
-                          const newActive = newProfiles[0];
-                          setActiveProfileId(newActive.id);
-                          setNickname(newActive.name || 'Player');
-                          setCharacterSkin(newActive.skin || 'orange');
-                          if (newActive.hotbar) setHotbar(JSON.parse(newActive.hotbar));
-                          if (newActive.leftActionBar) setLeftActionBar(JSON.parse(newActive.leftActionBar));
-                          if (newActive.rightActionBar) setRightActionBar(JSON.parse(newActive.rightActionBar));
-                          if (newActive.backpack) setBackpack(JSON.parse(newActive.backpack));
-                          if (newActive.health !== undefined) setHealth(newActive.health);
-                          if (newActive.quests) setQuests(JSON.parse(newActive.quests));
-                      } catch (err) {
-                          console.error('Failed to delete profile', err);
-                          alert('Failed to delete profile');
-                      }
+                      const newProfiles = profiles.filter(p => p.id !== activeProfileId);
+                      setProfiles(newProfiles);
+                      
+                      const newActive = newProfiles[0];
+                      setActiveProfileId(newActive.id);
+                      setNickname(newActive.name || 'Player');
+                      setCharacterSkin(newActive.skin || 'orange');
+                      setPlayerClass(newActive.playerClass || 'warrior');
+                      if (newActive.hotbar) setHotbar(JSON.parse(newActive.hotbar));
+                      if (newActive.leftActionBar) setLeftActionBar(JSON.parse(newActive.leftActionBar));
+                      if (newActive.rightActionBar) setRightActionBar(JSON.parse(newActive.rightActionBar));
+                      if (newActive.backpack) setBackpack(JSON.parse(newActive.backpack));
+                      if (newActive.health !== undefined) setHealth(newActive.health);
+                      if (newActive.keybinds) setKeybinds(JSON.parse(newActive.keybinds));
+                      if (newActive.quests) setQuests(JSON.parse(newActive.quests));
+                      
+                          deleteDoc(doc(db, 'users', currentUser.uid, 'profiles', activeProfileId));
                    }}
                    className="px-4 py-2 rounded-xl text-sm font-bold border border-red-500/30 bg-red-900/20 text-red-400 hover:bg-red-800/40 transition-all flex items-center justify-center gap-1"
                  >
@@ -1650,11 +1966,33 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                           }
                         }}
                         className="flex-1 bg-[#0A0A0B]/80 border border-neutral-800 text-neutral-200 rounded-2xl pl-5 pr-5 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-neutral-700 transition-all shadow-inner text-lg placeholder-neutral-600"
+                        onBlur={saveProgress}
                         placeholder="Enter Nickname..."
                         maxLength={16}
                      />
                   </div>
                 </div>
+
+                <div>
+                  <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 block">Class</label>
+                  <div className="flex gap-2 mb-4">
+                     {['warrior', 'mage', 'archer'].map(cls => (
+                        <button
+                           key={cls}
+                           onClick={() => {
+                             setPlayerClass(cls);
+                             if (activeProfileId) {
+                                setProfiles(profiles.map(p => p.id === activeProfileId ? { ...p, playerClass: cls } : p));
+                             }
+                           }}
+                           className={`flex-1 py-2 rounded-xl border text-sm font-bold uppercase tracking-wider transition-all ${playerClass === cls ? 'bg-indigo-600/30 border-indigo-500 text-indigo-100 shadow-[0_0_10px_rgba(99,102,241,0.2)]' : 'bg-black/50 border-neutral-800 text-neutral-500 hover:border-neutral-600'}`}
+                        >
+                           {cls}
+                        </button>
+                     ))}
+                  </div>
+                </div>
+        
                 <div>
                   <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 block">Character Skin</label>
                   <div className="flex flex-wrap gap-2 pt-2">
@@ -1674,30 +2012,6 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                      ))}
                   </div>
                 </div>
-
-                <div>
-                  <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 mt-4 block">Starting Class (Job)</label>
-                  <div className="grid grid-cols-2 gap-2">
-                     {availableJobs.map(job => (
-                        <button 
-                          key={job.id}
-                          onClick={() => {
-                            setCharacterJob(job.id);
-                            if (activeProfileId) {
-                               setProfiles(profiles.map(p => p.id === activeProfileId ? { ...p, job: job.id } : p));
-                            }
-                          }}
-                          className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${characterJob === job.id ? 'border-amber-500/50 bg-amber-900/20 text-amber-100 shadow-[0_0_15px_rgba(245,158,11,0.15)] scale-[1.02]' : 'border-neutral-800 hover:border-neutral-700 text-neutral-400 bg-black/40 hover:bg-neutral-900/50'}`}
-                          title={job.desc}
-                        >
-                          <span className="text-2xl mb-1">{job.icon}</span>
-                          <span className="text-xs font-bold">{job.name}</span>
-                        </button>
-                     ))}
-                  </div>
-                  <p className="text-[10px] text-neutral-500 mt-2 italic text-center">* Job bonuses only apply when creating a NEW profile.</p>
-                </div>
-
                 {activeProfileId && (
                   <button
                     onClick={saveProgress}
@@ -1873,11 +2187,6 @@ let targetArray = type === 'hotbar' ? [...hotbar]
       
       {/* Main Game Area */}
       <div className="flex-1 relative">
-        {levelUpFlash && (
-          <div className="fixed inset-0 pointer-events-none z-[100] flex items-center justify-center animate-pulse" style={{background: 'radial-gradient(circle, rgba(255,215,0,0.3) 0%, transparent 70%)'}}>
-            <div className="text-yellow-300 text-6xl font-black drop-shadow-[0_0_20px_gold] absolute top-1/4 -translate-y-1/2">LEVEL UP!</div>
-          </div>
-        )}
 
         <GameCanvas
           helmet={helmetType}
@@ -1889,12 +2198,15 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           selectedBlock={selectedBlock} 
           roomId={serverName} 
           userId={currentUser?.uid}
-          email={currentUser?.email}
           profileId={activeProfileId || undefined}
-          isInventoryOpen={inventoryOpen || showInstructions || furnaceOpen || chestOpen || merchantOpen || instancesOpen}
+          isInventoryOpen={inventoryOpen || showInstructions || furnaceOpen || chestOpen || merchantOpen}
           onHealthChange={setHealth}
+          stamina={stamina}
+          maxStamina={maxStamina}
+          onStaminaChange={setStamina}
           skills={skills}
           mana={mana}
+          keybinds={keybinds}
           onManaChange={setMana}
 
           onTradeRequest={(senderId, senderName) => addNotification('trade', senderId, senderName)}
@@ -1934,35 +2246,12 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                 newKills[type] = (newKills[type] || 0) + 1;
                 return newKills;
              });
+             const xpGain = type === 'golem_boss' ? 250 : type === 'slime' ? 10 : 25;
+             grantPlayerXp(xpGain);
           }}
           onGiveSp={(amount) => setSkillPoints(sp => sp + amount)}
-          onGiveXp={(amount) => {
-            let currentLevel = saveStateRef.current.level;
-            let currentXp = saveStateRef.current.xp;
-            let currentSp = saveStateRef.current.skillPoints;
-
-            currentXp += amount;
-            let newSp = 0;
-            while (currentXp >= currentLevel * 100) {
-               currentXp -= currentLevel * 100;
-               currentLevel++;
-               newSp++;
-            }
-            
-            setXp(currentXp);
-            if (newSp > 0) {
-               setLevel(currentLevel);
-               setSkillPoints(currentSp + newSp);
-               addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
-               setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
-            }
-          }}
-          onGiveLevel={(amount) => {
-            setLevel(prev => prev + amount);
-            setSkillPoints(sp => sp + amount);
-            addNotification('level_up', 'System', 'System', `Admin granted ${amount} level(s)!`);
-            setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
-          }}
+          onGiveXp={(amount) => grantPlayerXp(amount)}
+          onGiveLevel={(amount) => grantPlayerLevel(amount)}
           onChestUpdated={(tx, ty, inventory) => {
              if (activeChestCoords?.tx === tx && activeChestCoords?.ty === ty) {
                 setChestInventory(inventory);
@@ -2003,32 +2292,6 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             if (minedBlockType === BlockType.DiamondOre) blockType = BlockType.Diamond;
             Sounds.mineBlock();
             
-            if (minedBlockType === 999) { // XP Orb
-               const xpGain = 10;
-               
-            let currentLevel = saveStateRef.current.level;
-            let currentXp = saveStateRef.current.xp;
-            let currentSp = saveStateRef.current.skillPoints;
-
-            currentXp += xpGain;
-            let newSp = 0;
-            while (currentXp >= currentLevel * 100) {
-               currentXp -= currentLevel * 100;
-               currentLevel++;
-               newSp++;
-            }
-            
-            setXp(currentXp);
-            if (newSp > 0) {
-               setLevel(currentLevel);
-               setSkillPoints(currentSp + newSp);
-               addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
-               setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
-            }
-
-               return; // Do not add to inventory
-            }
-            
             // Add Woodcutting XP if applicable
             if (minedBlockType === BlockType.Wood || minedBlockType === BlockType.Leaves) {
                const wcXpGain = minedBlockType === BlockType.Wood ? 15 : 5;
@@ -2048,48 +2311,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                });
             }
 
-                        // Add Mining XP if applicable
-            if ([BlockType.Stone, BlockType.CoalOre, BlockType.IronOre, BlockType.GoldOre, BlockType.DiamondOre, BlockType.Dirt].includes(minedBlockType)) {
-               const miningXpGain = (minedBlockType === BlockType.DiamondOre) ? 50 : (minedBlockType === BlockType.GoldOre) ? 35 : (minedBlockType === BlockType.IronOre || minedBlockType === BlockType.CoalOre) ? 20 : 5;
-               setSkills(prev => {
-                  let currentLevel = prev.mining || 1;
-                  let nextXp = (prev.miningXp || 0) + miningXpGain;
-                  let levelUp = false;
-                  while (nextXp >= currentLevel * 50) {
-                     nextXp -= currentLevel * 50;
-                     currentLevel++;
-                     levelUp = true;
-                  }
-                  if (levelUp) {
-                     addNotification('system', 'System', 'System', `Mining Level Up! Now level ${currentLevel}.`);
-                  }
-                  return { ...prev, mining: currentLevel, miningXp: nextXp };
-               });
-            }
-
             // Add general XP for mining
             const xpGain = (minedBlockType === BlockType.DiamondOre) ? 15 : (minedBlockType === BlockType.GoldOre) ? 10 : (minedBlockType === BlockType.IronOre || minedBlockType === BlockType.CoalOre) ? 5 : 1;
-            
-            let currentLevel = saveStateRef.current.level;
-            let currentXp = saveStateRef.current.xp;
-            let currentSp = saveStateRef.current.skillPoints;
-
-            currentXp += xpGain;
-            let newSp = 0;
-            while (currentXp >= currentLevel * 100) {
-               currentXp -= currentLevel * 100;
-               currentLevel++;
-               newSp++;
-            }
-            
-            setXp(currentXp);
-            if (newSp > 0) {
-               setLevel(currentLevel);
-               setSkillPoints(currentSp + newSp);
-               addNotification('level_up', 'System', 'System', 'Level Up! Press E to upgrade skills.'); 
-               setLevelUpFlash(true); setTimeout(() => setLevelUpFlash(false), 2000);
-            }
-
+            grantPlayerXp(xpGain);
 
             // Update quests
             if (blockType === BlockType.Dirt) {
@@ -2108,15 +2332,6 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                    if (newCount >= q.goal && !q.completed) {
                      setNotifications(n => [...n, { id: Math.random().toString(), type: 'system', senderName: 'System', timestamp: Date.now(), msg: 'Magic Unlocked!' }]);
                    }
-                   return { ...q, current: newCount, completed: newCount >= q.goal };
-                 }
-                 return q;
-               }));
-            }
-            if (blockType === BlockType.DiamondOre) {
-               setQuests(prev => prev.map(q => {
-                 if (q.id === 'q7' && !q.completed && q.prerequisiteId && prev.find(p => p.id === q.prerequisiteId)?.completed) {
-                   const newCount = q.current + 1;
                    return { ...q, current: newCount, completed: newCount >= q.goal };
                  }
                  return q;
@@ -2228,12 +2443,15 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               }
             }
             if (blockType === BlockType.QuestNPC || blockType === BlockType.GuideNPC || blockType === BlockType.GoblinNPC || blockType === BlockType.WizardNPC) {
-              setShowNPCMessage(true);
+              let color = 'bg-pink-500'; let textColor = 'text-pink-400'; let name = 'Guide';
+              if (blockType === BlockType.GoblinNPC) { color = 'bg-green-500'; textColor = 'text-green-400'; name = 'Goblin Trader'; }
+              if (blockType === BlockType.WizardNPC) { color = 'bg-purple-500'; textColor = 'text-purple-400'; name = 'Wizard'; }
+              if (blockType === BlockType.QuestNPC) { color = 'bg-amber-500'; textColor = 'text-amber-400'; name = 'Quest Master'; }
+              setNpcDialog({ name, text: 'Hello traveler! The world is dangerous, but full of riches. Check your Quest Log (Press Q) to see what you should do next!', color, ringColor: textColor });
             }
             if (blockType === BlockType.DurelNPC) {
-              setShowDurelScroll(true);
-            } ${mob}(s)`).join(', ');
-              alert("DUREL: YOU HAVE SLAIN: " + (killMsg || "NOTHING YET!"));
+              const killMsg = Object.entries(kills).map(([mob, count]) => `${count} ${mob}(s)`).join(', ');
+              setNpcDialog({ name: 'DUREL', text: 'YOU HAVE SLAIN: ' + (killMsg || 'NOTHING YET!'), color: 'bg-red-600', ringColor: 'text-red-500' });
             }
             if (blockType === BlockType.TreeSeed || blockType === BlockType.CarrotSeed) {
               // Consume seed
@@ -2301,40 +2519,130 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           }}
         />
         
-        <ModernHUD 
-          health={health} 
-          maxHealth={100 + skills.strength * 10} 
-          mana={mana} 
-          maxMana={100 + skills.intelligence * 10} 
-          level={level} 
-          xp={xp} 
-          job={characterJob}
-          onSkillUse={(skillId) => {
-             // In the future, this will trigger the combat system
-             addNotification('system', 'System', 'System', `Used skill: ${skillId}`);
-          }}
-        />
+        {/* UI Overlay - Top Left */}
+        <div className="absolute top-4 left-4 bg-black/50 text-white px-4 py-2 rounded-lg pointer-events-none text-sm border border-white/10">
+          Playing on server: <span className="font-bold text-blue-400">{serverName}</span>
+        </div>
 
+                {/* Left Action Bar */}
+        <div className={`absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 p-2 rounded-xl border border-white/10 flex flex-col gap-1 z-10 ${inventoryOpen ? 'z-[60]' : ''}`}>
+           
+           {leftActionBar.map((slot, index) => (
+             <button
+               key={'l'+index}
+               onClick={() => { handleSlotClick('leftActionBar', index); }}
+               onDragOver={handleDragOver}
+               onDrop={(e) => handleDrop(e, 'leftActionBar', index)}
+               onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'leftActionBar', index }; }}
+               onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
+               onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('leftActionBar', index, true); }}
+               className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
+             >
+               {renderBlockIcon(slot)}
+             </button>
+           ))}
+        </div>
 
-        {/* Modern Chat System */}
-        <div className="absolute bottom-28 left-4 w-[350px] z-10 flex flex-col justify-end pointer-events-none">
-           <div className="flex flex-col gap-1.5 mb-3 max-h-60 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+        {/* Right Action Bar */}
+        <div className={`absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 p-2 rounded-xl border border-white/10 flex flex-col gap-1 z-10 ${inventoryOpen ? 'z-[60]' : ''}`}>
+           
+           {rightActionBar.map((slot, index) => (
+             <button
+               key={'r'+index}
+               onClick={() => { handleSlotClick('rightActionBar', index); }}
+               onDragOver={handleDragOver}
+               onDrop={(e) => handleDrop(e, 'rightActionBar', index)}
+               onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'rightActionBar', index }; }}
+               onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
+               onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('rightActionBar', index, true); }}
+               className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
+             >
+               {renderBlockIcon(slot)}
+             </button>
+           ))}
+        </div>
+
+                {/* Player Status HUD */}
+        <div className="absolute top-4 right-4 flex flex-col gap-3 w-64 bg-black/50 p-4 rounded-xl border border-white/10 backdrop-blur-md shadow-2xl">
+           
+           {/* Level & XP */}
+           <div className="flex justify-between items-center mb-1">
+             <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-300 flex items-center justify-center font-black text-black shadow-[0_0_10px_rgba(251,191,36,0.5)]">
+                   {level}
+                </div>
+                <div className="flex flex-col">
+                   <span className="text-xs font-bold text-white uppercase tracking-wider">{nickname || 'Player'}</span>
+                   <span className="text-[10px] text-amber-400 font-bold">{xp} / {level * 100} XP</span>
+                </div>
+             </div>
+           </div>
+           
+           {/* XP Progress Bar */}
+           <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden shadow-inner -mt-1">
+              <div className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 transition-all duration-300" style={{ width: `${(xp / (level * 100)) * 100}%` }}></div>
+           </div>
+
+           {/* Health Bar */}
+           <div className="flex flex-col gap-1 mt-1">
+             <div className="flex justify-between items-center px-1">
+                <span className="text-[10px] uppercase font-black text-red-400 tracking-wider flex items-center gap-1"><Heart size={10} className="fill-red-400" /> HP</span>
+                <span className="text-[10px] font-bold text-neutral-300">{health} / {20 + (skills.strength || 0) * 10}</span>
+             </div>
+             <div className="w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-red-900/30">
+                <div className="h-full bg-gradient-to-r from-red-600 to-rose-400 transition-all duration-300 relative" style={{ width: `${(health / (20 + (skills.strength || 0) * 10)) * 100}%` }}>
+                   <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.2)_50%,transparent_100%)] w-full h-full animate-[shimmer_2s_infinite]"></div>
+                </div>
+             </div>
+           </div>
+
+           {/* Stamina Bar */}
+           <div className="flex flex-col gap-1">
+             <div className="flex justify-between items-center px-1">
+                <span className="text-[10px] uppercase font-black text-amber-400 tracking-wider flex items-center gap-1"><Zap size={10} className="fill-amber-400" /> SP</span>
+                <span className="text-[10px] font-bold text-neutral-300">{Math.round(stamina)} / {maxStamina}</span>
+             </div>
+             <div className="w-full h-2.5 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-amber-900/30">
+                <div className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-all duration-150 relative" style={{ width: `${Math.max(0, Math.min(100, (stamina / maxStamina) * 100))}%` }}>
+                   <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.25)_50%,transparent_100%)] w-full h-full"></div>
+                </div>
+             </div>
+           </div>
+
+           {/* Mana Bar */}
+           {quests.find(q => q.id === 'q5')?.completed && (
+             <div className="flex flex-col gap-1">
+               <div className="flex justify-between items-center px-1">
+                  <span className="text-[10px] uppercase font-black text-blue-400 tracking-wider flex items-center gap-1">MP</span>
+                  <span className="text-[10px] font-bold text-neutral-300">{mana} / {100 + (skills.intelligence || 0) * 20}</span>
+               </div>
+               <div className="w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner border border-blue-900/30">
+                  <div className="h-full bg-gradient-to-r from-blue-700 to-cyan-400 transition-all duration-300 relative" style={{ width: `${(mana / (100 + (skills.intelligence || 0) * 20)) * 100}%` }}>
+                     <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.2)_50%,transparent_100%)] w-full h-full animate-[shimmer_2s_infinite]"></div>
+                  </div>
+               </div>
+             </div>
+           )}
+        </div>
+        {/* Chat System */}
+        <div className="absolute bottom-24 left-4 w-72 z-10 flex flex-col justify-end pointer-events-none">
+           <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
              {chatMessages.map((msg, idx) => (
-               <div key={idx} className="bg-neutral-900/70 backdrop-blur-md border border-white/5 text-white text-sm px-3 py-2 rounded-xl w-fit break-all shadow-lg animate-fade-in-up">
-                 <span className="font-bold text-amber-400/90 text-xs mr-2 uppercase tracking-wide">{msg.sender}</span>
-                 <span className="text-neutral-200 leading-relaxed">{msg.text}</span>
+               <div key={idx} className="bg-black/40 text-white text-sm px-2 py-1 rounded w-fit break-all">
+                 <span className="opacity-50 text-xs mr-2">{msg.sender}:</span>
+                 {msg.text}
                </div>
              ))}
            </div>
            
            {isChatOpen && (
-             <form onSubmit={handleChatSubmit} className="pointer-events-auto bg-neutral-900/80 backdrop-blur-xl border border-white/10 p-3 rounded-2xl flex items-center shadow-2xl transition-all duration-300 transform translate-y-0 opacity-100">
-               <MessageSquare size={18} className="text-amber-500 mr-3 shrink-0" />
+             <form onSubmit={handleChatSubmit} className="pointer-events-auto bg-black/60 p-2 rounded flex items-center shadow-lg">
+               <MessageSquare size={16} className="text-white/50 mr-2 shrink-0" />
                <input 
                  ref={chatInputRef}
                  type="text" 
-                 className="bg-transparent text-white outline-none w-full text-sm placeholder:text-neutral-500 font-medium"
-                 placeholder="Type to chat globally..."
+                 className="bg-transparent text-white outline-none w-full text-sm"
+                 placeholder="Say something... (Enter)"
                  onBlur={() => setIsChatOpen(false)}
                  maxLength={100}
                />
@@ -2347,515 +2655,181 @@ let targetArray = type === 'hotbar' ? [...hotbar]
            )}
         </div>
         
-        {/* UI Overlay - Modern Hotbar */}
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-2 p-2 bg-neutral-900/80 backdrop-blur-xl rounded-2xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)] transition-all">
+        {/* UI Overlay - Hotbar */}
+        <div className={`absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-1 p-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl ${inventoryOpen ? 'z-[60]' : 'z-20'}`}>
           {hotbar.map((slot, index) => {
             const isSelected = selectedSlotIndex === index && !inventoryOpen;
             return (
               <button
                 key={index}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, 'hotbar', index)}
+                onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'hotbar', index }; }}
+                onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
                 onClick={() => {
-                  if (inventoryOpen) handleSlotClick('hotbar', index);
-                  else setSelectedSlotIndex(index);
+                  handleSlotClick('hotbar', index);
+
                 }}
                 onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('hotbar', index, true); }}
-                className={`w-14 h-14 p-2 rounded-xl relative transition-all duration-300 group ${
+                className={`w-12 h-12 p-1.5 rounded-lg relative transition-all duration-200 ${
                   isSelected 
-                    ? 'ring-2 ring-amber-400 bg-gradient-to-t from-amber-500/20 to-transparent shadow-[0_0_20px_rgba(251,191,36,0.3)] z-10 -translate-y-2' 
-                    : 'bg-neutral-800/80 hover:bg-neutral-700/80 border border-neutral-700 hover:border-amber-400/50 hover:-translate-y-1'
+                    ? 'ring-2 ring-amber-400 scale-110 bg-gradient-to-t from-white/20 to-transparent shadow-[0_0_15px_rgba(251,191,36,0.5)] z-10' 
+                    : 'hover:bg-white/10 opacity-70 hover:opacity-100 bg-black/50'
                 }`}
               >
-                <div className="absolute -top-2 -left-2 text-[10px] font-black bg-neutral-800 text-neutral-300 w-5 h-5 flex items-center justify-center rounded-md border border-neutral-600 shadow-sm transition-colors group-hover:text-amber-400">{index === 9 ? 0 : index + 1}</div>
-                <div className={`${isSelected ? 'scale-110 drop-shadow-[0_0_8px_rgba(255,255,255,0.6)]' : 'group-hover:scale-105'}`}>
-                   {renderBlockIcon(slot)}
-                </div>
+                <div className="absolute -top-1 -left-1 text-[9px] font-black bg-black/60 text-white w-4 h-4 flex items-center justify-center rounded border border-white/20 shadow-sm">{index + 1}</div>
+                {renderBlockIcon(slot)}
               </button>
             );
           })}
         </div>
-        
-        {/* Instances Modal */}
-        {instancesOpen && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-             <div className="bg-[#0A0A0B]/90 border-2 border-neutral-800 rounded-3xl p-6 shadow-2xl max-w-2xl w-full mx-4">
-                <div className="flex justify-between items-center mb-6">
-                   <h2 className="text-2xl font-black text-white">Dungeons & Instances</h2>
-                   <button onClick={() => setInstancesOpen(false)} className="text-neutral-500 hover:text-white"><X size={24}/></button>
-                </div>
-                <p className="text-neutral-400 mb-6">Select a dungeon or instance to queue into.</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 hover:border-emerald-500/50 cursor-pointer transition-all">
-                      <h3 className="text-emerald-400 font-bold text-lg mb-1">Goblin Caves</h3>
-                      <p className="text-neutral-500 text-sm mb-3">Recommended Level: 1-10</p>
-                      <button onClick={() => { setInstancesOpen(false); joinServer('dungeon_goblin_caves'); }} className="w-full bg-emerald-600/20 text-emerald-400 py-2 rounded-lg font-bold hover:bg-emerald-500 hover:text-white transition-all">Enter Instance</button>
-                   </div>
-                   <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 hover:border-purple-500/50 cursor-pointer transition-all">
-                      <h3 className="text-purple-400 font-bold text-lg mb-1">Wizard Tower</h3>
-                      <p className="text-neutral-500 text-sm mb-3">Recommended Level: 10-25</p>
-                      <button onClick={() => { setInstancesOpen(false); joinServer('dungeon_wizard_tower'); }} className="w-full bg-purple-600/20 text-purple-400 py-2 rounded-lg font-bold hover:bg-purple-500 hover:text-white transition-all">Enter Instance</button>
-                   </div>
-                   <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 hover:border-red-500/50 cursor-pointer transition-all">
-                      <h3 className="text-red-400 font-bold text-lg mb-1">Corrupted Lands</h3>
-                      <p className="text-neutral-500 text-sm mb-3">Recommended Level: 25+</p>
-                      <button onClick={() => { setInstancesOpen(false); joinServer('dungeon_corrupted_lands'); }} className="w-full bg-red-600/20 text-red-400 py-2 rounded-lg font-bold hover:bg-red-500 hover:text-white transition-all">Enter Instance</button>
-                   </div>
-                </div>
-             </div>
-          </div>
-        )}
-
-        {/* Inventory Modal Overlay */}
-        {inventoryOpen && (
-          <div 
-             className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40"
-             onMouseDown={(e) => {
-               if (e.target === e.currentTarget) {
-                 setInventoryOpen(false);
-                 returnCursorItemToInventory(cursorItem);
-               }
-             }}
-          >
-            <div className="bg-neutral-800 p-6 rounded-xl border border-neutral-700 shadow-2xl flex flex-col gap-6 max-h-[90vh] overflow-y-auto custom-scrollbar">
-              
-              <div className="flex gap-4 border-b border-neutral-700 pb-2 justify-between items-center w-full">
-                <div className="flex gap-4">
-                  <button 
-                    onClick={() => setInventoryTab('crafting')}
-                    className={`text-lg font-bold px-4 py-2 rounded-t-lg transition-colors ${inventoryTab === 'crafting' ? 'bg-neutral-700 text-white' : 'text-neutral-500 hover:text-white'}`}
-                  >
-                    Inventory & Crafting
-                  </button>
-                  <button 
-                    onClick={() => setInventoryTab('guide')}
-                    className={`text-lg font-bold px-4 py-2 rounded-t-lg transition-colors flex items-center gap-2 ${inventoryTab === 'guide' ? 'bg-blue-900/50 text-blue-400' : 'text-neutral-500 hover:text-white'}`}
-                  >
-                    <Book size={20} /> Recipe Guide
-                  </button>
-                  <button 
-                    onClick={() => setInventoryTab('skills')}
-                    className={`text-lg font-bold px-4 py-2 rounded-t-lg transition-colors flex items-center gap-2 ${inventoryTab === 'skills' ? 'bg-amber-900/50 text-amber-400' : 'text-neutral-500 hover:text-white'}`}
-                  >
-                    <Star size={20} /> Skills
-                  </button>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-neutral-700">
-                    <button onClick={() => setIsMuted(!isMuted)} className="text-neutral-400 hover:text-white transition-colors">
-                      {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                    </button>
-                    <input 
-                      type="range" 
-                      min="0" max="1" step="0.01" 
-                      value={isMuted ? 0 : volume}
-                      onChange={(e) => {
-                         setVolume(parseFloat(e.target.value));
-                         if (parseFloat(e.target.value) > 0) setIsMuted(false);
-                      }}
-                      className="w-24 accent-emerald-500 h-1.5 bg-neutral-600 rounded-lg appearance-none cursor-pointer"
-                    />
-                  </div>
-                  <button 
-                    onClick={() => { saveProgress(); setAppState('serverBrowser'); }}
-                    className="bg-red-600/80 hover:bg-red-500 text-white text-sm font-bold py-1.5 px-4 rounded shadow-lg backdrop-blur transition-opacity flex items-center gap-2"
-                  >
-                    <LogOut size={16} /> Leave World
-                  </button>
-                </div>
-              </div>
-
-              {inventoryTab === 'crafting' ? (
-                <>
-
-                  <div className="flex gap-8">
-                    {/* Equipment Expand Button */}
-                    <div className="flex flex-col gap-2 justify-center">
-                       <button onClick={() => setShowEquipment(!showEquipment)} className="bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 p-2 rounded-lg text-neutral-400 hover:text-white transition-colors" title="Toggle Equipment">
-                          <User size={20} />
-                       </button>
-                    </div>
-                    {showEquipment && (
-                      <div className="flex flex-col items-center gap-4 bg-neutral-900 p-4 rounded-lg border border-neutral-700 min-w-[140px]">
-                         <h3 className="text-white font-bold w-full text-center">Equipment</h3>
-                         <div className="flex flex-col gap-4 mt-2">
-                           <div className="flex flex-col items-center gap-1 relative">
-                             <span className="text-[10px] text-neutral-500 uppercase tracking-wider absolute -top-4">Helmet</span>
-                             <button
-                               onClick={() => handleSlotClick('equipment', 0)}
-                               onContextMenu={(e) => { e.preventDefault(); handleSlotClick('equipment', 0, true); }}
-                               className="w-14 h-14 p-1.5 bg-black/60 rounded-lg border border-neutral-700 hover:bg-white/10 transition-colors flex items-center justify-center shadow-inner"
-                             >
-                               {renderBlockIcon(equipment[0])}
-                             </button>
-                           </div>
-                           <div className="flex flex-col items-center gap-1 relative mt-2">
-                             <span className="text-[10px] text-neutral-500 uppercase tracking-wider absolute -top-4">Chestplate</span>
-                             <button
-                               onClick={() => handleSlotClick('equipment', 1)}
-                               onContextMenu={(e) => { e.preventDefault(); handleSlotClick('equipment', 1, true); }}
-                               className="w-14 h-14 p-1.5 bg-black/60 rounded-lg border border-neutral-700 hover:bg-white/10 transition-colors flex items-center justify-center shadow-inner"
-                             >
-                               {renderBlockIcon(equipment[1])}
-                             </button>
-                           </div>
-                         </div>
-                      </div>
-                    )}
-                    {/* Crafting Grid */}
-
-                    <div>
-                      <h3 className="text-white font-bold mb-3">Crafting</h3>
-                      <div className="flex items-center gap-4 bg-neutral-900 p-4 rounded-lg border border-neutral-700">
-                        <div className="grid grid-cols-3 gap-1">
-                          {craftingGrid.map((slot, i) => (
-                            <button
-                              key={i}
-                              onClick={() => handleSlotClick('crafting', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('crafting', i, true); }}
-                              className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors"
-                            >
-                              {renderBlockIcon(slot)}
-                            </button>
-                          ))}
-                        </div>
-                        <ArrowRight className="text-neutral-500 w-8 h-8" />
-                        <button
-                          onClick={() => handleSlotClick('craftingResult', 0)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('craftingResult', 0, true); }}
-                          className="w-16 h-16 p-2 bg-black/50 rounded-lg border border-neutral-600 hover:bg-white/10 transition-colors"
-                        >
-                          {craftingResult ? renderBlockIcon(craftingResult.result) : null}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Backpack Grid */}
-                    <div>
-                      
-                      <div className="flex justify-between items-center mb-3">
-                        <h3 className="text-white font-bold">Inventory</h3>
-                        <button 
-                          onClick={handleSortInventory}
-                          className="bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-300 px-3 py-1.5 rounded flex items-center gap-2 border border-neutral-700 transition-colors"
-                        >
-                          <Layers size={14} /> Sort Items
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700 h-fit">
-                        {backpack.map((slot, i) => (
-                          <button
-                            key={i}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, 'backpack', i)}
-                            onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, 'backpack', i)}
-                            onClick={() => handleSlotClick('backpack', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
-                            onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'backpack', index: i }; }}
-                            onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
-                            className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors"
-                          >
-                            {renderBlockIcon(slot)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Hotbars (in Modal) */}
-                  <div className="flex gap-4">
-                    <div>
-                      <h3 className="text-white font-bold mb-3">Hotbar</h3>
-                      <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
-                        {hotbar.map((slot, i) => (
-                          <button
-                            key={i}
-                            onClick={() => handleSlotClick('hotbar', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
-                            className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors relative"
-                          >
-                            {renderBlockIcon(slot)}
-                            <span className="absolute top-1 left-1.5 text-[10px] font-bold text-white/80 drop-shadow-md">
-                              {i + 1}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <h3 className="text-white font-bold mb-3">Left Bar</h3>
-                      <div className="grid grid-cols-5 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
-                        {leftActionBar.map((slot, i) => (
-                          <button
-                            key={'lm'+i}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, 'leftActionBar', i)}
-                            onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, 'leftActionBar', i)}
-                            onClick={() => handleSlotClick('leftActionBar', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('leftActionBar', i, true); }}
-                            onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'leftActionBar', index: i }; }}
-                            onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
-                            className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors relative"
-                          >
-                            {renderBlockIcon(slot)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <h3 className="text-white font-bold mb-3">Right Bar</h3>
-                      <div className="grid grid-cols-5 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
-                        {rightActionBar.map((slot, i) => (
-                          <button
-                            key={'rm'+i}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, 'rightActionBar', i)}
-                            onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, 'rightActionBar', i)}
-                            onClick={() => handleSlotClick('rightActionBar', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('rightActionBar', i, true); }}
-                            onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'rightActionBar', index: i }; }}
-                            onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
-                            className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors relative"
-                          >
-                            {renderBlockIcon(slot)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              
-              ) : inventoryTab === 'guide' ? (
-                <div className="flex flex-col h-full">
-                  <div className="mb-4">
-                     <input 
-                       type="text" 
-                       placeholder="Search recipes..." 
-                       value={recipeSearchQuery}
-                       onChange={(e) => setRecipeSearchQuery(e.target.value)}
-                       className="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:border-neutral-500"
-                     />
-                  </div>
-                  <div className="overflow-y-auto custom-scrollbar pr-2 flex-1 min-h-[300px]">
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {filteredRecipes.map((recipe, index) => (
-                       <div key={index} className="bg-neutral-900 border border-neutral-700 p-4 rounded-xl flex items-center gap-6">
-                         <div className="grid grid-cols-3 gap-1">
-                           {recipe.pattern.map((bt, i) => (
-                             <div key={i} className="w-8 h-8 p-1 bg-black/50 rounded flex items-center justify-center">
-                               {renderBlockIcon(bt)}
-                             </div>
-                           ))}
-                         </div>
-                         <ArrowRight className="text-neutral-500 w-6 h-6" />
-                         <div className="w-12 h-12 p-1.5 bg-black/50 rounded-lg border border-neutral-600 flex items-center justify-center">
-                           {renderBlockIcon(recipe.result)}
-                         </div>
-                       </div>
-                     ))}
-                   </div>
-                </div>
-              </div>
-             ) : inventoryTab === 'skills' ? (
-                <div className="flex-1 w-full overflow-y-auto p-4 flex flex-col gap-6 custom-scrollbar">
-                   <div className="bg-neutral-800/60 p-6 rounded-xl border border-neutral-700 flex flex-col gap-2">
-                       <h3 className="text-2xl font-bold text-amber-400 drop-shadow">Experience</h3>
-                       <div className="flex justify-between text-neutral-300 font-medium">
-                           <span>Level {level}</span>
-                           <span>{xp} / {level * 100} XP</span>
-                       </div>
-                       <div className="w-full h-3 bg-neutral-900 rounded-full overflow-hidden mt-1 shadow-inner border border-neutral-700">
-                           <div className="h-full bg-gradient-to-r from-amber-500 to-amber-300 rounded-full" style={{ width: `${Math.min(100, (xp / (level * 100)) * 100)}%` }} />
-                       </div>
-                       <p className="text-neutral-400 text-sm mt-2">Available Stat Points: <span className="font-bold text-amber-300">{skillPoints}</span></p>
-                   </div>
-                   
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-red-400 drop-shadow">Strength</h4>
-                                   <p className="text-neutral-400 text-sm">Boosts melee damage and max health (+10)</p>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.strength || 0}</span>
-                           </div>
-                           <button 
-                               onClick={() => {
-                                  if (skillPoints > 0) {
-                                     setSkillPoints(sp => sp - 1);
-                                     setSkills(s => ({ ...s, strength: (s.strength || 0) + 1 }));
-                                  }
-                               }}
-                               disabled={skillPoints <= 0}
-                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
-                           >
-                               <Plus size={18} /> Allocate (1 SP)
-                           </button>
-                       </div>
-                       
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-emerald-400 drop-shadow">Dexterity</h4>
-                                   <p className="text-neutral-400 text-sm">Boosts ranged/grapple damage and speed</p>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.dexterity || 0} / 10</span>
-                           </div>
-                           <button 
-                               onClick={() => {
-                                  if (skillPoints > 0 && (skills.dexterity || 0) < 10) {
-                                     setSkillPoints(sp => sp - 1);
-                                     setSkills(s => ({ ...s, dexterity: (s.dexterity || 0) + 1 }));
-                                  }
-                               }}
-                               disabled={skillPoints <= 0 || (skills.dexterity || 0) >= 10}
-                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
-                           >
-                               <Plus size={18} /> Allocate (1 SP)
-                           </button>
-                       </div>
-                       
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-blue-400 drop-shadow">Intelligence</h4>
-                                   <p className="text-neutral-400 text-sm">Boosts magic damage and max mana (+20)</p>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.intelligence || 0}</span>
-                           </div>
-                           <button 
-                               onClick={() => {
-                                  if (skillPoints > 0) {
-                                     setSkillPoints(sp => sp - 1);
-                                     setSkills(s => ({ ...s, intelligence: (s.intelligence || 0) + 1 }));
-                                  }
-                               }}
-                               disabled={skillPoints <= 0}
-                               className="bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold p-2 rounded flex items-center justify-center gap-2 mt-2 transition-colors"
-                           >
-                               <Plus size={18} /> Allocate (1 SP)
-                           </button>
-                       </div>
-                       
-                       {/* Woodcutting */}
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-green-400 drop-shadow">Woodcutting</h4>
-                                   <p className="text-neutral-400 text-sm">Passively increases chopping speed by 10% per level.</p>
-                                   <div className="w-full bg-neutral-900 rounded-full h-1.5 mt-2 overflow-hidden border border-neutral-700">
-                                       <div className="bg-green-500 h-full" style={{ width: `${Math.min(100, ((skills.woodcuttingXp || 0) / ((skills.woodcutting || 1) * 50)) * 100)}%` }} />
-                                   </div>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.woodcutting || 1}</span>
-                           </div>
-                       </div>
-                       
-                       {/* Mining */}
-                       <div className="bg-neutral-800/60 p-4 rounded-xl border border-neutral-700 flex flex-col gap-3">
-                           <div className="flex justify-between items-start">
-                               <div>
-                                   <h4 className="text-lg font-bold text-gray-400 drop-shadow">Mining</h4>
-                                   <p className="text-neutral-400 text-sm">Passively increases mining speed by 10% per level.</p>
-                                   <div className="w-full bg-neutral-900 rounded-full h-1.5 mt-2 overflow-hidden border border-neutral-700">
-                                       <div className="bg-gray-500 h-full" style={{ width: `${Math.min(100, ((skills.miningXp || 0) / ((skills.mining || 1) * 50)) * 100)}%` }} />
-                                   </div>
-                               </div>
-                               <span className="bg-neutral-900 px-3 py-1 rounded text-white font-bold border border-neutral-700">Lv {skills.mining || 1}</span>
-                           </div>
-                       </div>
-                       
-                   </div>
-                </div>
-             ) : null}
-
-            </div>
-          </div>
-        )}
+        {/* Consolidated Unified Menu */}
+        <UnifiedMenu
+          isOpen={inventoryOpen}
+          onClose={() => {
+            setInventoryOpen(false);
+            if (cursorItem) returnCursorItemToInventory(cursorItem);
+          }}
+          activeTab={unifiedMenuTab}
+          onTabChange={setUnifiedMenuTab}
+          hotbar={hotbar}
+          backpack={backpack}
+          leftActionBar={leftActionBar}
+          rightActionBar={rightActionBar}
+          showLeftActionBar={showLeftActionBar}
+          setShowLeftActionBar={setShowLeftActionBar}
+          showRightActionBar={showRightActionBar}
+          setShowRightActionBar={setShowRightActionBar}
+          equipment={equipment}
+          craftingGrid={craftingGrid}
+          craftingResult={craftingResult}
+          cursorItem={cursorItem}
+          onSlotClick={handleSlotClick}
+          onClearCrafting={handleClearCraftingGrid}
+          onQuickSort={handleQuickSort}
+          onQuickStack={handleQuickStack}
+          onTossItem={handleTossItem}
+          onSlotHover={(_slot, _e, type, index) => {
+            if (type && index !== undefined) {
+              hoveredSlotRef.current = { type, index };
+            }
+          }}
+          onSlotLeave={() => {
+            hoveredSlotRef.current = null;
+          }}
+          renderBlockIcon={renderBlockIcon}
+          player={{
+            nickname: nickname || 'Hero',
+            skin: characterSkin,
+            level: level,
+            xp: xp,
+            health: health,
+            mana: mana,
+            stamina: stamina,
+            maxStamina: maxStamina,
+            kills: kills || {},
+            skillPoints: skillPoints,
+            skills: skills,
+            onAllocateSkill: (stat) => {
+              if (skillPoints <= 0) return;
+              if (stat === 'dexterity' && (skills.dexterity || 0) >= 10) return;
+              setSkillPoints(sp => sp - 1);
+              setSkills(s => ({ ...s, [stat]: (s[stat] || 0) + 1 }));
+              Sounds.levelUp();
+            }
+          }}
+          quests={quests}
+          keybinds={keybinds}
+          setKeybinds={setKeybinds}
+          volume={volume}
+          setVolume={(val) => {
+            setVolume(val);
+            if (val > 0) setIsMuted(false);
+          }}
+          isMuted={isMuted}
+          setIsMuted={setIsMuted}
+          onLeaveWorld={() => {
+            setInventoryOpen(false);
+            setAppState('serverBrowser');
+            Sounds.slotClick();
+          }}
+          playerClass={playerClass}
+          selectedSlotIndex={selectedSlotIndex}
+          onSelectHotbarSlot={setSelectedSlotIndex}
+        />
 
         {/* NPC Dialogue Overlay */}
-        {showNPCMessage && (
+        {npcDialog && (
           <div className="absolute inset-x-0 bottom-24 flex justify-center z-40 pointer-events-none">
             <div className="bg-black/80 backdrop-blur-md p-6 rounded-2xl border border-white/20 shadow-2xl flex items-start gap-4 w-full max-w-2xl pointer-events-auto">
                <div className="w-16 h-16 bg-neutral-800 rounded-xl border border-neutral-700 flex items-center justify-center shrink-0">
-                 <div className="w-8 h-8 rounded-full bg-pink-500"></div>
+                 <div className={`w-8 h-8 rounded-full ${npcDialog.color}`}></div>
                </div>
                <div className="flex-1">
-                 <h3 className="text-pink-400 font-black text-xl mb-1 uppercase tracking-wider">Guide</h3>
+                 <h3 className={`${npcDialog.ringColor} font-black text-xl mb-1 uppercase tracking-wider`}>{npcDialog.name}</h3>
                  <p className="text-white text-lg font-medium leading-relaxed">
-                   Hello traveler! The world is dangerous, but full of riches. Check your <span className="text-amber-400 font-bold">Quest Log (Press Q)</span> to see what you should do next!
+                   {npcDialog.text}
                  </p>
-                 <button onClick={() => setShowNPCMessage(false)} className="mt-4 text-xs font-bold text-neutral-400 hover:text-white uppercase tracking-widest bg-white/10 px-3 py-1 rounded-full transition-colors">Close</button>
+                 <button onClick={() => setNpcDialog(null)} className="mt-4 text-xs font-bold text-neutral-400 hover:text-white uppercase tracking-widest bg-white/10 px-3 py-1 rounded-full transition-colors">Close</button>
                </div>
             </div>
           </div>
         )}
 
-        {/* Quest Log Modal Overlay */}
-        {questLogOpen && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40">
-            <div className="bg-neutral-900 p-8 rounded-3xl border border-white/10 shadow-2xl flex flex-col gap-6 w-full max-w-xl relative max-h-[80vh] overflow-hidden">
-              <button 
-                onClick={() => setQuestLogOpen(false)}
-                className="absolute top-6 right-6 text-neutral-500 hover:text-white transition-colors"
-              ><X size={24} /></button>
-              
-              <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-                 <Scroll className="text-amber-400" size={32} />
-                 Quest Log
-              </h2>
-              
-              <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
-                 {quests.map(q => {
-                   const isLocked = q.prerequisiteId && !quests.find(p => p.id === q.prerequisiteId)?.completed;
-                   if (isLocked) {
-                     return (
-                       <div key={q.id} className="p-5 rounded-2xl border bg-black/40 border-white/5 opacity-50 relative overflow-hidden flex items-center justify-center">
-                         <div className="text-center">
-                           <Shield className="w-8 h-8 text-neutral-500 mx-auto mb-2" />
-                           <p className="text-neutral-500 font-bold text-sm">Quest Locked</p>
-                           <p className="text-neutral-600 font-medium text-xs">Complete previous quests to unlock.</p>
-                         </div>
-                       </div>
-                     )
-                   }
-                   return (
-                   <div key={q.id} className={`p-5 rounded-2xl border ${q.completed ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-white/5 border-white/10'} relative overflow-hidden transition-colors`}>
-                      {q.completed && <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/20 rotate-45 translate-x-8 -translate-y-8"></div>}
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className={`text-xl font-bold ${q.completed ? 'text-emerald-400' : 'text-white'}`}>{q.title}</h3>
-                        <span className={`text-sm font-black ${q.completed ? 'text-emerald-400' : 'text-blue-400'}`}>
-                           {q.current} / {q.goal}
-                        </span>
-                      </div>
-                      <p className="text-neutral-400 text-sm font-medium mb-4">{q.description}</p>
-                      
-                      {/* Progress bar */}
-                      <div className="w-full h-2 bg-black/50 rounded-full overflow-hidden mb-3">
-                         <div 
-                           className={`h-full ${q.completed ? 'bg-emerald-500' : 'bg-blue-500'} transition-all duration-500`} 
-                           style={{ width: `${Math.min(100, (q.current / q.goal) * 100)}%` }}
-                         />
-                      </div>
-                      
-                      <div className="flex items-center gap-2 text-xs font-bold text-amber-500 bg-amber-500/10 px-3 py-1.5 rounded-lg w-fit">
-                        Reward: {q.rewardText}
-                      </div>
+
+
+
+        {/* Ready Check Modal */}
+        {readyCheck && (
+           <div className="absolute inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50">
+               <div className="bg-[#1A1A1E] border border-indigo-500/30 p-8 rounded-3xl shadow-2xl max-w-sm w-full flex flex-col items-center">
+                   <Activity size={48} className="text-indigo-500 mb-4 animate-pulse" />
+                   <h2 className="text-2xl font-black text-white tracking-tight mb-2 text-center">Dungeon Ready!</h2>
+                   <p className="text-neutral-400 text-center mb-8 text-sm">Your party is ready for {readyCheck.instanceId}.</p>
+                   <div className="flex gap-4 w-full">
+                       <button onClick={() => { if (socketRef.current) socketRef.current.emit('decline_ready_check'); setReadyCheck(null); }} className="flex-1 bg-red-600/20 hover:bg-red-500 hover:text-white text-red-500 font-bold py-3 rounded-xl transition-all">Decline</button>
+                       <button onClick={() => { if (socketRef.current) socketRef.current.emit('accept_ready_check'); }} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl shadow-[0_0_20px_rgba(79,70,229,0.4)] transition-all">Accept</button>
                    </div>
-                 )})}
-              </div>
-            </div>
-          </div>
+               </div>
+           </div>
+        )}
+
+        {/* Instances Modal */}
+        {instancesOpen && (
+           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40" onClick={() => setInstancesOpen(false)}>
+               <div className="bg-[#0A0A0B] border border-neutral-800 w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl flex flex-col" style={{ maxHeight: '80vh' }} onClick={e => e.stopPropagation()}>
+                   <div className="bg-[#1A1A1E] p-4 flex justify-between items-center border-b border-neutral-800">
+                       <h2 className="text-white font-bold flex items-center gap-2"><Globe size={18} className="text-indigo-500"/> Instance Finder</h2>
+                       <button onClick={() => setInstancesOpen(false)} className="text-neutral-400 hover:text-white p-2">
+                           <X size={20} />
+                       </button>
+                   </div>
+                   <div className="p-6 overflow-y-auto">
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           <div className="bg-[#151518] border border-neutral-800 rounded-2xl p-5 flex flex-col justify-between">
+                               <div>
+                                   <h3 className="text-xl font-black text-white mb-2">Linear Dungeon</h3>
+                                   <p className="text-neutral-400 text-sm mb-4">A straightforward dark tunnel filled with dangerous mobs and a challenging boss encounter at the very end.</p>
+                                   <div className="flex items-center gap-2 text-xs font-bold text-neutral-500 uppercase tracking-wider mb-6">
+                                       <Activity size={14} className="text-red-500" /> Recommended: Party of 2+
+                                   </div>
+                               </div>
+                               <button onClick={() => {
+                                   if (socketRef.current) socketRef.current.emit('queue_instance', { instanceId: 'dungeon' });
+                               }} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(79,70,229,0.4)]">
+                                   Queue for Dungeon
+                               </button>
+                           </div>
+                       </div>
+                   </div>
+               </div>
+           </div>
         )}
 
         {/* Chest Modal Overlay */}
         {chestOpen && (
           <div 
-             className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40"
+             className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none animate-in fade-in duration-200"
              onMouseDown={(e) => {
                if (e.target === e.currentTarget) {
                  setChestOpen(false);
@@ -2864,44 +2838,60 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                }
              }}
           >
-            <div className="bg-neutral-800 p-6 rounded-xl border border-neutral-700 shadow-2xl flex flex-col gap-6 max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <div className="bg-neutral-950/95 border border-amber-500/30 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.85)] p-6 flex flex-col gap-5 max-h-[90vh] overflow-y-auto custom-scrollbar relative w-full max-w-xl">
               <button 
                 onClick={() => {
+                  Sounds.slotClick();
                   setChestOpen(false);
                   setActiveChestCoords(null);
                   if (cursorItem) {
                     returnCursorItemToInventory(cursorItem);
                   }
                 }}
-                className="absolute top-4 right-4 text-neutral-400 hover:text-white font-bold"
-              >✕</button>
+                className="absolute top-4 right-4 text-neutral-400 hover:text-amber-400 p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={20} />
+              </button>
               
-              <h3 className="text-white font-bold text-xl text-center">Chest</h3>
+              <div className="flex items-center gap-3 border-b border-amber-500/20 pb-3">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                  <Package size={22} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-lg leading-none tracking-wide">Storage Chest</h3>
+                  <p className="text-xs text-neutral-400 mt-1">Store and retrieve items safely</p>
+                </div>
+              </div>
               
               {/* Chest Grid */}
-              <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
-                {chestInventory.map((slot, i) => (
-                  <button
-                    key={i}
-                    onClick={() => handleSlotClick('chest', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('chest', i, true); }}
-                    className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors"
-                  >
-                    {renderBlockIcon(slot)}
-                  </button>
-                ))}
+              <div className="bg-neutral-900/60 p-3 rounded-xl border border-neutral-800">
+                <span className="text-[11px] font-bold text-amber-400/90 uppercase tracking-wider mb-2 block">Chest Contents</span>
+                <div className="grid grid-cols-9 gap-1.5">
+                  {chestInventory.map((slot, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSlotClick('chest', i)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('chest', i, true); }}
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
+                    >
+                      {renderBlockIcon(slot)}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Backpack Grid (to let player move items to/from chest) */}
-              <div>
-                <h3 className="text-white font-bold mb-3">Inventory</h3>
-                <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
+              {/* Backpack Grid */}
+              <div className="bg-neutral-900/40 p-3 rounded-xl border border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2 block">Backpack</span>
+                <div className="grid grid-cols-9 gap-1.5">
                   {backpack.map((slot, i) => (
                     <button
                       key={i}
                       onClick={() => handleSlotClick('backpack', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
-                      className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors"
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
                       {renderBlockIcon(slot)}
                     </button>
@@ -2910,19 +2900,20 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               </div>
 
               {/* Hotbar Grid */}
-              <div>
-                <h3 className="text-white font-bold mb-3">Hotbar</h3>
-                <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
+              <div className="bg-neutral-900/40 p-3 rounded-xl border border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2 block">Hotbar</span>
+                <div className="grid grid-cols-9 gap-1.5">
                   {hotbar.map((slot, i) => (
                     <button
                       key={i}
                       onClick={() => handleSlotClick('hotbar', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
-                      className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors relative"
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
                       {renderBlockIcon(slot)}
-                      <span className="absolute top-1 left-1.5 text-[10px] font-bold text-white/80 drop-shadow-md">
-                        {i + 1}
+                      <span className="absolute top-0.5 left-1 text-[9px] font-mono font-bold text-neutral-500 pointer-events-none">
+                        {i === 9 ? '0' : i + 1}
                       </span>
                     </button>
                   ))}
@@ -2954,7 +2945,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               <button 
                 onClick={() => {
                   if (socketRef.current) socketRef.current.emit('send_trade_request', { targetId: interactPlayerId });
-                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'system', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Trade request sent.' } as any]);
+                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'trade', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Trade request sent.' } as any]);
                   setInteractPlayerId(null);
                 }}
                 className="w-full bg-amber-600/20 hover:bg-amber-600/40 text-amber-500 py-3 rounded-xl font-bold border border-amber-500/30 transition-colors"
@@ -2964,7 +2955,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               <button 
                 onClick={() => {
                   if (socketRef.current) socketRef.current.emit('send_party_invite', { targetId: interactPlayerId });
-                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'system', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Party invite sent.' } as any]);
+                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'party', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Party invite sent.' } as any]);
                   setInteractPlayerId(null);
                 }}
                 className="w-full bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 py-3 rounded-xl font-bold border border-blue-500/30 transition-colors"
@@ -2987,7 +2978,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               <button 
                 onClick={() => {
                   if (socketRef.current) socketRef.current.emit('send_duel_request', { targetId: interactPlayerId });
-                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'system', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Duel request sent.' } as any]);
+                  setNotifications(prev => [...prev, { id: Math.random().toString(), type: 'duel', senderId: interactPlayerId, senderName: "System", timestamp: Date.now(), msg: 'Duel request sent.' } as any]);
                   setInteractPlayerId(null);
                 }}
                 className="w-full bg-red-600/20 hover:bg-red-600/40 text-red-400 py-3 rounded-xl font-bold border border-red-500/30 transition-colors flex items-center justify-center gap-2"
@@ -3099,7 +3090,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
 
       {merchantOpen && (
           <div 
-             className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40"
+             className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none animate-in fade-in duration-200"
              onMouseDown={(e) => {
                if (e.target === e.currentTarget) {
                  setMerchantOpen(false);
@@ -3107,33 +3098,45 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                }
              }}
           >
-            <div className="bg-indigo-900/90 p-6 rounded-xl border border-indigo-500/50 shadow-2xl flex flex-col gap-6 w-[450px] relative">
+            <div className="bg-neutral-950/95 border border-amber-500/40 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.85)] p-6 flex flex-col gap-5 w-full max-w-lg relative">
               <button 
-                onClick={() => setMerchantOpen(false)}
-                className="absolute top-4 right-4 text-indigo-300 hover:text-white font-bold"
-              >✕</button>
+                onClick={() => {
+                  Sounds.slotClick();
+                  setMerchantOpen(false);
+                }}
+                className="absolute top-4 right-4 text-neutral-400 hover:text-amber-400 p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={20} />
+              </button>
               
-              <h3 className="text-white font-bold text-xl mb-2 text-center flex justify-center items-center gap-2">
-                <Shield className="w-5 h-5 text-indigo-400" /> Wandering Merchant
-              </h3>
+              <div className="flex items-center gap-3 border-b border-amber-500/20 pb-3">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                  <Coins size={22} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-lg leading-none tracking-wide">Wandering Merchant</h3>
+                  <p className="text-xs text-neutral-400 mt-1">Barter raw commodities for rare treasures</p>
+                </div>
+              </div>
               
-              <div className="flex justify-between items-center bg-black/40 p-4 rounded-xl border border-indigo-500/30">
+              <div className="flex justify-between items-center bg-neutral-900/60 p-4 rounded-xl border border-neutral-800">
                 <div className="flex flex-col items-center">
-                  <span className="text-xs text-indigo-300 mb-1 font-semibold uppercase">Payment</span>
+                  <span className="text-[11px] text-amber-400 font-bold uppercase tracking-wider mb-2">Payment</span>
                   <button
                     onClick={() => handleSlotClick('merchantPayment', 0)}
                     onContextMenu={(e) => { e.preventDefault(); handleSlotClick('merchantPayment', 0, true); }}
-                    className="w-16 h-16 p-2 bg-black/50 rounded-lg border border-indigo-500/50 hover:bg-white/10 transition-colors"
+                    onMouseEnter={() => Sounds.slotHover()}
+                    className="w-16 h-16 rounded-xl bg-neutral-950/80 border border-neutral-700 hover:border-amber-400/70 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                   >
                     {merchantPayment ? renderBlockIcon(merchantPayment) : null}
                   </button>
                 </div>
                 
                 <div className="flex flex-col items-center gap-2">
-                   <ArrowRight className="text-indigo-400 w-8 h-8" />
+                   <ArrowRight className="text-amber-400/80 w-6 h-6 animate-pulse" />
                    <button 
-                     onClick={() => { Sounds.click(); handleMerchantTrade(); }}
-                     className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-[0_0_15px_rgba(79,70,229,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
+                     onClick={() => { Sounds.craftSuccess(); handleMerchantTrade(); }}
+                     className="bg-amber-600 hover:bg-amber-500 text-neutral-950 font-black px-5 py-2 rounded-xl text-xs uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(245,158,11,0.3)] disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 border border-amber-400/60"
                      disabled={!merchantPayment}
                    >
                      TRADE
@@ -3141,23 +3144,24 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                 </div>
                 
                 <div className="flex flex-col items-center">
-                  <span className="text-xs text-indigo-300 mb-1 font-semibold uppercase">Received</span>
+                  <span className="text-[11px] text-amber-400 font-bold uppercase tracking-wider mb-2">Received</span>
                   <button
                     onClick={() => handleSlotClick('merchantOutput', 0)}
                     onContextMenu={(e) => { e.preventDefault(); handleSlotClick('merchantOutput', 0, true); }}
-                    className="w-16 h-16 p-2 bg-black/50 rounded-lg border border-indigo-500/50 hover:bg-white/10 transition-colors"
+                    onMouseEnter={() => Sounds.slotHover()}
+                    className="w-16 h-16 rounded-xl bg-neutral-950/80 border border-neutral-700 hover:border-amber-400/70 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                   >
                     {merchantOutput ? renderBlockIcon(merchantOutput) : null}
                   </button>
                 </div>
               </div>
 
-              <div className="bg-black/40 rounded-xl p-4 border border-indigo-500/20">
-                <h4 className="text-xs text-indigo-300 font-bold uppercase mb-2">Available Trades</h4>
-                <ul className="text-sm text-indigo-100 space-y-2">
-                   <li className="flex justify-between"><span>5 Gold Ingots</span> <span>➔ 1 Diamond</span></li>
-                   <li className="flex justify-between"><span>3 Iron Ingots</span> <span>➔ 1 Iron Sword</span></li>
-                   <li className="flex justify-between"><span>10 Coal</span> <span>➔ 1 Apple</span></li>
+              <div className="bg-neutral-900/40 rounded-xl p-3.5 border border-neutral-800/80">
+                <h4 className="text-[11px] text-amber-400/90 font-bold uppercase tracking-wider mb-2">Exchange Catalog</h4>
+                <ul className="text-xs text-neutral-300 space-y-1.5 font-medium">
+                   <li className="flex justify-between py-1 px-2 rounded bg-neutral-950/40"><span>5 Gold Ingots</span> <span className="text-amber-300 font-bold font-mono">➔ 1 Diamond</span></li>
+                   <li className="flex justify-between py-1 px-2 rounded bg-neutral-950/40"><span>3 Iron Ingots</span> <span className="text-amber-300 font-bold font-mono">➔ 1 Iron Sword</span></li>
+                   <li className="flex justify-between py-1 px-2 rounded bg-neutral-950/40"><span>10 Coal</span> <span className="text-amber-300 font-bold font-mono">➔ 1 Apple</span></li>
                 </ul>
               </div>
 
@@ -3167,50 +3171,48 @@ let targetArray = type === 'hotbar' ? [...hotbar]
 
       
       {/* Notifications Overlay */}
-      <div className="absolute top-4 right-4 z-50 flex flex-col gap-2">
+      <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
         {notifications.map(n => (
-          <div key={n.id} className="bg-black/80 backdrop-blur-md border border-neutral-700 p-4 rounded-xl shadow-2xl flex items-center justify-between gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
+          <div key={n.id} className="bg-neutral-950/90 backdrop-blur-xl border border-amber-500/30 p-3.5 rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.75)] flex items-center justify-between gap-4 animate-in fade-in slide-in-from-right-4 duration-300 pointer-events-auto max-w-sm">
              <div className="flex items-center gap-3">
-               {n.type === 'trade' ? <Star className="text-amber-500 w-5 h-5" /> : n.type === 'friend' ? <Heart className="text-emerald-500 w-5 h-5" /> : <Shield className="text-blue-500 w-5 h-5" />}
+               {n.type === 'trade' ? <Star className="text-amber-400 w-5 h-5 shrink-0" /> : n.type === 'friend' ? <Heart className="text-emerald-400 w-5 h-5 shrink-0" /> : n.type === 'level_up' ? <Award className="text-amber-400 w-5 h-5 shrink-0 animate-bounce" /> : <Shield className="text-sky-400 w-5 h-5 shrink-0" />}
                <div>
-                 <p className="text-sm font-bold text-white">{n.msg ? n.msg : (n.type === 'trade' ? 'Trade Request' : n.type === 'friend' ? 'Friend Request' : 'Party Invite')}</p>
-                 <p className="text-xs text-neutral-400">{n.msg ? '' : `From ${n.senderName}`}</p>
+                 <p className="text-xs font-bold text-neutral-100 leading-snug">{n.msg ? n.msg : (n.type === 'trade' ? 'Trade Request' : n.type === 'friend' ? 'Friend Request' : 'Party Invite')}</p>
+                 {!n.msg && <p className="text-[11px] text-neutral-400">From {n.senderName}</p>}
                </div>
              </div>
-             <div className="flex flex-col gap-1">
-               {n.type === 'system' || n.type === 'level_up' ? null : (
-                  <>
-                     <button onClick={() => {
-                        setNotifications(prev => prev.filter(x => x.id !== n.id));
-                        if (n.type === 'trade') {
-                            setIsChatOpen(true);
-                            if (chatInputRef.current) {
-                                chatInputRef.current.value = 'I accept your trade request!';
-                                chatInputRef.current.focus();
-                            }
-                        } else if (n.type === 'party') {
-                            setSendChatMsg({text: 'I joined your party!', timestamp: Date.now()});
-                            if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your party!', room: serverName });
-                        } else if (n.type === 'friend') {
-                            setSendChatMsg({text: 'I accepted your friend request!', timestamp: Date.now()});
-                            if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I accepted your friend request!', room: serverName });
-                        }
-                     }} className="bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded transition-colors">
-                       Accept
-                     </button>
-                     <button onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))} className="bg-neutral-600/80 hover:bg-neutral-500 text-white text-[10px] px-2 py-0.5 rounded transition-colors">
-                       Decline
-                     </button>
-                  </>
-               )}
-             </div>
+             {n.type !== 'system' && n.type !== 'level_up' && (
+               <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => {
+                     setNotifications(prev => prev.filter(x => x.id !== n.id));
+                     if (n.type === 'trade') {
+                         setIsChatOpen(true);
+                         if (chatInputRef.current) {
+                             chatInputRef.current.value = 'I accept your trade request!';
+                             chatInputRef.current.focus();
+                         }
+                     } else if (n.type === 'party') {
+                         setSendChatMsg({text: 'I joined your party!', timestamp: Date.now()});
+                         if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your party!', room: serverName });
+                     } else if (n.type === 'friend') {
+                         setSendChatMsg({text: 'I accepted your friend request!', timestamp: Date.now()});
+                         if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I accepted your friend request!', room: serverName });
+                     }
+                  }} className="bg-emerald-600/80 hover:bg-emerald-500 text-white text-[10px] font-bold px-2.5 py-1 rounded-md transition-colors border border-emerald-500/40">
+                    Accept
+                  </button>
+                  <button onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))} className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold px-2.5 py-1 rounded-md transition-colors border border-neutral-700">
+                    Decline
+                  </button>
+               </div>
+             )}
           </div>
         ))}
       </div>
 
       {furnaceOpen && (
           <div 
-             className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40"
+             className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none animate-in fade-in duration-200"
              onMouseDown={(e) => {
                if (e.target === e.currentTarget) {
                  setFurnaceOpen(false);
@@ -3218,70 +3220,85 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                }
              }}
           >
-            <div className="bg-neutral-800 p-6 rounded-xl border border-neutral-700 shadow-2xl flex flex-col gap-6 w-96 relative">
+            <div className="bg-neutral-950/95 border border-amber-500/40 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.85)] p-6 flex flex-col gap-5 w-full max-w-lg relative max-h-[90vh] overflow-y-auto custom-scrollbar">
               <button 
-                onClick={() => setFurnaceOpen(false)}
-                className="absolute top-4 right-4 text-neutral-400 hover:text-white font-bold"
-              >✕</button>
+                onClick={() => {
+                  Sounds.slotClick();
+                  setFurnaceOpen(false);
+                }}
+                className="absolute top-4 right-4 text-neutral-400 hover:text-amber-400 p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={20} />
+              </button>
               
-              <h3 className="text-white font-bold text-xl mb-2 text-center">Furnace Smelting</h3>
+              <div className="flex items-center gap-3 border-b border-amber-500/20 pb-3">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                  <Flame size={22} className="text-amber-500 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-lg leading-none tracking-wide">Blast Furnace</h3>
+                  <p className="text-xs text-neutral-400 mt-1">Smelt raw ores with coal into refined ingots</p>
+                </div>
+              </div>
               
-              <div className="flex items-center justify-center gap-6 bg-neutral-900 p-6 rounded-lg border border-neutral-700">
-                <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-4 bg-neutral-900/60 p-5 rounded-xl border border-neutral-800">
+                <div className="flex flex-col gap-3">
                   <div className="flex flex-col items-center">
-                    <span className="text-xs text-neutral-500 mb-1 font-semibold uppercase">Ore</span>
+                    <span className="text-[10px] text-neutral-400 mb-1 font-bold uppercase tracking-wider">Ore Input</span>
                     <button
                       onClick={() => handleSlotClick('furnaceInput', 0)}
                       onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceInput', 0, true); }}
-                      className="w-16 h-16 p-2 bg-black/50 rounded-lg border border-neutral-600 hover:bg-white/10 transition-colors"
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-14 h-14 rounded-xl bg-neutral-950/80 border border-neutral-700 hover:border-amber-400/70 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                     >
                       {furnaceInput ? renderBlockIcon(furnaceInput) : null}
                     </button>
                   </div>
                   
                   <div className="flex flex-col items-center">
-                    <span className="text-xs text-neutral-500 mb-1 font-semibold uppercase">Fuel (Coal)</span>
+                    <span className="text-[10px] text-neutral-400 mb-1 font-bold uppercase tracking-wider">Fuel (Coal)</span>
                     <button
                       onClick={() => handleSlotClick('furnaceFuel', 0)}
                       onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceFuel', 0, true); }}
-                      className="w-16 h-16 p-2 bg-black/50 rounded-lg border border-neutral-600 hover:bg-white/10 transition-colors"
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-14 h-14 rounded-xl bg-neutral-950/80 border border-neutral-700 hover:border-amber-400/70 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                     >
                       {furnaceFuel ? renderBlockIcon(furnaceFuel) : null}
                     </button>
                   </div>
                 </div>
                 
-                
-                <div className="flex flex-col items-center justify-center w-24">
-                   <div className="w-full bg-neutral-800 rounded-full h-2.5 mb-2 border border-neutral-700">
-                      <div className="bg-amber-500 h-2.5 rounded-full transition-all duration-200" style={{ width: `${smeltProgress}%` }}></div>
+                <div className="flex flex-col items-center justify-center flex-1 px-4">
+                   <div className="w-full bg-neutral-950 rounded-full h-2 mb-2 border border-neutral-800 overflow-hidden shadow-inner">
+                      <div className="bg-gradient-to-r from-amber-600 to-yellow-400 h-full rounded-full transition-all duration-200 shadow-[0_0_10px_rgba(245,158,11,0.5)]" style={{ width: `${smeltProgress}%` }}></div>
                    </div>
-                   <ArrowRight className="text-neutral-500 w-8 h-8" />
+                   <span className="text-[10px] text-amber-400 font-mono font-bold">{smeltProgress > 0 ? `${Math.round(smeltProgress)}%` : 'Idle'}</span>
                 </div>
-
                 
                 <div className="flex flex-col items-center">
-                  <span className="text-xs text-neutral-500 mb-1 font-semibold uppercase">Output</span>
+                  <span className="text-[10px] text-amber-400 mb-1 font-bold uppercase tracking-wider">Smelted Output</span>
                   <button
                     onClick={() => handleSlotClick('furnaceOutput', 0)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceOutput', 0, true); }}
-                    className="w-16 h-16 p-2 bg-black/50 rounded-lg border border-neutral-600 hover:bg-white/10 transition-colors"
+                    onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceOutput', 0, true); }}
+                    onMouseEnter={() => Sounds.slotHover()}
+                    className="w-16 h-16 rounded-xl bg-neutral-950/80 border border-amber-500/40 hover:border-amber-400/80 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                   >
                     {furnaceOutput ? renderBlockIcon(furnaceOutput) : null}
                   </button>
                 </div>
               </div>
 
-              {/* Backpack Grid (to let player move items to/from furnace) */}
-              <div>
-                <h3 className="text-white font-bold mb-3">Inventory</h3>
-                <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
+              {/* Backpack Grid */}
+              <div className="bg-neutral-900/40 p-3 rounded-xl border border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2 block">Backpack</span>
+                <div className="grid grid-cols-9 gap-1.5">
                   {backpack.map((slot, i) => (
                     <button
                       key={i}
                       onClick={() => handleSlotClick('backpack', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
-                      className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors"
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
                       {renderBlockIcon(slot)}
                     </button>
@@ -3290,19 +3307,20 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               </div>
 
               {/* Hotbar Grid */}
-              <div>
-                <h3 className="text-white font-bold mb-3">Hotbar</h3>
-                <div className="grid grid-cols-9 gap-1 bg-neutral-900 p-2 rounded-lg border border-neutral-700">
+              <div className="bg-neutral-900/40 p-3 rounded-xl border border-neutral-800">
+                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2 block">Hotbar</span>
+                <div className="grid grid-cols-9 gap-1.5">
                   {hotbar.map((slot, i) => (
                     <button
                       key={i}
                       onClick={() => handleSlotClick('hotbar', i)}
-                            onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
-                      className="w-12 h-12 p-1.5 bg-black/50 rounded-md hover:bg-white/10 transition-colors relative"
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
+                      onMouseEnter={() => Sounds.slotHover()}
+                      className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
                       {renderBlockIcon(slot)}
-                      <span className="absolute top-1 left-1.5 text-[10px] font-bold text-white/80 drop-shadow-md">
-                        {i + 1}
+                      <span className="absolute top-0.5 left-1 text-[9px] font-mono font-bold text-neutral-500 pointer-events-none">
+                        {i === 9 ? '0' : i + 1}
                       </span>
                     </button>
                   ))}
@@ -3311,7 +3329,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
 
             </div>
           </div>
-        )}
+      )}
 
         {/* Floating Cursor Item */}
         {(inventoryOpen || furnaceOpen || chestOpen) && cursorItem && cursorItem.type !== BlockType.Air && (
@@ -3354,6 +3372,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                     <h3 className="text-sm uppercase tracking-widest text-neutral-500 font-bold mb-4">Movement & Combat</h3>
                     <ul className="space-y-4">
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">WASD</span> <span className="text-sm text-neutral-300">Move & Jump</span></li>
+                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">SHIFT</span> <span className="text-sm text-neutral-300">Sprint (Consumes Stamina)</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg></span> <span className="text-sm text-neutral-300">Left Click to Mine/Attack</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg></span> <span className="text-sm text-neutral-300">Right Click to Place/Interact</span></li>
                     </ul>
@@ -3362,10 +3381,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                  <div className="bg-[#0A0A0B]/80 p-6 rounded-3xl border border-white/5">
                     <h3 className="text-sm uppercase tracking-widest text-neutral-500 font-bold mb-4">Inventory & UI</h3>
                     <ul className="space-y-4">
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">E</span> <span className="text-sm text-neutral-300">Open Inventory/Crafting</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">I</span> <span className="text-sm text-neutral-300">Instances & Dungeons</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">Esc</span> <span className="text-sm text-neutral-300">Close Menus</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">Q</span> <span className="text-sm text-neutral-300">Toss Item</span></li>
+                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">TAB</span> <span className="text-sm text-neutral-300">Unified Menu (Quests / Skills / Inv)</span></li>
+                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">Q</span> <span className="text-sm text-neutral-300">Drop Item (Ctrl+Q for full stack)</span></li>
+                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">J / L</span> <span className="text-sm text-neutral-300">Quest Log</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">1-9</span> <span className="text-sm text-neutral-300">Select Hotbar Slot</span></li>
                       <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">↵</span> <span className="text-sm text-neutral-300">Open Global Chat</span></li>
                     </ul>

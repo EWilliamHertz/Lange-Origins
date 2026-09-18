@@ -187,7 +187,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
         const dist = Math.sqrt(Math.pow(p.x + 16 - expPx, 2) + Math.pow(p.y + 16 - expPy, 2));
         if (dist <= pxRadius) {
             // we could emit damage event to player
-            io.to(pId).emit('damage_indicator', { id: Math.random().toString(), x: p.x, y: p.y, damage });
+            io.to(pId).emit('damage_indicator', { id: Math.random().toString(), x: p.x, y: p.y, damage, isPlayer: false });
             io.to(pId).emit('take_damage', { damage, vx: p.x > expPx ? 15 : -15, vy: -10 });
         }
     }
@@ -200,7 +200,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
     items: Record<string, any>;
     chests: Record<string, any[]>;
     createdAt: number;
-    gangs: Record<string, any>;
+    parties: Record<string, any>;
     trades: Record<string, any>;
     projectiles: Record<string, any>;
     timeOfDay: number;
@@ -212,7 +212,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       items: {},
       chests: {},
       createdAt: Date.now(),
-      gangs: {},
+      parties: {},
       trades: {},
       projectiles: {},
       timeOfDay: 0
@@ -233,7 +233,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
          p.y += p.vy;
          
          if (p.type === 'grenade') p.vy += 0.5; // gravity for grenade
-         else if (p.type !== 'fireball') p.vy += 0.1; // slight gravity for arrows/bullets, magic has none
+         else if (p.type !== 'fireball' && p.type !== 'trap' && p.type !== 'frostbolt' && p.type !== 'arcane_blast') p.vy += 0.1;
          
          p.life--;
          
@@ -579,13 +579,30 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       // Initialize room if it doesn't exist
       if (!activeRooms[roomId]) {
         activeRooms[roomId] = {
+
           world: generateWorld(roomId),
           players: {},
-          mobs: {},
+          mobs: (() => {
+             const m: any = {};
+             if (roomId.startsWith('dungeon')) {
+                 const tunnelLevel = 250 / 2; // WORLD_HEIGHT is 250
+                 for (let x = 30; x < 970; x += 50) { // WORLD_WIDTH is 1000, up to 970
+                     const id = 'mob_' + Date.now() + '_' + x;
+                     m[id] = { id, type: 'skeleton', x: x * 32, y: tunnelLevel * 32, vx: 0, vy: 0, hp: 50, maxHp: 50 };
+                     
+                     const id2 = 'mob_z_' + Date.now() + '_' + x;
+                     m[id2] = { id: id2, type: 'zombie', x: (x + 20) * 32, y: tunnelLevel * 32, vx: 0, vy: 0, hp: 80, maxHp: 80 };
+                 }
+                 const bossId = 'boss_' + Date.now();
+                 m[bossId] = { id: bossId, type: 'golem_boss', x: 970 * 32, y: tunnelLevel * 32, vx: 0, vy: 0, hp: 1000, maxHp: 1000 };
+             }
+             return m;
+          })(),
+        
           items: {},
           chests: {},
           createdAt: Date.now(),
-          gangs: {},
+          parties: {},
           trades: {},
           projectiles: {},
           timeOfDay: 0
@@ -842,7 +859,7 @@ socket.on('chat_message', (message: string) => {
                 y: data.y,
                 vx: data.vx,
                 vy: data.vy,
-                life: data.type === 'grenade' ? 60 : (data.type === 'fireball' ? 80 : 40),
+                life: data.type === 'trap' ? 1000 : (data.type === 'grenade' ? 60 : (data.type === 'fireball' || data.type === 'frostbolt' || data.type === 'arcane_blast' ? 80 : (data.type === 'poison_arrow' ? 45 : 40))),
                 damage: data.damage !== undefined ? data.damage : (data.type === 'bullet' ? 15 : (data.type === 'arrow' ? 8 : (data.type === 'fireball' ? 30 : 0)))
             };
         }
@@ -867,7 +884,7 @@ socket.on('chat_message', (message: string) => {
                 id: Math.random().toString(),
                 x: targetPlayer.x,
                 y: targetPlayer.y,
-                damage: data.damage || 5
+                damage: data.damage || 5, isPlayer: true
             });
         }
       }
@@ -896,7 +913,7 @@ socket.on('chat_message', (message: string) => {
                 id: Math.random().toString(), 
                 x: m.x, 
                 y: m.y, 
-                damage: data.damage || 1 
+                damage: data.damage || 1, isPlayer: false 
               });
             }
           }
@@ -904,7 +921,7 @@ socket.on('chat_message', (message: string) => {
       }
     });
 
-    socket.on('use_ability', (data: { ability: string, targetId: string, targetType: string }) => {
+    socket.on('use_ability', (data: { ability: string, targetId?: string, targetType?: string, facingRight?: boolean }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
       const room = activeRooms[currentRoom];
       const player = room.players[socket.id];
@@ -912,15 +929,87 @@ socket.on('chat_message', (message: string) => {
 
       if (data.ability === 'heal') {
           player.hp = Math.min(100, (player.hp || 100) + 20);
-          io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: player.x, y: player.y - 30, damage: -20 }); 
-      } else if (data.ability === 'slash' || data.ability === 'fireball') {
+          socket.emit('heal', { amount: 20 });
+          // Broadcast animation
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'heal' });
+      } else if (data.ability === 'slash') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'slash' });
+          // Server-side slash damage
+          const range = 120;
+          const damage = 15;
+          const hitBox = {
+              x: data.facingRight ? player.x : player.x - range,
+              y: player.y - 10,
+              w: range + 24,
+              h: 46
+          };
+          for (const mId in room.mobs) {
+              const m = room.mobs[mId];
+              if (m.x < hitBox.x + hitBox.w && m.x + 24 > hitBox.x && m.y < hitBox.y + hitBox.h && m.y + 24 > hitBox.y) {
+                  m.hp -= damage;
+                  m.lastHitBy = socket.id;
+                  m.vy = -4;
+                  m.vx = data.facingRight ? 5 : -5;
+                  io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: m.x, y: m.y, damage, isPlayer: false });
+
+          }
+          }
+
+      } else if (data.ability === 'ground_slam') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'slash' });
+          const range = 80;
+          const damage = 35;
+          for (const mId in room.mobs) {
+              const m = room.mobs[mId];
+              const dist = Math.hypot(m.x - player.x, m.y - player.y);
+              if (dist < range) {
+                  m.hp -= damage;
+                  m.lastHitBy = socket.id;
+                  m.vy = -7;
+                  m.vx = (m.x > player.x) ? 3 : -3;
+                  io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: m.x, y: m.y, damage, isPlayer: false });
+              }
+          }
+      } else if (data.ability === 'battle_shout') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'heal' });
+          player.hp = Math.min(100, (player.hp || 100) + 15);
+          socket.emit('heal', { amount: 15 });
+          // could add buff later
+      } else if (data.ability === 'teleport') {
+          player.x += data.facingRight ? 120 : -120;
+          // clamp to world
+          player.x = Math.max(32, Math.min(player.x, 990 * 32));
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'heal' });
+
+      } else if (data.ability === 'whirlwind') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'slash' });
+          const range = 120;
+          const damage = 25;
+          for (const mId in room.mobs) {
+              const m = room.mobs[mId];
+              const dist = Math.hypot(m.x - player.x, m.y - player.y);
+              if (dist < range) {
+                  m.hp -= damage;
+                  m.lastHitBy = socket.id;
+                  m.vy = -5;
+                  m.vx = (m.x > player.x) ? 6 : -6;
+                  io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: m.x, y: m.y, damage, isPlayer: false });
+              }
+          }
+      } else if (data.ability === 'trap') {
+          const id = 'trap_' + Date.now();
+          room.projectiles[id] = {
+              id, type: 'trap', owner: socket.id,
+              x: player.x, y: player.y,
+              vx: 0, vy: 0, damage: 30,
+              life: 1000 // lives for long
+          };
+      } else if (data.ability === 'fireball' && data.targetId && data.targetType) {
           const targetObj = data.targetType === 'mob' ? room.mobs[data.targetId] : room.players[data.targetId];
           if (targetObj) {
-              const damage = data.ability === 'fireball' ? 25 : 15;
+              const damage = 25;
               targetObj.hp -= damage;
-              
-              io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: targetObj.x, y: targetObj.y, damage });
-              
+              io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: targetObj.x, y: targetObj.y, damage, isPlayer: false });
               if (data.targetType === 'mob') {
                   const m = targetObj as any;
                   m.vy = -6;
@@ -939,10 +1028,10 @@ socket.on('chat_message', (message: string) => {
        }
     });
     
-    socket.on('send_gang_invite', (data: { targetId: string }) => {
+    socket.on('send_party_invite', (data: { targetId: string }) => {
        if (currentRoom && activeRooms[currentRoom].players[data.targetId]) {
            const senderName = activeRooms[currentRoom].players[socket.id]?.name || 'Player';
-           io.to(data.targetId).emit('gang_invite', { senderId: socket.id, senderName });
+           io.to(data.targetId).emit('party_invite', { senderId: socket.id, senderName });
        }
     });
     
@@ -971,25 +1060,93 @@ socket.on('chat_message', (message: string) => {
        }
     });
 
-    socket.on('accept_gang_invite', (data: { senderId: string }) => {
+
+    socket.on('queue_instance', (data: { instanceId: string }) => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const room = activeRooms[currentRoom];
+           const player = room.players[socket.id];
+           if (player) {
+               if (player.partyId && room.parties[player.partyId]) {
+                   const party = room.parties[player.partyId];
+                   party.queueingFor = data.instanceId;
+                   party.readyCheck = {};
+                   party.members.forEach(mId => {
+                       party.readyCheck[mId] = false;
+                       io.to(mId).emit('party_ready_check', { instanceId: data.instanceId });
+                   });
+               } else {
+                   // Solo queue
+                   socket.emit('instance_joined', { instanceId: data.instanceId + '_' + Date.now() });
+               }
+           }
+       }
+    });
+
+    socket.on('accept_ready_check', () => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const room = activeRooms[currentRoom];
+           const player = room.players[socket.id];
+           if (player && player.partyId && room.parties[player.partyId]) {
+               const party = room.parties[player.partyId];
+               if (party.readyCheck) {
+                   party.readyCheck[socket.id] = true;
+                   
+                   // Check if everyone is ready
+                   const allReady = party.members.every(mId => party.readyCheck[mId]);
+                   if (allReady) {
+                       const instanceId = party.queueingFor + '_' + Date.now();
+                       party.members.forEach(mId => {
+                           io.to(mId).emit('instance_joined', { instanceId });
+                       });
+                       delete party.queueingFor;
+                       delete party.readyCheck;
+                   } else {
+                       party.members.forEach(mId => {
+                           io.to(mId).emit('party_update', party);
+                       });
+                   }
+               }
+           }
+       }
+    });
+
+    socket.on('decline_ready_check', () => {
+       if (currentRoom && activeRooms[currentRoom]) {
+           const room = activeRooms[currentRoom];
+           const player = room.players[socket.id];
+           if (player && player.partyId && room.parties[player.partyId]) {
+               const party = room.parties[player.partyId];
+               if (party.readyCheck) {
+                   delete party.queueingFor;
+                   delete party.readyCheck;
+                   party.members.forEach(mId => {
+                       io.to(mId).emit('ready_check_cancelled');
+                       io.to(mId).emit('party_update', party);
+                   });
+               }
+           }
+       }
+    });
+
+    socket.on('accept_party_invite', (data: { senderId: string }) => {
        if (currentRoom && activeRooms[currentRoom]) {
            const room = activeRooms[currentRoom];
            if (room.players[data.senderId] && room.players[socket.id]) {
-               let gangId = room.players[data.senderId].gangId;
-               if (!gangId) {
-                   gangId = "gang_" + data.senderId;
-                   room.players[data.senderId].gangId = gangId;
-                   room.gangs[gangId] = { id: gangId, members: [data.senderId] };
+               let partyId = room.players[data.senderId].partyId;
+               if (!partyId) {
+                   partyId = "gang_" + data.senderId;
+                   room.players[data.senderId].partyId = partyId;
+                   room.parties[partyId] = { id: partyId, members: [data.senderId] };
                }
                
-               if (!room.gangs[gangId].members.includes(socket.id)) {
-                   room.gangs[gangId].members.push(socket.id);
+               if (!room.parties[partyId].members.includes(socket.id)) {
+                   room.parties[partyId].members.push(socket.id);
                }
-               room.players[socket.id].gangId = gangId;
+               room.players[socket.id].partyId = partyId;
                
-               // Broadcast gang update to members
-               room.gangs[gangId].members.forEach(memberId => {
-                   io.to(memberId).emit('gang_update', room.gangs[gangId]);
+               // Broadcast party update to members
+               room.parties[partyId].members.forEach(memberId => {
+                   io.to(memberId).emit('party_update', room.parties[partyId]);
                });
            }
        }

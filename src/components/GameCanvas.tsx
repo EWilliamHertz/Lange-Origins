@@ -50,7 +50,11 @@ interface GameProps {
   skills?: { strength: number, dexterity: number, intelligence: number };
   mana?: number;
   onManaChange?: (mana: number) => void;
+  stamina?: number;
+  maxStamina?: number;
+  onStaminaChange?: (stamina: number) => void;
   duelingOpponents?: string[];
+  keybinds?: Record<string, string>;
   onDepthChange?: (depth: number) => void;
   socketRef?: React.MutableRefObject<Socket | null>;
 }
@@ -66,9 +70,10 @@ interface Particle {
   size: number;
 }
 
-export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
+export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastReportedStaminaRef = useRef<number>(100);
   
   interface DamageText {
     id: string;
@@ -153,6 +158,9 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
       facingRight: true,
       health: 20,
       maxHealth: 20,
+      stamina: 100,
+      maxStamina: 100,
+      isSprinting: false,
       invulnerableTimer: 0
     },
     otherPlayers: {},
@@ -530,10 +538,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel };
-  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -556,6 +564,9 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       if (document.activeElement?.tagName === 'INPUT') return;
       const key = e.key.toLowerCase();
       gameState.current.keys[key] = true;
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        gameState.current.keys['shift'] = true;
+      }
       
       // MMO Abilities
       if ((key === 'z' || key === 'x' || key === 'c') && gameState.current.globalCooldown <= 0 && gameState.current.targetId && gameState.current.socket) {
@@ -590,6 +601,9 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       gameState.current.keys[e.key.toLowerCase()] = false;
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        gameState.current.keys['shift'] = false;
+      }
     };
     
     
@@ -702,12 +716,34 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
 
       const prevHealth = player.health;
       player.maxHealth = 20 + (propsRef.current.skills?.strength || 0) * 10;
+      player.maxStamina = propsRef.current.maxStamina || (100 + (propsRef.current.skills?.dexterity || 0) * 10);
+      if (player.stamina === undefined) player.stamina = player.maxStamina;
       
       // Update Physics
       if (world.length > 0 && !propsRef.current.isInventoryOpen) {
         const oldX = player.x;
         const oldY = player.y;
         updatePhysics(player, world, keysToUse, propsRef.current.skills?.dexterity || 0);
+
+        // Sprint dust particles
+        if (player.isSprinting && player.grounded && Math.abs(player.vx) > 0.4 && Math.random() < 0.35) {
+           state.particles.push({
+             x: player.x + (player.facingRight ? 2 : player.width - 2),
+             y: player.y + player.height - 1,
+             vx: (player.facingRight ? -1 : 1) * (Math.random() * 1.5 + 0.4),
+             vy: -Math.random() * 0.8,
+             life: 0,
+             maxLife: 15,
+             color: 'rgba(215, 215, 215, 0.6)',
+             size: Math.random() * 2 + 1.5
+           });
+        }
+
+        // Notify App of stamina changes smoothly
+        if (propsRef.current.onStaminaChange && Math.abs(player.stamina - lastReportedStaminaRef.current) >= 0.8) {
+           lastReportedStaminaRef.current = player.stamina;
+           propsRef.current.onStaminaChange(Math.round(player.stamina));
+        }
 
         // Update explored area
         if (state.explored.length !== world.length || (world.length > 0 && state.explored[0].length !== world[0].length)) {
@@ -808,6 +844,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
          player.vx = 0;
          player.vy = 0;
          player.health = player.maxHealth;
+         player.stamina = player.maxStamina;
          if (state.socket) {
            state.socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
              x: player.x, y: player.y, vx: 0, vy: 0, facingRight: player.facingRight,
@@ -1639,7 +1676,25 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
 
       
       
-      const drawPlayer = (pX: number, pY: number, pVx: number, facingRight: boolean, skin: string, name: string, tool: BlockType | null = null, isMining: boolean = false, isPartyMember: boolean = false, helmetTier: number | null = null, chestTier: number | null = null, attackTimer: number = 0) => {
+      const drawPlayer = (
+        pX: number, 
+        pY: number, 
+        pVx: number, 
+        facingRight: boolean, 
+        skin: string, 
+        name: string, 
+        tool: BlockType | null = null, 
+        isMining: boolean = false, 
+        isPartyMember: boolean = false, 
+        helmetTier: number | null = null, 
+        chestTier: number | null = null, 
+        attackTimer: number = 0,
+        currentHp: number = 20,
+        maxHp: number = 20,
+        currentStamina?: number,
+        maxStaminaVal?: number,
+        isSprinting?: boolean
+      ) => {
 
         const pWidth = player.width;
         const pHeight = player.height;
@@ -1815,13 +1870,80 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         
         ctx.restore();
 
-        // Nametag
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.font = '10px sans-serif';
-        const textWidth = ctx.measureText(name).width;
-        ctx.fillRect(pX + pWidth/2 - textWidth/2 - 4, pY - 26 + bodyYOffset, textWidth + 8, 14);
-        ctx.fillStyle = '#FFF';
-        ctx.fillText(name, pX + pWidth/2 - textWidth/2, pY - 16 + bodyYOffset);
+        // --- HEALTH BAR & NAME ABOVE HEAD ---
+        const safeMax = Math.max(1, maxHp);
+        const safeCurrent = Math.max(0, Math.min(safeMax, currentHp));
+        const hpRatio = safeCurrent / safeMax;
+        const barW = 38;
+        const barH = 5;
+        const barX = Math.round(pX + pWidth / 2 - barW / 2);
+        // Position comfortably above the player head & helmet with clean breathing room
+        const barY = Math.round(pY - 25 + bodyYOffset);
+
+        // 1. Health Bar (Clean border & high-contrast visible track, no obscuring shadow box)
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+        // Background track
+        ctx.fillStyle = '#331010';
+        ctx.fillRect(barX, barY, barW, barH);
+        // Filled Health with dynamic color gradient logic
+        const fillW = Math.max(0, Math.round(barW * hpRatio));
+        const hpColor = hpRatio > 0.5 ? '#22c55e' : hpRatio > 0.25 ? '#eab308' : '#ef4444';
+        ctx.fillStyle = hpColor;
+        ctx.fillRect(barX, barY, fillW, barH);
+        // Gloss highlight line on top
+        if (fillW > 0) {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.fillRect(barX, barY, fillW, 1);
+        }
+
+        // 2. Overhead Stamina Bar (Rendered below health bar when not full or sprinting)
+        if (currentStamina !== undefined && maxStaminaVal !== undefined && (currentStamina < maxStaminaVal - 1 || isSprinting)) {
+           const sRatio = Math.max(0, Math.min(1, currentStamina / Math.max(1, maxStaminaVal)));
+           const sBarH = 2;
+           const sBarY = barY + barH + 2;
+           ctx.fillStyle = '#0f172a';
+           ctx.fillRect(barX - 1, sBarY - 1, barW + 2, sBarH + 2);
+           ctx.fillStyle = '#1e293b';
+           ctx.fillRect(barX, sBarY, barW, sBarH);
+           const sFillW = Math.max(0, Math.round(barW * sRatio));
+           ctx.fillStyle = isSprinting ? '#f59e0b' : '#10b981';
+           ctx.fillRect(barX, sBarY, sFillW, sBarH);
+        }
+
+        // 3. Nametag with clean crisp text outline (no heavy shadow box obscuring the health bar)
+        ctx.font = 'bold 9px "Segoe UI", system-ui, -apple-system, sans-serif';
+        const displayName = isPartyMember ? `[Party] ${name}` : name;
+        const textMetrics = ctx.measureText(displayName);
+        const textWidth = textMetrics.width;
+        const nameCenterX = Math.round(pX + pWidth / 2);
+
+        if (isPartyMember) {
+          const tagPaddingX = 5;
+          const tagW = textWidth + tagPaddingX * 2;
+          const tagH = 13;
+          const tagX = Math.round(pX + pWidth / 2 - tagW / 2);
+          const tagY = barY - tagH - 4;
+          ctx.fillStyle = 'rgba(30, 58, 138, 0.85)';
+          ctx.fillRect(tagX, tagY, tagW, tagH);
+          ctx.strokeStyle = '#60a5fa';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(tagX, tagY, tagW, tagH);
+          ctx.fillStyle = '#93c5fd';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(displayName, nameCenterX, tagY + tagH / 2);
+        } else {
+          // Clean stroked text outline: fully visible and readable without any dark shadow box over the bar
+          const nameY = barY - 4;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+          ctx.lineWidth = 2.5;
+          ctx.strokeText(displayName, nameCenterX, nameY);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillText(displayName, nameCenterX, nameY);
+        }
       };
 
       // Draw other players
@@ -1841,7 +1963,24 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         }
 
         const isParty = propsRef.current.currentParty?.members?.includes(other.id);
-        drawPlayer(other.x, other.y, other.vx, other.facingRight, (other as any).skin || 'blue', (other as any).name || other.id.substring(0, 4), other.tool, other.isMining, isParty, (other as any).helmet, (other as any).chest);
+        const otherHp = (other as any).health ?? (other as any).hp ?? 20;
+        const otherMaxHp = (other as any).maxHealth ?? (other as any).maxHp ?? 20;
+        drawPlayer(
+          other.x, 
+          other.y, 
+          other.vx, 
+          other.facingRight, 
+          (other as any).skin || 'blue', 
+          (other as any).name || other.id.substring(0, 4), 
+          other.tool, 
+          other.isMining, 
+          isParty, 
+          (other as any).helmet, 
+          (other as any).chest,
+          0,
+          otherHp,
+          otherMaxHp
+        );
       });
 
       // Random tick near player for farming
@@ -2056,30 +2195,54 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
          
          ctx.restore();
          
-         // Draw HP bar above mob
-         if (mob.hp !== undefined && mob.hp < (mob.maxHp || 10)) {
-           const maxHp = mob.maxHp || (mob.type === 'golem_boss' ? 300 : 10);
-           const hpRatio = Math.max(0, mob.hp / maxHp);
-           const barW = 36;
-           const barH = 5;
-           const bx = mob.x - 6;
-           const by = mob.y - 40;
-           // Background
-           ctx.fillStyle = 'rgba(0,0,0,0.6)';
-           ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
-           // Red empty
-           ctx.fillStyle = '#5C0000';
-           ctx.fillRect(bx, by, barW, barH);
-           // Green filled
-           const hpColor = hpRatio > 0.5 ? '#2ECC40' : hpRatio > 0.25 ? '#FF851B' : '#FF4136';
-           ctx.fillStyle = hpColor;
-           ctx.fillRect(bx, by, barW * hpRatio, barH);
-           // mob name
-           ctx.fillStyle = 'rgba(255,255,255,0.8)';
-           ctx.font = 'bold 9px sans-serif';
-           ctx.textAlign = 'center';
-           ctx.fillText(mob.type?.toUpperCase() || 'MOB', mob.x + 12, mob.y - 43);
+         // Draw HP bar and Nametag above ALL mobs (always visible)
+         const isBoss = mob.type === 'golem_boss';
+         const maxHp = mob.maxHp || (isBoss ? 300 : 10);
+         const currentHp = mob.hp !== undefined ? mob.hp : maxHp;
+         const hpRatio = Math.max(0, Math.min(1, currentHp / maxHp));
+         const barW = isBoss ? 56 : 34;
+         const barH = isBoss ? 6 : 5;
+         const mobCenter = isBoss ? mob.x + 24 : mob.x + 12;
+         const bx = Math.round(mobCenter - barW / 2);
+         const by = Math.round(mob.y - (isBoss ? 44 : 26));
+
+         // 1. HP Bar Border & Background
+         ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+         ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+         // Dark Red Track
+         ctx.fillStyle = '#3f0808';
+         ctx.fillRect(bx, by, barW, barH);
+         // Filled Health
+         const fillW = Math.max(0, Math.round(barW * hpRatio));
+         const hpColor = isBoss ? '#f59e0b' : (hpRatio > 0.5 ? '#22c55e' : hpRatio > 0.25 ? '#eab308' : '#ef4444');
+         ctx.fillStyle = hpColor;
+         ctx.fillRect(bx, by, fillW, barH);
+         // Gloss Highlight
+         if (fillW > 0) {
+           ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+           ctx.fillRect(bx, by, fillW, 1.5);
          }
+
+         // 2. Nametag directly above HP bar
+         const rawName = mob.type ? mob.type.replace('_', ' ') : 'MOB';
+         const mobName = isBoss ? '👑 GOLEM BOSS' : rawName.toUpperCase();
+         ctx.font = isBoss ? 'bold 10px "Segoe UI", system-ui, sans-serif' : 'bold 8px "Segoe UI", system-ui, sans-serif';
+         const mobTextW = ctx.measureText(mobName).width;
+         const mobTagW = mobTextW + 8;
+         const mobTagH = isBoss ? 15 : 12;
+         const mobTagX = Math.round(mobCenter - mobTagW / 2);
+         const mobTagY = by - mobTagH - 2;
+
+         ctx.fillStyle = isBoss ? 'rgba(69, 10, 10, 0.9)' : 'rgba(15, 23, 42, 0.8)';
+         ctx.fillRect(mobTagX, mobTagY, mobTagW, mobTagH);
+         ctx.strokeStyle = isBoss ? '#f59e0b' : 'rgba(255, 255, 255, 0.2)';
+         ctx.lineWidth = 1;
+         ctx.strokeRect(mobTagX, mobTagY, mobTagW, mobTagH);
+
+         ctx.fillStyle = isBoss ? '#fde047' : '#FFFFFF';
+         ctx.textAlign = 'center';
+         ctx.textBaseline = 'middle';
+         ctx.fillText(mobName, mobCenter, mobTagY + mobTagH / 2);
 
       });
       // Draw local player
@@ -2087,8 +2250,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       // Handle Grapple Drawing and Physics
       if (state.grapplePoint && state.grappleTimer > 0) {
            ctx.beginPath();
-           ctx.moveTo(player.x + player.width/2 - state.cameraX, player.y + player.height/2 - state.cameraY);
-           ctx.lineTo(state.grapplePoint.x - state.cameraX, state.grapplePoint.y - state.cameraY);
+           ctx.moveTo(player.x + player.width/2, player.y + player.height/2);
+           ctx.lineTo(state.grapplePoint.x, state.grapplePoint.y);
            ctx.strokeStyle = '#FFFFFF';
            ctx.lineWidth = 2;
            ctx.stroke();
@@ -2124,7 +2287,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            player.isGrappling = false;
       }
       
-      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0 || state.interactionCooldown > 150, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, state.interactionCooldown);
+      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0 || state.interactionCooldown > 150, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, state.interactionCooldown, player.health, player.maxHealth, player.stamina, player.maxStamina, player.isSprinting);
 
       // Draw block highlight outline
       if (inBounds && dist <= MAX_REACH) {
@@ -2156,8 +2319,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         fx.life++;
         const progress = fx.life / fx.maxLife; // 0 -> 1
         const alpha = 1 - progress;
-        const sx = fx.x - state.cameraX;
-        const sy = fx.y - state.cameraY;
+        const sx = fx.x;
+        const sy = fx.y;
         
         ctx.save();
         ctx.globalAlpha = alpha;
@@ -2222,7 +2385,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.translate(dtTxt.x - state.cameraX, dtTxt.y - state.cameraY);
+        ctx.translate(dtTxt.x, dtTxt.y);
         ctx.scale(scale, scale);
         
         const fontSize = dtTxt.size || 15;
