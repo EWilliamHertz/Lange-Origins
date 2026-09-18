@@ -28,10 +28,49 @@ class SpriteManager {
   }
 
   /**
-   * Check if a custom sprite exists in /public/sprites/
+   * Check if a custom sprite exists in /sprites/blocks/
    */
   getBlockSprite(blockType: number): HTMLImageElement | null {
     return this.getImage(`/sprites/blocks/${blockType}.png`);
+  }
+
+  /**
+   * Determine the sprite path for a character based on race, class, and armor tier
+   */
+  getPlayerSpritePath(race: string = 'human', pClass: string = 'warrior', chestTier: number | null = null): string {
+    let equipStr = 'none';
+    if (chestTier === 401 || chestTier === 408 || chestTier === 410) equipStr = 'iron_armor';
+    else if (chestTier) equipStr = 'leather_tunic';
+    const r = (race || 'human').toLowerCase();
+    const c = (pClass || 'warrior').toLowerCase();
+    return `/assets/sprites/${r}_${c}_${equipStr}.png`;
+  }
+
+  /**
+   * Get loaded player sprite with graceful fallback chain
+   */
+  getPlayerSprite(race: string = 'human', pClass: string = 'warrior', chestTier: number | null = null): HTMLImageElement | null {
+    const primaryPath = this.getPlayerSpritePath(race, pClass, chestTier);
+    const primaryImg = this.getImage(primaryPath);
+    if (primaryImg) return primaryImg;
+
+    // If specific armor variant is missing or loading, attempt unarmored sprite
+    const r = (race || 'human').toLowerCase();
+    const c = (pClass || 'warrior').toLowerCase();
+    if (primaryPath.includes('iron_armor') || primaryPath.includes('leather_tunic')) {
+      const unarmoredImg = this.getImage(`/assets/sprites/${r}_${c}_none.png`);
+      if (unarmoredImg) return unarmoredImg;
+    }
+
+    // If race is missing (e.g. dwarf/elf variants deleted), fallback to human class sprite
+    if (r !== 'human') {
+      const humanImg = this.getImage(`/assets/sprites/human_${c}_none.png`);
+      if (humanImg) return humanImg;
+      const humanBase = this.getImage(`/assets/sprites/human_warrior_none.png`);
+      if (humanBase) return humanBase;
+    }
+
+    return null;
   }
 
   /**

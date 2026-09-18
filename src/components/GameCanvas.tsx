@@ -245,7 +245,16 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     }
 
     socket.on('connect', () => {
-      socket.emit('join_room', { roomId, nickname: propsRef.current.nickname, uid: propsRef.current.userId, email: propsRef.current.email, profileId: propsRef.current.profileId });
+      socket.emit('join_room', { 
+        roomId, 
+        nickname: propsRef.current.nickname, 
+        uid: propsRef.current.userId, 
+        email: propsRef.current.email, 
+        profileId: propsRef.current.profileId,
+        race: propsRef.current.race,
+        playerClass: propsRef.current.playerClass,
+        skin: propsRef.current.characterSkin
+      });
     });
 
     socket.on('kicked', (data: { reason: string }) => {
@@ -1724,6 +1733,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         const pHeight = player.height;
         const isMoving = Math.abs(pVx) > 0.5;
         const walkCycle = isMoving ? Math.sin(timestamp * 0.015) * 5 : 0;
+        const bodyYOffset = isMoving ? Math.abs(walkCycle) * 0.3 : 0;
         
         let darkColor = '#E65100';
         let mainColor = '#FF9800';
@@ -1740,52 +1750,76 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            case 'orange': default: darkColor = '#E65100'; mainColor = '#FF9800'; armColor = '#F57C00'; headColor = '#FFE0B2'; break;
         }
 
-        // Back Leg
-        ctx.fillStyle = darkColor;
-        ctx.fillRect(
-          pX + 4, 
-          pY + pHeight - 8 + (isMoving ? -walkCycle : 0), 
-          8, 
-          10
-        );
-        
-        // Front Leg
-        ctx.fillRect(
-          pX + pWidth - 12, 
-          pY + pHeight - 8 + (isMoving ? walkCycle : 0), 
-          8, 
-          10
-        );
+        const sprite = Sprites.getPlayerSprite(race, pClass, chestTier);
 
-        // Body (bobs slightly when walking)
-        const bodyYOffset = isMoving ? Math.abs(walkCycle) * 0.3 : 0;
-        ctx.fillStyle = mainColor; 
-        ctx.fillRect(pX, pY + bodyYOffset, pWidth, pHeight - 6);
-        
-        // Head
-        ctx.fillStyle = skin === 'blue' ? '#64B5F6' : '#FFB74D'; 
-        ctx.fillRect(pX - 2, pY - 12 + bodyYOffset, pWidth + 4, 16);
+        if (sprite) {
+          // Draw character sprite
+          ctx.save();
+          // Walk bobbing animation
+          const spriteBob = isMoving ? Math.sin(timestamp * 0.015) * 2 : 0;
+          // Calculate draw dimensions keeping 1:1 aspect ratio centered on player hitbox
+          const drawHeight = pHeight + 14;
+          const drawWidth = drawHeight;
+          const drawX = pX + pWidth / 2 - drawWidth / 2;
+          const drawY = pY + pHeight - drawHeight + spriteBob;
 
-        // Eyes
-        ctx.fillStyle = '#000';
-        const eyeOffset = facingRight ? 14 : 4;
-        const headY = pY - 6 + bodyYOffset;
-        ctx.fillRect(pX - 2 + eyeOffset, headY, 4, 4);
-        ctx.fillRect(pX - 2 + eyeOffset + 6, headY, 4, 4);
-        
-        // Armor (Chestplate)
-        if (chestTier !== null) {
-            ctx.fillStyle = chestTier === 410 ? '#00ACC1' : (chestTier === 408 ? '#FBC02D' : '#BDBDBD');
-            // Draw a plate over the chest
-            ctx.fillRect(pX - 1, pY + bodyYOffset - 1, pWidth + 2, pHeight - 4);
-        }
-        
-        // Armor (Helmet)
-        if (helmetTier !== null) {
-            ctx.fillStyle = helmetTier === 409 ? '#4DD0E1' : (helmetTier === 407 ? '#FFD54F' : '#9E9E9E');
-            ctx.fillRect(pX - 3, pY - 13 + bodyYOffset, pWidth + 6, 8); // Top
-            ctx.fillRect(pX - 3, pY - 5 + bodyYOffset, 4, 6); // Side
-            ctx.fillRect(pX + pWidth - 1, pY - 5 + bodyYOffset, 4, 6); // Side
+          if (!facingRight) {
+            ctx.translate(pX + pWidth / 2, 0);
+            ctx.scale(-1, 1);
+            ctx.translate(-(pX + pWidth / 2), 0);
+          }
+
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(sprite, drawX, drawY, drawWidth, drawHeight);
+          ctx.restore();
+        } else {
+          // Fallback procedural rendering:
+          // Back Leg
+          ctx.fillStyle = darkColor;
+          ctx.fillRect(
+            pX + 4, 
+            pY + pHeight - 8 + (isMoving ? -walkCycle : 0), 
+            8, 
+            10
+          );
+          
+          // Front Leg
+          ctx.fillRect(
+            pX + pWidth - 12, 
+            pY + pHeight - 8 + (isMoving ? walkCycle : 0), 
+            8, 
+            10
+          );
+
+          // Body (bobs slightly when walking)
+          ctx.fillStyle = mainColor; 
+          ctx.fillRect(pX, pY + bodyYOffset, pWidth, pHeight - 6);
+          
+          // Head
+          ctx.fillStyle = skin === 'blue' ? '#64B5F6' : '#FFB74D'; 
+          ctx.fillRect(pX - 2, pY - 12 + bodyYOffset, pWidth + 4, 16);
+
+          // Eyes
+          ctx.fillStyle = '#000';
+          const eyeOffset = facingRight ? 14 : 4;
+          const headY = pY - 6 + bodyYOffset;
+          ctx.fillRect(pX - 2 + eyeOffset, headY, 4, 4);
+          ctx.fillRect(pX - 2 + eyeOffset + 6, headY, 4, 4);
+          
+          // Armor (Chestplate)
+          if (chestTier !== null) {
+              ctx.fillStyle = chestTier === 410 ? '#00ACC1' : (chestTier === 408 ? '#FBC02D' : '#BDBDBD');
+              // Draw a plate over the chest
+              ctx.fillRect(pX - 1, pY + bodyYOffset - 1, pWidth + 2, pHeight - 4);
+          }
+          
+          // Armor (Helmet)
+          if (helmetTier !== null) {
+              ctx.fillStyle = helmetTier === 409 ? '#4DD0E1' : (helmetTier === 407 ? '#FFD54F' : '#9E9E9E');
+              ctx.fillRect(pX - 3, pY - 13 + bodyYOffset, pWidth + 6, 8); // Top
+              ctx.fillRect(pX - 3, pY - 5 + bodyYOffset, 4, 6); // Side
+              ctx.fillRect(pX + pWidth - 1, pY - 5 + bodyYOffset, 4, 6); // Side
+          }
         }
 
         // Front Arm (holding tool)
@@ -1809,9 +1843,11 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         }
         ctx.rotate(armRotation);
         
-        // Draw Arm
-        ctx.fillStyle = armColor;
-        ctx.fillRect(-4, -4, 8, 16);
+        // Draw Arm (if procedural)
+        if (!sprite) {
+          ctx.fillStyle = armColor;
+          ctx.fillRect(-4, -4, 8, 16);
+        }
         
         // Draw Tool
         if (tool !== null && tool !== BlockType.Fists && tool !== BlockType.Air) {
@@ -2005,6 +2041,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           other.facingRight, 
           (other as any).skin || 'blue', 
           (other as any).name || other.id.substring(0, 4), 
+          (other as any).race || 'human',
+          (other as any).playerClass || (other as any).class || 'warrior',
           other.tool, 
           other.isMining, 
           isParty, 

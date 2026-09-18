@@ -1960,6 +1960,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
 
   const helmetType = getHelmet();
   const chestplateType = getChestplate();
+  const currentActiveProfile = profiles.find(p => p.id === activeProfileId);
 
   return (
     <div className="w-full h-screen bg-neutral-900 flex flex-col overflow-hidden font-sans select-none touch-none" style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}>
@@ -1970,6 +1971,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         <GameCanvas
           helmet={helmetType}
           chestplate={chestplateType}
+          characterSkin={currentActiveProfile?.skin || characterSkin || 'orange'}
+          race={currentActiveProfile?.race || creatorRace || 'human'}
+          playerClass={currentActiveProfile?.playerClass || playerClass || 'warrior'}
           onArmorDamage={handleArmorDamage}
           onToolDurabilityLoss={handleToolDurabilityLoss}
           currentAmmoCount={currentAmmoCount} 

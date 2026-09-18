@@ -624,7 +624,21 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       const startY = (spawnY - 2) * 32;
 
       // Add player to room
-      activeRooms[roomId].players[socket.id] = { id: socket.id, name: nickname, x: startX, y: startY, facingRight: true, vx: 0, vy: 0, uid, profileId, isAdmin };
+      activeRooms[roomId].players[socket.id] = { 
+        id: socket.id, 
+        name: nickname, 
+        x: startX, 
+        y: startY, 
+        facingRight: true, 
+        vx: 0, 
+        vy: 0, 
+        uid, 
+        profileId, 
+        isAdmin,
+        race: typeof data !== 'string' && (data as any).race ? (data as any).race : 'human',
+        playerClass: typeof data !== 'string' && (data as any).playerClass ? (data as any).playerClass : 'warrior',
+        skin: typeof data !== 'string' && (data as any).skin ? (data as any).skin : 'orange'
+      };
 
       // Send the entire current world and player list to the new user
       socket.emit('init_world', {
@@ -827,6 +841,8 @@ socket.on('chat_message', (message: string) => {
         if (data.name) player.name = data.name;
         player.helmet = data.helmet;
         player.chest = data.chest;
+        if ((data as any).race) (player as any).race = (data as any).race;
+        if ((data as any).playerClass) (player as any).playerClass = (data as any).playerClass;
 
 
         
