@@ -1,3 +1,6 @@
+import { notificationExpiresAt } from './lib/notifications';
+import { readSaved, readSlots } from './lib/profile';
+import { Sprites } from './lib/sprites';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BlockType, BlockColors, BlockNames } from './lib/constants';
 import { getBlockIcon } from './lib/icons';
@@ -77,7 +80,7 @@ export default function App() {
   type InventorySlot = { type?: BlockType; count?: number; durability?: number; isAbility?: boolean; abilityId?: string } | null;
   const [equipment, setEquipment] = useState<InventorySlot[]>([null, null]); // [helmet, chestplate]
   const [hotbar, setHotbar] = useState<InventorySlot[]>([
-    { type: BlockType.Fists, count: 1 },
+    null,
     null, null, null, null, null, null, null, null, null
   ]);
   const [leftActionBar, setLeftActionBar] = useState<InventorySlot[]>([
@@ -145,12 +148,8 @@ export default function App() {
           const next = [...prev];
           // Try to find empty slot
           let emptyIdx = next.findIndex(item => !item);
-          if (emptyIdx === -1) {
-            // Replace a fist or something less important
-            emptyIdx = next.findIndex(item => item && item.type === 103);
-          }
-          if (emptyIdx === -1) emptyIdx = 2; // just overwrite slot 3
-          
+          if (emptyIdx === -1) return prev;
+
           next[emptyIdx] = { type: 111, count: 1 };
           return next;
         });
@@ -178,33 +177,17 @@ export default function App() {
         try {
           const profilesRef = collection(db, 'users', user.uid, 'characters_v2');
           const profilesSnap = await getDocs(profilesRef);
-          const loadedProfiles = profilesSnap.docs.map(d => d.data());
+          const loadedProfiles = profilesSnap.docs.map(d => ({ ...d.data(), id: d.id }));
           if (loadedProfiles.length > 0) {
               setProfiles(loadedProfiles);
-              const active = loadedProfiles.sort((a,b) => b.updatedAt - a.updatedAt)[0];
-              setActiveProfileId(active.id);
-              setNickname(active.name || 'Player');
-              setCharacterSkin(active.skin || 'orange');
-              if (active.equipment) setEquipment(JSON.parse(active.equipment));
-              if (active.hotbar) setHotbar(JSON.parse(active.hotbar));
-              if (active.leftActionBar) setLeftActionBar(JSON.parse(active.leftActionBar));
-              if (active.rightActionBar) setRightActionBar(JSON.parse(active.rightActionBar));
-              if (active.backpack) setBackpack(JSON.parse(active.backpack));
-              if (active.quests) setQuests(JSON.parse(active.quests));
-              if (active.health !== undefined) setHealth(active.health);
-              if (active.keybinds) setKeybinds(JSON.parse(active.keybinds));
-              if (active.kills !== undefined) setKills(active.kills);
-              if (active.xp !== undefined) setXp(active.xp);
-              if (active.level !== undefined) setLevel(active.level);
-              if (active.statPoints !== undefined) setStatPoints(active.statPoints);
-              if (active.skillPoints !== undefined) setSkillPoints(active.skillPoints);
-              if (active.skills) setSkills(JSON.parse(active.skills));
-              if (active.abilities) setAbilities(JSON.parse(active.abilities));
+              const remembered = localStorage.getItem(`activeCharacter:${user.uid}`);
+              const active = loadedProfiles.find(p => p.id === remembered) || loadedProfiles[0];
+              selectProfile(active);
           } else {
              // Create initial profile
              const newId = 'prof_' + Date.now();
              const defaultHotbar = [
-                         { type: 103, count: 1 },
+                         null,
                          null, null, null, null, null, null, null, null, null
              ];
              const newProfile = {
@@ -213,7 +196,7 @@ export default function App() {
                          skin: 'orange',
                          health: 100,
                          equipment: JSON.stringify([null, null]),
-                         hotbar: JSON.stringify([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]),
+                         hotbar: JSON.stringify([null, null, null, null, null, null, null, null, null, null]),
                          backpack: JSON.stringify(Array(27).fill(null)),
                          quests: JSON.stringify(defaultQuests),
                          kills: 0,
@@ -227,9 +210,7 @@ export default function App() {
              };
              await setDoc(doc(db, 'users', user.uid, 'characters_v2', newId), newProfile);
              setProfiles([newProfile]);
-             setActiveProfileId(newId);
-             setEquipment([null, null]);
-             setHotbar([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]);
+             selectProfile(newProfile);
           }
         } catch (e) {
           console.error("Error loading progress", e);
@@ -237,11 +218,11 @@ export default function App() {
         setHasLoadedSave(true);
 
         
-        if (appState === 'landing') {
-          setAppState('serverBrowser');
-        }
+        setAppState(state => state === 'landing' ? 'serverBrowser' : state);
       } else {
         setCurrentUser(null);
+        setProfiles([]);
+        setActiveProfileId(null);
         setHasLoadedSave(false);
         setAppState('landing');
       }
@@ -253,7 +234,7 @@ export default function App() {
   
 
   return () => unsubscribe();
-  }, [appState]);
+  }, []);
 
 
   const [serverName, setServerName] = useState<string>('');
@@ -266,16 +247,79 @@ export default function App() {
   const [showCharacterCreator, setShowCharacterCreator] = useState(false);
 
   const getSpriteUrl = (race: string, pClass: string, equipment: any[]) => {
-     const chest = equipment ? equipment[1] : null;
-     let equipStr = 'none';
-     if (chest === 401 || chest === 408 || chest === 410) equipStr = 'iron_armor';
-     else if (chest) equipStr = 'leather_tunic';
-     return `/assets/sprites/${(race || 'human').toLowerCase()}_${(pClass || 'warrior').toLowerCase()}_${equipStr}.png`;
+     return Sprites.getPlayerSpritePath(race, pClass, equipment?.[1]?.type ?? equipment?.[1] ?? null);
   };
 
 
   const [profiles, setProfiles] = useState<any[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+
+  const [profileError, setProfileError] = useState('');
+  const [deletingProfile, setDeletingProfile] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deletedProfileIds = useRef(new Set<string>());
+
+  function selectProfile(p: any) {
+    setActiveProfileId(p.id);
+    const uid = auth.currentUser?.uid;
+    if (uid) localStorage.setItem(`activeCharacter:${uid}`, p.id);
+    setNickname(p.name || 'Player');
+    setCharacterSkin(p.skin || 'orange');
+    setPlayerClass(p.playerClass || 'warrior');
+    setCreatorRace(p.race || 'human');
+    setEquipment(readSlots(p.equipment, 2));
+    setHotbar(readSlots(p.hotbar, 10));
+    setLeftActionBar(readSlots(p.leftActionBar, 10));
+    setRightActionBar(readSlots(p.rightActionBar, 10));
+    setBackpack(readSlots(p.backpack, 27));
+    const loadedQuests = readSaved(p.quests, defaultQuests);
+    prevQuestsRef.current = loadedQuests;
+    setQuests(loadedQuests);
+    setKeybinds(readSaved(p.keybinds, { z: 'slash' }));
+    setHealth(p.health ?? 20);
+    setGold(p.gold ?? 0);
+    setKills(readSaved(p.kills, {}));
+    setXp(p.xp ?? 0);
+    setLevel(p.level ?? 1);
+    setStatPoints(p.statPoints ?? 0);
+    setSkillPoints(p.skillPoints ?? 0);
+    setSkills(readSaved(p.skills, { strength: 0, dexterity: 0, intelligence: 0 }));
+    setAbilities(readSaved(p.abilities, { slash: 0, fireball: 0, heal: 0, double_jump: 0 }));
+    setSelectedSlotIndex(0);
+    setCursorItem(null);
+    setCraftingGrid(Array(9).fill(null));
+    setFurnaceInput(null);
+    setFurnaceFuel(null);
+    setFurnaceOutput(null);
+    setNotifications([]);
+    setMana(100);
+    setStamina(100);
+    setProfileError('');
+    setConfirmDelete(false);
+  }
+
+  async function deleteCharacter() {
+    if (!currentUser || !activeProfileId || deletingProfile) return;
+    const id = activeProfileId;
+    setDeletingProfile(true);
+    setProfileError('');
+    deletedProfileIds.current.add(id);
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'characters_v2', id));
+      const remaining = profiles.filter(p => p.id !== id);
+      setProfiles(remaining);
+      if (remaining.length) selectProfile(remaining[0]);
+      else {
+        setActiveProfileId(null);
+        localStorage.removeItem(`activeCharacter:${currentUser.uid}`);
+        setShowCharacterCreator(true);
+      }
+    } catch (error) {
+      deletedProfileIds.current.delete(id);
+      setProfileError('Could not delete character. Please try again.');
+      console.error('Character deletion failed', error);
+    } finally { setDeletingProfile(false); setConfirmDelete(false); }
+  }
 
   const availableSkins = [
     { id: 'orange', color: '#FF9800', name: 'Orange' },
@@ -349,17 +393,18 @@ export default function App() {
   const [showLeftActionBar, setShowLeftActionBar] = useState(false);
   const [showRightActionBar, setShowRightActionBar] = useState(false);
 
-  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds });
+  const saveStateRef = useRef({ gold, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds });
   useEffect(() => {
-    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds };
-  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds]);
+    saveStateRef.current = { gold, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds };
+  }, [gold, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds]);
 
   const saveProgress = async () => {
     const latest = saveStateRef.current;
-    if (!latest.currentUser || !latest.activeProfileId) return;
+    if (!latest.currentUser || !latest.activeProfileId || deletedProfileIds.current.has(latest.activeProfileId)) return;
     try {
       const docRef = doc(db, 'users', latest.currentUser.uid, 'characters_v2', latest.activeProfileId);
-      await setDoc(docRef, {
+      const saved = {
+        gold: latest.gold,
         equipment: JSON.stringify(latest.equipment),
         hotbar: JSON.stringify(latest.hotbar),
         leftActionBar: JSON.stringify(latest.leftActionBar),
@@ -379,7 +424,10 @@ export default function App() {
         skin: latest.characterSkin,
         lastRoom: latest.serverName || 'public-lobby',
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      };
+      // Keep the lobby snapshot current, including when leaving before autosave fires.
+      setProfiles(items => items.map(p => p.id === latest.activeProfileId ? { ...p, ...saved } : p));
+      await updateDoc(docRef, saved);
       console.log("Progress auto-saved.");
     } catch (e) {
       console.error("Failed to auto-save progress", e);
@@ -390,7 +438,7 @@ export default function App() {
     if (!currentUser || !hasLoadedSave || appState !== 'playing') return;
     const timeout = setTimeout(saveProgress, 2000);
     return () => clearTimeout(timeout);
-  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, statPoints, skillPoints, skills, abilities, keybinds, kills]);
+  }, [currentUser, hasLoadedSave, appState, gold, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, statPoints, skillPoints, skills, abilities, keybinds, kills]);
 
   const socketRef = useRef<Socket | null>(null);
   const hoveredSlotRef = useRef<{type: string, index: number} | null>(null);
@@ -430,13 +478,19 @@ export default function App() {
   
   const [notifications, setNotifications] = useState<{id: string, type: string, senderId: string, senderName: string, msg?: string, timestamp: number}[]>([]);
   
+  // One expiry path covers quest events as well as ordinary toasts.
+  useEffect(() => {
+    if (!notifications.length) return;
+    const expiresAt = notificationExpiresAt;
+    const timer = window.setTimeout(() => {
+      setNotifications(items => items.filter(n => expiresAt(n) > Date.now()));
+    }, Math.max(0, Math.min(...notifications.map(expiresAt)) - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [notifications]);
+
   const addNotification = useCallback((type: 'trade'|'party'|'friend'|'duel'|'system'|'level_up', senderId: string, senderName: string, msg?: string) => {
      const id = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
      setNotifications(prev => [...prev, { id, type, senderId, senderName, msg, timestamp: Date.now() }]);
-     // Auto-dismiss after 2.5 seconds
-     setTimeout(() => {
-        setNotifications(prev => prev.filter(n => n.id !== id));
-     }, 2500);
   }, []);
 
   const [unifiedMenuTab, setUnifiedMenuTab] = useState<UnifiedMenuTab>('character');
@@ -579,7 +633,7 @@ export default function App() {
   };
 
   const joinServer = (name: string) => {
-    if (!name.trim()) return;
+    if (!name.trim() || !hasLoadedSave || !activeProfileId || deletingProfile) return;
     const srv = name.trim();
     
     setRecentServers(prev => {
@@ -1721,6 +1775,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                    </div>
 
                    <div className="mt-8">
+                     {profileError && <p role="alert" className="mb-3 text-red-400">{profileError}</p>}
                      <button
                         onClick={async () => {
                           const newId = `char_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -1733,31 +1788,22 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                              race: creatorRace || 'human',
                              health: 20,
                              gold: 0,
-                             hotbar: JSON.stringify([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]),
+                             hotbar: JSON.stringify([null, null, null, null, null, null, null, null, null, null]),
                              backpack: JSON.stringify(Array(27).fill(null)),
-                             quests: JSON.stringify([]),
+                             quests: JSON.stringify(defaultQuests),
                              updatedAt: Date.now()
                           };
                           
-                          setDoc(doc(db, 'users', currentUser.uid, 'characters_v2', newId), newProfile);
+                          try {
+                            await setDoc(doc(db, 'users', currentUser.uid, 'characters_v2', newId), newProfile);
+                          } catch (error) {
+                            setProfileError('Could not create character. Please try again.');
+                            return;
+                          }
                           
                           setProfiles([...profiles, newProfile]);
-                          setActiveProfileId(newId);
-                          setHotbar([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]);
-                          setLeftActionBar(Array(10).fill(null));
-                          setRightActionBar(Array(10).fill(null));
-                          setBackpack(Array(27).fill(null));
-                          setHealth(20);
-                          if(typeof setGold === 'function') setGold(0);
-                          setKills({});
-                          setXp(0);
-                          setLevel(1);
-                          setStatPoints(0);
-                          setSkillPoints(0);
-                          setSkills({ strength: 0, dexterity: 0, intelligence: 0 });
-                          setAbilities({ slash: 0, fireball: 0, heal: 0, double_jump: 0 });
-                          setQuests(defaultQuests);
-                          
+                          selectProfile(newProfile);
+
                           setShowCharacterCreator(false);
                         }}
                         className="w-full py-4 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-black text-lg transition-all active:scale-95 shadow-[0_0_20px_rgba(217,119,6,0.3)]"
@@ -1776,7 +1822,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                  <>
                    {/* Giant Sprite */}
                    <div className="w-full max-w-lg h-3/4 relative flex items-end justify-center mb-10 drop-shadow-2xl pointer-events-none">
-                     <img src={getSpriteUrl(activeProfile.race, activeProfile.playerClass, activeProfile.equipment ? JSON.parse(activeProfile.equipment) : [])} className="h-full object-contain scale-100 origin-bottom transform-gpu" style={{ imageRendering: 'pixelated' }} />
+                     <img src={getSpriteUrl(activeProfile.race, activeProfile.playerClass, readSlots(activeProfile.equipment, 2))} className="h-full object-contain scale-100 origin-bottom transform-gpu" style={{ imageRendering: 'pixelated' }} />
                    </div>
                    
                    {/* WoW style "Enter World" button */}
@@ -1813,31 +1859,14 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                  {profiles.map(p => (
                    <button
                      key={p.id}
+                     disabled={deletingProfile}
                      onClick={() => {
-                        setActiveProfileId(p.id);
-                        setNickname(p.name || 'Player');
-                        setCharacterSkin(p.skin || 'orange');
-                        setPlayerClass(p.playerClass || 'warrior');
-                        if (p.hotbar) setHotbar(JSON.parse(p.hotbar));
-                        if (p.leftActionBar) setLeftActionBar(JSON.parse(p.leftActionBar));
-                        if (p.rightActionBar) setRightActionBar(JSON.parse(p.rightActionBar));
-                        if (p.backpack) setBackpack(JSON.parse(p.backpack));
-                        if (p.health !== undefined) setHealth(p.health);
-                        if (p.gold !== undefined) setGold(p.gold);
-                        if (p.kills !== undefined) setKills(p.kills);
-                        if (p.xp !== undefined) setXp(p.xp);
-                        if (p.level !== undefined) setLevel(p.level);
-                        if (p.statPoints !== undefined) setStatPoints(p.statPoints);
-                        if (p.skillPoints !== undefined) setSkillPoints(p.skillPoints);
-                        if (p.skills) setSkills(JSON.parse(p.skills));
-                        if (p.abilities) setAbilities(JSON.parse(p.abilities));
-                        if (p.quests) setQuests(JSON.parse(p.quests));
-                        if (p.equipment) setEquipment(JSON.parse(p.equipment));
+                        selectProfile(p);
                      }}
                      className={`relative w-full p-4 rounded-lg flex items-center gap-4 transition-all overflow-hidden ${activeProfileId === p.id ? 'bg-amber-900/40 border border-amber-500/50 shadow-[inset_0_0_20px_rgba(245,158,11,0.2)]' : 'bg-white/5 border border-white/5 hover:bg-white/10'}`}
                    >
                       <div className="w-12 h-12 bg-black/50 rounded flex items-center justify-center shrink-0 border border-white/10 overflow-hidden">
-                        <img src={getSpriteUrl(p.race, p.playerClass, p.equipment ? JSON.parse(p.equipment) : [])} className="h-[200%] object-contain -mt-2" style={{ imageRendering: 'pixelated' }} />
+                        <img src={getSpriteUrl(p.race, p.playerClass, readSlots(p.equipment, 2))} className="h-[200%] object-contain -mt-2" style={{ imageRendering: 'pixelated' }} />
                       </div>
                       <div className="flex flex-col text-left flex-1 min-w-0">
                          <div className={`font-bold truncate text-lg ${activeProfileId === p.id ? 'text-amber-400' : 'text-white'}`}>{p.name}</div>
@@ -1848,27 +1877,22 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                </div>
 
                <div className="mt-6 flex flex-col gap-3">
-                 <button onClick={() => setShowCharacterCreator(true)} className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg font-bold transition-all border border-white/10 text-sm tracking-wider uppercase">
+                 {profileError && <p role="alert" className="text-sm text-red-400">{profileError}</p>}
+                 <button disabled={deletingProfile} onClick={() => setShowCharacterCreator(true)} className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg font-bold transition-all border border-white/10 text-sm tracking-wider uppercase">
                    Create New Character
                  </button>
+                 {confirmDelete && <div role="alertdialog" aria-label="Delete character" className="rounded-lg border border-red-500/40 p-3 text-sm text-red-200">
+                   <p>Permanently delete {profiles.find(p => p.id === activeProfileId)?.name}? This cannot be undone.</p>
+                   <div className="flex gap-3 mt-3">
+                     <button disabled={deletingProfile} onClick={() => void deleteCharacter()} className="rounded bg-red-800 px-3 py-2">Confirm delete</button>
+                     <button disabled={deletingProfile} onClick={() => setConfirmDelete(false)} className="rounded bg-neutral-800 px-3 py-2">Cancel</button>
+                   </div>
+                 </div>}
                  {activeProfileId && profiles.length > 0 && (
-                   <button onClick={() => {
-                      if(confirm("Delete this character?")) {
-                         deleteDoc(doc(db, 'users', currentUser!.uid, 'characters_v2', activeProfileId));
-                         const newProfiles = profiles.filter(p => p.id !== activeProfileId);
-                         setProfiles(newProfiles);
-                         if (newProfiles.length > 0) {
-                            const newActive = newProfiles[0];
-                            setActiveProfileId(newActive.id);
-                            setNickname(newActive.name || 'Player');
-                            setCharacterSkin(newActive.skin || 'orange');
-                            setPlayerClass(newActive.playerClass || 'warrior');
-                         } else {
-                            setActiveProfileId(null);
-                         }
-                      }
+                   <button disabled={deletingProfile} onClick={() => {
+                      setConfirmDelete(true);
                    }} className="w-full py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-lg font-bold transition-all border border-red-500/30 text-xs">
-                     Delete Character
+                     {deletingProfile ? 'Deleting…' : 'Delete Character'}
                    </button>
                  )}
                </div>
@@ -2546,6 +2570,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           isMuted={isMuted}
           setIsMuted={setIsMuted}
           onLeaveWorld={() => {
+            void saveProgress();
             setInventoryOpen(false);
             setAppState('serverBrowser');
             Sounds.slotClick();
