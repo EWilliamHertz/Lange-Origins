@@ -1,6 +1,7 @@
 import { isUnarmed } from '../lib/profile';
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { auth } from '../lib/firebase';
 import { BlockType, BlockColors, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, BlockHardness, SolidBlocks } from '../lib/constants';
 const ATTACK_RANGE = 64;
 import { World } from '../lib/world';
@@ -220,10 +221,19 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     // Only connect if not already connected
     if (gameState.current.socket) return;
     
-    // Connect to same host, port 3000, forcing websocket for Cloud Run compatibility
+    // Connect to same host, port 3000, forcing websocket for Cloud Run compatibility.
+    // Identity: hand the server a Firebase ID token to verify on the handshake;
+    // the server derives uid/admin from it and never trusts client-asserted fields.
     const socket = io({
       transports: ['websocket'],
-      upgrade: false
+      upgrade: false,
+      auth: (next) => {
+        const user = auth.currentUser;
+        if (!user) return next({ token: null });
+        user.getIdToken()
+          .then((token) => next({ token }))
+          .catch(() => next({ token: null }));
+      }
     });
     gameState.current.socket = socket;
     if (socketRef) {
@@ -235,12 +245,20 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
         roomId, 
         nickname: propsRef.current.nickname, 
         uid: propsRef.current.userId, 
-        email: propsRef.current.email, 
         profileId: propsRef.current.profileId,
         race: propsRef.current.race,
         playerClass: propsRef.current.playerClass,
         skin: propsRef.current.characterSkin
       });
+    });
+
+    socket.on('auth_error', (data: { reason: string }) => {
+      console.error('Server rejected identity:', data.reason);
+      alert(`Authentication failed (${data.reason}). Please sign in again.`);
+    });
+
+    socket.on('connect_error', (err: Error) => {
+      console.warn('Socket connection rejected:', err.message);
     });
 
     socket.on('kicked', (data: { reason: string }) => {
