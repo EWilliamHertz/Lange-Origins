@@ -47,9 +47,12 @@ interface UnifiedMenuProps {
     stamina: number;
     maxStamina: number;
     kills?: Record<string, number>;
+    statPoints: number;
     skillPoints: number;
     skills: { strength: number; dexterity: number; intelligence: number };
+    abilities: { slash: number; fireball: number; heal: number; double_jump: number };
     onAllocateSkill: (stat: 'strength' | 'dexterity' | 'intelligence') => void;
+    onAllocateAbility: (ability: 'slash' | 'fireball' | 'heal' | 'double_jump') => void;
   };
   quests: any[];
   keybinds: Record<string, string>;
@@ -211,7 +214,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none animate-in fade-in duration-200"
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 select-none"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -455,6 +458,119 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 shadow-md"
                   >
                     View Skills <ArrowRight size={13} />
+                  </button>
+                </div>
+
+              </div>
+
+              {/* Ability Point Allocation Banner */}
+              <div className="bg-gradient-to-r from-blue-950/40 via-neutral-900/80 to-blue-950/40 p-4 rounded-xl border border-blue-500/40 flex items-center justify-between mt-4">
+                <div>
+                  <h4 className="text-sm font-bold text-blue-300 flex items-center gap-1.5">
+                    <Sparkles size={16} /> Available Skill Points: <span className="text-white text-base ml-1 font-mono">{player.skillPoints}</span>
+                  </h4>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    1 level up grants exactly 1 skill point. Allocate points to unlock and upgrade combat abilities.
+                  </p>
+                </div>
+              </div>
+
+              {/* Abilities Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Slash */}
+                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                        <Swords size={16} className="text-red-400" /> Slash
+                      </h5>
+                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                        Lv {player.abilities.slash || 0}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400 leading-relaxed">
+                      Basic melee attack. Damage increases by +5 per level.
+                    </p>
+                  </div>
+                  <button
+                    disabled={player.skillPoints <= 0}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('slash'); }}
+                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                  >
+                    <Plus size={14} /> Upgrade (1 Point)
+                  </button>
+                </div>
+
+                {/* Fireball */}
+                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                        <Zap size={16} className="text-orange-400" /> Fireball
+                      </h5>
+                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                        Lv {player.abilities.fireball || 0}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400 leading-relaxed">
+                      Shoot a flaming projectile. Damage +8 per level.
+                    </p>
+                  </div>
+                  <button
+                    disabled={player.skillPoints <= 0}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('fireball'); }}
+                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                  >
+                    <Plus size={14} /> Upgrade (1 Point)
+                  </button>
+                </div>
+                
+                {/* Heal */}
+                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                        <Heart size={16} className="text-rose-400" /> Heal
+                      </h5>
+                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                        Lv {player.abilities.heal || 0}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400 leading-relaxed">
+                      Restore health over time. Healing rate +2 per level.
+                    </p>
+                  </div>
+                  <button
+                    disabled={player.skillPoints <= 0}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('heal'); }}
+                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                  >
+                    <Plus size={14} /> Upgrade (1 Point)
+                  </button>
+                </div>
+                
+                {/* Double Jump */}
+                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                        <ArrowRight size={16} className="text-blue-400 rotate-[-90deg]" /> Double Jump
+                      </h5>
+                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                        Lv {player.abilities.double_jump || 0} / 1
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400 leading-relaxed">
+                      Unlock the ability to jump a second time in mid-air.
+                    </p>
+                  </div>
+                  <button
+                    disabled={player.skillPoints <= 0 || (player.abilities.double_jump || 0) >= 1}
+                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility('double_jump'); }}
+                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                  >
+                    <Plus size={14} /> Unlock (1 Point)
                   </button>
                 </div>
 
@@ -771,7 +887,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               <div className="bg-gradient-to-r from-amber-950/40 via-neutral-900/80 to-amber-950/40 p-4 rounded-xl border border-amber-500/40 flex items-center justify-between">
                 <div>
                   <h4 className="text-sm font-bold text-amber-300 flex items-center gap-1.5">
-                    <Sparkles size={16} /> Available Stat Points: <span className="text-white text-base ml-1 font-mono">{player.skillPoints}</span>
+                    <Sparkles size={16} /> Available Stat Points: <span className="text-white text-base ml-1 font-mono">{player.statPoints}</span>
                   </h4>
                   <p className="text-xs text-neutral-400 mt-0.5">
                     1 level up grants exactly 1 stat point. Allocate points to empower your character.
@@ -798,7 +914,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0}
+                    disabled={player.statPoints <= 0}
                     onClick={() => {
                       Sounds.slotClick();
                       player.onAllocateSkill('strength');
@@ -825,7 +941,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0 || (player.skills.dexterity || 0) >= 10}
+                    disabled={player.statPoints <= 0 || (player.skills.dexterity || 0) >= 10}
                     onClick={() => {
                       Sounds.slotClick();
                       player.onAllocateSkill('dexterity');
@@ -852,7 +968,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     </p>
                   </div>
                   <button
-                    disabled={player.skillPoints <= 0}
+                    disabled={player.statPoints <= 0}
                     onClick={() => {
                       Sounds.slotClick();
                       player.onAllocateSkill('intelligence');

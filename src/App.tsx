@@ -90,13 +90,16 @@ export default function App() {
     return Array(27).fill(null);
   });
   const [health, setHealth] = useState(20);
+  const [gold, setGold] = useState(0);
   const [stamina, setStamina] = useState(100);
   const [keybinds, setKeybinds] = useState<Record<string, string>>({'z':'slash'});
   const [kills, setKills] = useState<Record<string, number>>({});
   const [mana, setMana] = useState(100);
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(1);
+  const [statPoints, setStatPoints] = useState(0);
   const [skillPoints, setSkillPoints] = useState(0);
+  const [abilities, setAbilities] = useState({ slash: 0, fireball: 0, heal: 0, double_jump: 0 });
   const [skills, setSkills] = useState({ strength: 0, dexterity: 0, intelligence: 0 });
   const maxStamina = 100 + (skills.dexterity || 0) * 10;
   
@@ -173,7 +176,7 @@ export default function App() {
         
         // Load data from Firestore
         try {
-          const profilesRef = collection(db, 'users', user.uid, 'profiles');
+          const profilesRef = collection(db, 'users', user.uid, 'characters_v2');
           const profilesSnap = await getDocs(profilesRef);
           const loadedProfiles = profilesSnap.docs.map(d => d.data());
           if (loadedProfiles.length > 0) {
@@ -193,8 +196,10 @@ export default function App() {
               if (active.kills !== undefined) setKills(active.kills);
               if (active.xp !== undefined) setXp(active.xp);
               if (active.level !== undefined) setLevel(active.level);
+              if (active.statPoints !== undefined) setStatPoints(active.statPoints);
               if (active.skillPoints !== undefined) setSkillPoints(active.skillPoints);
               if (active.skills) setSkills(JSON.parse(active.skills));
+              if (active.abilities) setAbilities(JSON.parse(active.abilities));
           } else {
              // Create initial profile
              const newId = 'prof_' + Date.now();
@@ -208,21 +213,23 @@ export default function App() {
                          skin: 'orange',
                          health: 100,
                          equipment: JSON.stringify([null, null]),
-                         hotbar: JSON.stringify(defaultHotbar),
+                         hotbar: JSON.stringify([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]),
                          backpack: JSON.stringify(Array(27).fill(null)),
                          quests: JSON.stringify(defaultQuests),
                          kills: 0,
                          xp: 0,
                          level: 1,
+                         statPoints: 0,
                          skillPoints: 0,
                          skills: JSON.stringify({ strength: 0, dexterity: 0, intelligence: 0 }),
+                         abilities: JSON.stringify({ slash: 0, fireball: 0, heal: 0, double_jump: 0 }),
                          updatedAt: Date.now()
              };
-             await setDoc(doc(db, 'users', user.uid, 'profiles', newId), newProfile);
+             await setDoc(doc(db, 'users', user.uid, 'characters_v2', newId), newProfile);
              setProfiles([newProfile]);
              setActiveProfileId(newId);
              setEquipment([null, null]);
-             setHotbar(defaultHotbar);
+             setHotbar([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]);
           }
         } catch (e) {
           console.error("Error loading progress", e);
@@ -255,6 +262,17 @@ export default function App() {
 
   const [characterSkin, setCharacterSkin] = useState<string>('orange');
   const [playerClass, setPlayerClass] = useState<string>('warrior');
+  const [creatorRace, setCreatorRace] = useState<string>('human');
+  const [showCharacterCreator, setShowCharacterCreator] = useState(false);
+
+  const getSpriteUrl = (race: string, pClass: string, equipment: any[]) => {
+     const chest = equipment ? equipment[1] : null;
+     let equipStr = 'none';
+     if (chest === 401 || chest === 408 || chest === 410) equipStr = 'iron_armor';
+     else if (chest) equipStr = 'leather_tunic';
+     return `/assets/sprites/${(race || 'human').toLowerCase()}_${(pClass || 'warrior').toLowerCase()}_${equipStr}.png`;
+  };
+
 
   const [profiles, setProfiles] = useState<any[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
@@ -331,16 +349,16 @@ export default function App() {
   const [showLeftActionBar, setShowLeftActionBar] = useState(false);
   const [showRightActionBar, setShowRightActionBar] = useState(false);
 
-  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills, keybinds });
+  const saveStateRef = useRef({ equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds });
   useEffect(() => {
-    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills, keybinds };
-  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, skillPoints, skills, keybinds]);
+    saveStateRef.current = { equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds };
+  }, [equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, serverName, currentUser, appState, activeProfileId, nickname, characterSkin, kills, xp, level, statPoints, skillPoints, skills, abilities, keybinds]);
 
   const saveProgress = async () => {
     const latest = saveStateRef.current;
     if (!latest.currentUser || !latest.activeProfileId) return;
     try {
-      const docRef = doc(db, 'users', latest.currentUser.uid, 'profiles', latest.activeProfileId);
+      const docRef = doc(db, 'users', latest.currentUser.uid, 'characters_v2', latest.activeProfileId);
       await setDoc(docRef, {
         equipment: JSON.stringify(latest.equipment),
         hotbar: JSON.stringify(latest.hotbar),
@@ -353,8 +371,10 @@ export default function App() {
         kills: latest.kills,
         xp: latest.xp,
         level: latest.level,
+        statPoints: latest.statPoints,
         skillPoints: latest.skillPoints,
         skills: JSON.stringify(latest.skills),
+        abilities: JSON.stringify(latest.abilities),
         name: latest.nickname,
         skin: latest.characterSkin,
         lastRoom: latest.serverName || 'public-lobby',
@@ -370,7 +390,7 @@ export default function App() {
     if (!currentUser || !hasLoadedSave || appState !== 'playing') return;
     const timeout = setTimeout(saveProgress, 2000);
     return () => clearTimeout(timeout);
-  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, skillPoints, skills, keybinds, kills]);
+  }, [currentUser, hasLoadedSave, appState, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, statPoints, skillPoints, skills, abilities, keybinds, kills]);
 
   const socketRef = useRef<Socket | null>(null);
   const hoveredSlotRef = useRef<{type: string, index: number} | null>(null);
@@ -449,9 +469,9 @@ export default function App() {
      if (levelsGained > 0) {
         levelRef.current = currentLevel;
         setLevel(currentLevel);
-        // 1 level up gives exactly 1 point (1 skill / stat point)
+        setStatPoints(sp => sp + levelsGained);
         setSkillPoints(sp => sp + levelsGained);
-        addNotification('level_up', 'System', 'System', `Level Up! Reached Level ${currentLevel} (+${levelsGained} Stat Point)`);
+        addNotification('level_up', 'System', 'System', `Level Up! Reached Level ${currentLevel} (+${levelsGained} Stat Point, +${levelsGained} Skill Point)`);
         Sounds.levelUp();
      }
   }, [addNotification]);
@@ -1603,500 +1623,259 @@ let targetArray = type === 'hotbar' ? [...hotbar]
   }
 
   if (appState === 'serverBrowser') {
-    const isAdmin = currentUser && (currentUser.email === 'ewilliamhe@gmail.com' || currentUser.email === 'zudran@gmail.com');
-
-    const handleAdminClick = async (action: string) => {
-      if (!currentUser) return;
-      
-      try {
-        if (action === 'Wipe World Data') {
-          const roomToWipe = window.prompt('Enter the name of the server/room to wipe (leave blank for public-lobby):') || 'public-lobby';
-          if (!window.confirm(`Are you sure you want to wipe "${roomToWipe}"? This cannot be undone.`)) return;
-          
-          const res = await fetch('/api/admin/wipe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: currentUser.email, roomId: roomToWipe })
-          });
-          const data = await res.json();
-          if (data.success) {
-            alert(`World "${roomToWipe}" wiped successfully!`);
-          } else {
-            alert('Failed to wipe world: ' + data.error);
-          }
-        } else if (action === 'Manage Players') {
-          const res = await fetch('/api/admin/players', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: currentUser.email })
-          });
-          const data = await res.json();
-          if (data.players && data.players.length > 0) {
-            const playerList = data.players.map((p: any) => `Room: ${p.roomId} | ID: ${p.id}`).join('\\n');
-            const toKick = window.prompt(`Connected Players:\\n${playerList}\\n\\nEnter ID to kick:`);
-            if (toKick) {
-              const kickRes = await fetch('/api/admin/kick', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({ email: currentUser.email, playerId: toKick })
-              });
-              const kickData = await kickRes.json();
-              if (kickData.success) alert('Player kicked.');
-              else alert('Failed to kick: ' + kickData.error);
-            }
-          } else {
-            alert('No players currently connected.');
-          }
-        } else {
-          alert(`Admin action: [${action}] is not implemented in the preview yet.`);
-        }
-      } catch (err) {
-        console.error(err);
-        alert('Admin action failed. Check console.');
-      }
-    };
-
-    
-  
-
-  
-      
-  const countAmmo = (type: number) => {
-      let count = 0;
-      hotbar.forEach(s => { if(s && s.type === type) count += s.count; });
-      backpack.forEach(s => { if(s && s.type === type) count += s.count; });
-      return count;
-  };
-  
-  const currentAmmoCount = 
-      selectedBlock === 302 ? countAmmo(303) :
-      selectedBlock === 109 ? countAmmo(110) :
-      selectedBlock === 304 ? countAmmo(304) : 1;
-
-    
-
-    const equippedHelmet = backpack.find(s => s && [BlockType.IronHelmet, BlockType.GoldHelmet, BlockType.DiamondHelmet].includes(s.type)) || 
-                           hotbar.find(s => s && [BlockType.IronHelmet, BlockType.GoldHelmet, BlockType.DiamondHelmet].includes(s.type));
-    const equippedChestplate = backpack.find(s => s && [BlockType.IronChestplate, BlockType.GoldChestplate, BlockType.DiamondChestplate].includes(s.type)) || 
-                               hotbar.find(s => s && [BlockType.IronChestplate, BlockType.GoldChestplate, BlockType.DiamondChestplate].includes(s.type));
-                               
-    const helmetType = equippedHelmet ? equippedHelmet.type : null;
-    const chestplateType = equippedChestplate ? equippedChestplate.type : null;
-
-  return (
-    <div className="w-full h-screen bg-[#0A0A0B] flex flex-col items-center justify-center font-sans relative overflow-hidden">
-        {/* Deep immersive background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-[#0A0A0B] via-[#111115] to-[#0A0A0B]"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(59,130,246,0.05),transparent_50%)]"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_100%,rgba(16,185,129,0.03),transparent_50%)]"></div>
-        <div className="absolute inset-0 opacity-[0.02] bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
+    const activeProfile = profiles.find(p => p.id === activeProfileId);
+    return (
+      <div className="w-full h-screen flex flex-col font-sans relative overflow-hidden bg-black">
+        {/* Fullscreen Thematic Background based on Active Character Race */}
+        <div className="absolute inset-0 bg-cover bg-center opacity-40 transition-all duration-1000" style={{ backgroundImage: `url('/assets/races/${activeProfile?.race || 'human'}_art.jpg')` }}></div>
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-black/90"></div>
         
-        {/* Top Right Profile */}
+        {/* Top Right Header */}
         {currentUser && (
-          <div className="absolute top-6 right-6 z-20 flex items-center gap-4 bg-[#141417]/80 backdrop-blur-xl px-5 py-2.5 rounded-full border border-white/5 shadow-2xl">
-             <img src={currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.displayName}`} alt="avatar" className="w-9 h-9 rounded-full ring-2 ring-neutral-800" />
-             <span className="text-neutral-300 font-medium text-sm hidden md:block">{currentUser.displayName}</span>
-             <div className="w-px h-4 bg-neutral-800 mx-1 hidden md:block"></div>
-             <button onClick={handleSignOut} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#1A1A1F] text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all">Sign Out</button>
+          <div className="absolute top-6 right-6 z-40 flex items-center gap-4 bg-black/40 backdrop-blur-md px-5 py-2.5 rounded-full border border-white/10 shadow-2xl">
+             <span className="text-white font-medium text-sm hidden md:block">{currentUser.displayName}</span>
+             <button onClick={handleSignOut} className="px-4 py-2 rounded-xl text-sm font-bold bg-white/10 text-white hover:bg-white/20 transition-all">Sign Out</button>
           </div>
         )}
 
-        <div className="w-full max-w-7xl mx-auto p-4 md:p-8 flex flex-col lg:flex-row gap-8 h-full z-10 pt-24 lg:pt-8">
-          
-          <div className="flex-1 bg-[#141417]/80 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-10 border border-white/5 flex flex-col shadow-2xl overflow-hidden min-h-[500px]">
-             
-             <div className="flex items-center gap-4 mb-10 shrink-0">
-               <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-900/30">
-                 <Globe size={28} className="text-white" />
-               </div>
-               <div>
-                 <h1 className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-neutral-500 tracking-tight">World Browser</h1>
-                 <p className="text-neutral-400 font-medium">Join an existing realm or start your own.</p>
-               </div>
-             </div>
+        {showCharacterCreator ? (
+           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+             {/* Character Creator Modal */}
+             <div className="w-full max-w-5xl h-[80vh] bg-neutral-900 border border-white/10 rounded-2xl flex overflow-hidden shadow-2xl relative">
+                
+                {/* Left side preview */}
+                <div className="w-full md:w-1/2 relative bg-neutral-900 border-r border-white/5">
+                   <div className="absolute inset-0 bg-neutral-900 flex items-center justify-center overflow-hidden">
+                       <img src={getSpriteUrl(creatorRace, playerClass, [])} className="h-[120%] object-contain scale-110 drop-shadow-[0_0_30px_rgba(255,255,255,0.1)]" style={{ imageRendering: 'pixelated' }} />
+                   </div>
+                   <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
+                   <div className="absolute bottom-8 left-8 right-8">
+                      <div className="w-20 h-20 rounded-2xl border-4 border-white mb-4 shadow-xl" style={{ backgroundColor: characterSkin }}></div>
+                      <h2 className="text-3xl font-black text-white capitalize">{creatorRace} {playerClass}</h2>
+                   </div>
+                </div>
 
-             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar flex flex-col">
-               <div className="flex items-center gap-4 mb-6 border-b border-white/5 pb-4 shrink-0">
-                 <button
-                     onClick={() => setLobbyTab('play')}
-                     className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all ${lobbyTab === 'play' ? 'bg-blue-600/20 text-blue-400' : 'text-neutral-500 hover:text-white'}`}
-                 >Live Servers</button>
-                 <button
-                     onClick={() => setLobbyTab('marketplace')}
-                     className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${lobbyTab === 'marketplace' ? 'bg-emerald-600/20 text-emerald-400' : 'text-neutral-500 hover:text-white'}`}
-                 ><ShoppingBag size={14}/> Marketplace</button>
-               </div>
-                          
-               {lobbyTab === 'play' ? (
-                 <div className="flex flex-col">
-                   <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                       <Star size={14} className="text-amber-500" /> Favorites
-                     </h3>
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {favoriteServers.length > 0 ? favoriteServers.map((srv, idx) => (
-                          <div key={'fav-' + srv + '-' + idx} onClick={() => joinServer(srv)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 p-4 rounded-2xl cursor-pointer transition-all flex items-center justify-between group">
-                           <span className="font-bold text-neutral-200 group-hover:text-white transition-colors">{srv}</span>
-                           <button onClick={(e) => toggleFavorite(srv, e)} className="text-amber-500 hover:text-amber-400 p-1">
-                             <Star size={18} fill="currentColor" />
+                {/* Right side form */}
+                <div className="w-full md:w-1/2 p-8 overflow-y-auto custom-scrollbar flex flex-col">
+                   <div className="flex justify-between items-center mb-8">
+                     <h2 className="text-2xl font-black text-white">New Character</h2>
+                     <button onClick={() => setShowCharacterCreator(false)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white hover:bg-white/10"><X size={20}/></button>
+                   </div>
+                   
+                   <div className="space-y-6 flex-1">
+                     <div>
+                       <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-2 block">Name</label>
+                       <input
+                         type="text"
+                         value={nickname}
+                         onChange={(e) => setNickname(e.target.value)}
+                         className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
+                         placeholder="Hero Name"
+                       />
+                     </div>
+
+                     <div>
+                       <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-2 block">Race</label>
+                       <div className="grid grid-cols-3 gap-3">
+                         {['human', 'elf', 'dwarf'].map(r => (
+                           <button
+                             key={r}
+                             onClick={() => setCreatorRace(r)}
+                             className={`py-3 rounded-xl border text-sm font-bold uppercase transition-all ${creatorRace === r ? 'bg-amber-600/20 border-amber-500 text-amber-400' : 'bg-black/40 border-white/5 text-neutral-500 hover:bg-white/5 hover:text-white'}`}
+                           >
+                             {r}
                            </button>
-                         </div>
-                       )) : <p className="text-neutral-600 text-sm italic py-2">No favorites yet.</p>}
-                     </div>
-                   </div>
-                   <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                       <Globe size={14} className="text-blue-500" /> Public Realms
-                     </h3>
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                       {publicServers.map(srv => (
-                         <div key={srv.id} onClick={() => joinServer(srv.id)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 p-4 rounded-2xl cursor-pointer transition-all flex items-center justify-between group">
-                           <div>
-                             <div className="font-bold text-neutral-200 group-hover:text-white transition-colors">{srv.id}</div>
-                             <div className="text-xs text-neutral-500 mt-1 flex items-center gap-1.5"><User size={12} /> {srv.players} online</div>
-                           </div>
-                           <button onClick={(e) => toggleFavorite(srv.id, e)} className="text-neutral-600 hover:text-amber-500 p-1 transition-colors">
-                             <Star size={18} fill={favoriteServers.includes(srv.id) ? "currentColor" : "none"} />
-                           </button>
-                         </div>
-                       ))}
-                     </div>
-                   </div>
-                   <div className="mb-8">
-                     <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                       <Clock size={14} className="text-neutral-500" /> Recent
-                     </h3>
-                     <div className="flex flex-wrap gap-2">
-                        {recentServers.length > 0 ? recentServers.map((srv, idx) => (
-                          <button key={'rec-' + srv + '-' + idx} onClick={() => joinServer(srv)} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-neutral-700 px-4 py-2 rounded-xl text-sm font-medium text-neutral-300 hover:text-white transition-colors">
-                           {srv}
-                         </button>
-                       )) : <p className="text-neutral-600 text-sm italic py-1">No recent servers.</p>}
-                     </div>
-                   </div>
-                 </div>
-               ) : (
-                 <div className="flex flex-col gap-4">
-                    <div className="bg-[#1A1A1E] rounded-2xl p-5 border border-emerald-500/30 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                       <div>
-                         <h4 className="text-emerald-400 font-bold mb-1">Publish Your World</h4>
-                         <p className="text-sm text-neutral-400">Share your custom realm or minigame blueprint with the community.</p>
+                         ))}
                        </div>
-                       <button onClick={() => publishBlueprint()} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap active:scale-95 shadow-lg shadow-emerald-900/50">Publish World</button>
-                    </div>
-                                     
-                    <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-2 mt-4 flex items-center gap-2">
-                      <Globe size={14} className="text-emerald-500" /> Community Blueprints
-                    </h3>
-                    <div className="grid grid-cols-1 gap-4 pb-4">
-                      {marketBlueprints.length > 0 ? marketBlueprints.map(bp => (
-                         <div key={bp.id} className="bg-[#0A0A0B]/60 hover:bg-[#1A1A1E]/80 border border-neutral-800/50 hover:border-emerald-500/30 p-4 rounded-2xl transition-all flex flex-col gap-3 group">
-                            <div className="flex items-center justify-between">
-                               <div className="font-bold text-neutral-200 group-hover:text-emerald-400 transition-colors text-lg">{bp.name}</div>
-                               <button onClick={() => handleUpvote(bp.id)} className="flex items-center gap-2 text-xs text-neutral-500 hover:text-red-400 bg-black/40 hover:bg-black/60 px-3 py-1.5 rounded-full border border-white/5 hover:border-red-500/30 transition-all active:scale-95 cursor-pointer">
-                                  <Heart size={14} className="text-red-500/70" /> {bp.likes || 0}
-                               </button>
-                            </div>
-                            <p className="text-sm text-neutral-400 leading-relaxed italic">{bp.description}</p>
-                            <div className="flex items-center justify-between mt-2 pt-3 border-t border-white/5">
-                               <span className="text-xs text-neutral-500 flex items-center gap-1.5"><User size={12}/> By {bp.creatorName || 'Unknown'}</span>
-                               <button onClick={() => { Sounds.click(); joinServer(bp.roomId); }} className="bg-emerald-600/20 hover:bg-emerald-500 hover:text-white text-emerald-400 px-4 py-1.5 rounded-lg text-xs font-bold transition-all border border-emerald-500/20 hover:border-emerald-500">
-                                  Join Instance
-                               </button>
-                            </div>
-                         </div>
-                      )) : <p className="text-neutral-600 text-sm italic">Loading blueprints...</p>}
-                    </div>
+                     </div>
+
+                     <div>
+                       <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-2 block">Class</label>
+                       <div className="grid grid-cols-3 gap-3">
+                         {['warrior', 'mage', 'archer'].map(cls => (
+                           <button
+                             key={cls}
+                             onClick={() => setPlayerClass(cls)}
+                             className={`py-3 rounded-xl border text-sm font-bold uppercase transition-all ${playerClass === cls ? 'bg-amber-600/20 border-amber-500 text-amber-400' : 'bg-black/40 border-white/5 text-neutral-500 hover:bg-white/5 hover:text-white'}`}
+                           >
+                             {cls}
+                           </button>
+                         ))}
+                       </div>
+                     </div>
+                     
+                     <div>
+                       <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-2 block">Skin Tone</label>
+                       <div className="flex gap-2">
+                         {availableSkins.map(s => (
+                           <button
+                             key={s}
+                             onClick={() => setCharacterSkin(s)}
+                             className={`w-10 h-10 rounded-full border-2 transition-all ${characterSkin === s ? 'border-amber-400 scale-110 shadow-lg' : 'border-transparent hover:scale-105'}`}
+                             style={{ backgroundColor: s }}
+                           />
+                         ))}
+                       </div>
+                     </div>
+                   </div>
+
+                   <div className="mt-8">
+                     <button
+                        onClick={async () => {
+                          const newId = `char_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                          
+                          const newProfile = {
+                             id: newId,
+                             name: nickname,
+                             skin: characterSkin || 'orange',
+                             playerClass: playerClass || 'warrior',
+                             race: creatorRace || 'human',
+                             health: 20,
+                             gold: 0,
+                             hotbar: JSON.stringify([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]),
+                             backpack: JSON.stringify(Array(27).fill(null)),
+                             quests: JSON.stringify([]),
+                             updatedAt: Date.now()
+                          };
+                          
+                          setDoc(doc(db, 'users', currentUser.uid, 'characters_v2', newId), newProfile);
+                          
+                          setProfiles([...profiles, newProfile]);
+                          setActiveProfileId(newId);
+                          setHotbar([{ type: 103, count: 1 }, null, null, null, null, null, null, null, null, null]);
+                          setLeftActionBar(Array(10).fill(null));
+                          setRightActionBar(Array(10).fill(null));
+                          setBackpack(Array(27).fill(null));
+                          setHealth(20);
+                          if(typeof setGold === 'function') setGold(0);
+                          setKills({});
+                          setXp(0);
+                          setLevel(1);
+                          setStatPoints(0);
+                          setSkillPoints(0);
+                          setSkills({ strength: 0, dexterity: 0, intelligence: 0 });
+                          setAbilities({ slash: 0, fireball: 0, heal: 0, double_jump: 0 });
+                          setQuests(defaultQuests);
+                          
+                          setShowCharacterCreator(false);
+                        }}
+                        className="w-full py-4 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-black text-lg transition-all active:scale-95 shadow-[0_0_20px_rgba(217,119,6,0.3)]"
+                     >
+                       Create Hero
+                     </button>
+                   </div>
+                </div>
+             </div>
+           </div>
+        ) : (
+           <div className="absolute inset-0 z-10 flex">
+             {/* Left/Center: Selected Character Model */}
+             <div className="flex-1 flex flex-col items-center justify-end pb-20 relative">
+               {activeProfile ? (
+                 <>
+                   {/* Giant Sprite */}
+                   <div className="w-full max-w-lg h-3/4 relative flex items-end justify-center mb-10 drop-shadow-2xl pointer-events-none">
+                     <img src={getSpriteUrl(activeProfile.race, activeProfile.playerClass, activeProfile.equipment ? JSON.parse(activeProfile.equipment) : [])} className="h-full object-contain scale-100 origin-bottom transform-gpu" style={{ imageRendering: 'pixelated' }} />
+                   </div>
+                   
+                   {/* WoW style "Enter World" button */}
+                   <button onClick={() => { if(joinInput) joinServer(joinInput); else joinServer('public-lobby'); }} className="px-16 py-5 bg-gradient-to-b from-red-700 to-red-900 hover:from-red-600 hover:to-red-800 border-2 border-amber-500 rounded-full text-amber-100 font-black text-2xl uppercase tracking-widest shadow-[0_0_40px_rgba(220,38,38,0.4)] transition-all hover:scale-105 active:scale-95 z-20">
+                     Enter World
+                   </button>
+                   
+                   <div className="absolute bottom-4 bg-black/80 p-4 rounded-xl border border-white/10 flex gap-2 animate-in fade-in slide-in-from-bottom-4 z-20">
+                      <input
+                        type="text"
+                        value={joinInput}
+                        onChange={(e) => setJoinInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && joinServer(joinInput)}
+                        className="bg-neutral-900 border border-white/10 text-white rounded-lg px-4 py-2 focus:outline-none text-sm w-48"
+                        placeholder="Server ID (blank=public)"
+                      />
+                   </div>
+                 </>
+               ) : (
+                 <div className="flex flex-col items-center justify-center h-full text-white/50 font-bold text-xl">
+                   No Character Selected
                  </div>
                )}
              </div>
-             
 
-             <div className="mt-8 flex gap-3 shrink-0">
-               <input
-                 type="text"
-                 value={joinInput}
-                 onChange={(e) => setJoinInput(e.target.value)}
-                 onKeyDown={(e) => e.key === 'Enter' && joinServer(joinInput)}
-                 className="flex-1 bg-[#0A0A0B]/80 border border-neutral-800 text-white rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-neutral-700 transition-all shadow-inner text-lg placeholder-neutral-600"
-                 placeholder="Enter server address..."
-               />
-               <button
-                 onClick={() => joinServer(joinInput)}
-                 className="bg-white hover:bg-neutral-200 text-black px-8 py-4 rounded-2xl font-black transition-all shadow-[0_0_20px_rgba(255,255,255,0.2)] active:scale-95 flex items-center gap-2 text-lg"
-               >
-                 Join <ArrowRight size={20}/>
-               </button>
-             </div>
-          </div>
-          
-          {/* Player Profile Manager */}
-          <div className="w-full lg:w-80 flex-shrink-0 flex flex-col text-neutral-300 overflow-y-auto">
-            <h2 className="text-2xl font-black text-white tracking-tight mb-8">My Profile</h2>
-            
-            <div className="bg-[#0A0A0B]/80 rounded-2xl p-6 border border-neutral-800 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                 <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 flex items-center gap-2">
-                   <User size={14} className="text-blue-500" /> Active Profile
-                 </h3>
-              </div>
-              <div className="flex flex-col gap-3 mb-6">
+             {/* Right: Character List */}
+             <div className="w-96 bg-black/60 backdrop-blur-md border-l border-white/5 flex flex-col pt-10 pb-6 px-6 relative z-20">
+               <div className="mb-6">
+                 <h1 className="text-3xl font-black text-center text-amber-500 tracking-widest uppercase" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>Characters</h1>
+                 <div className="w-full h-px bg-gradient-to-r from-transparent via-amber-500/50 to-transparent mt-4"></div>
+               </div>
+
+               <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-2">
                  {profiles.map(p => (
-                    <button
-                      key={p.id}
-                      onClick={() => {
-                          setActiveProfileId(p.id);
-                          setNickname(p.name || 'Player');
-                          setCharacterSkin(p.skin || 'orange');
-                          setPlayerClass(p.playerClass || 'warrior');
-                          if (p.hotbar) setHotbar(JSON.parse(p.hotbar));
-                          if (p.leftActionBar) setLeftActionBar(JSON.parse(p.leftActionBar));
-                          if (p.rightActionBar) setRightActionBar(JSON.parse(p.rightActionBar));
-                          if (p.backpack) setBackpack(JSON.parse(p.backpack));
-                          if (p.health !== undefined) setHealth(p.health);
-                          if (p.keybinds) setKeybinds(JSON.parse(p.keybinds));
-                          if (p.quests) setQuests(JSON.parse(p.quests));
-                          if (p.xp !== undefined) setXp(p.xp);
-                          if (p.level !== undefined) setLevel(p.level);
-                          if (p.skillPoints !== undefined) setSkillPoints(p.skillPoints);
-                          if (p.skills) setSkills(JSON.parse(p.skills));
-                          if (p.kills !== undefined) setKills(p.kills);
-                      }}
-                      className={`px-4 py-3 rounded-xl text-left text-sm font-bold border transition-all ${activeProfileId === p.id ? 'border-blue-500/50 bg-blue-900/20 text-blue-100 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'border-neutral-800 hover:border-neutral-700 text-neutral-400 hover:text-neutral-200 bg-neutral-900/50'}`}
-                    >
-                      {p.name || 'Unnamed'} {p.health <= 0 && <span className="text-red-500 font-normal text-xs ml-2">(Dead)</span>} <span className="text-xs text-neutral-500 block font-normal capitalize">Level {p.level || 1} {p.playerClass || 'Warrior'}</span>
-                    </button>
+                   <button
+                     key={p.id}
+                     onClick={() => {
+                        setActiveProfileId(p.id);
+                        setNickname(p.name || 'Player');
+                        setCharacterSkin(p.skin || 'orange');
+                        setPlayerClass(p.playerClass || 'warrior');
+                        if (p.hotbar) setHotbar(JSON.parse(p.hotbar));
+                        if (p.leftActionBar) setLeftActionBar(JSON.parse(p.leftActionBar));
+                        if (p.rightActionBar) setRightActionBar(JSON.parse(p.rightActionBar));
+                        if (p.backpack) setBackpack(JSON.parse(p.backpack));
+                        if (p.health !== undefined) setHealth(p.health);
+                        if (p.gold !== undefined) setGold(p.gold);
+                        if (p.kills !== undefined) setKills(p.kills);
+                        if (p.xp !== undefined) setXp(p.xp);
+                        if (p.level !== undefined) setLevel(p.level);
+                        if (p.statPoints !== undefined) setStatPoints(p.statPoints);
+                        if (p.skillPoints !== undefined) setSkillPoints(p.skillPoints);
+                        if (p.skills) setSkills(JSON.parse(p.skills));
+                        if (p.abilities) setAbilities(JSON.parse(p.abilities));
+                        if (p.quests) setQuests(JSON.parse(p.quests));
+                        if (p.equipment) setEquipment(JSON.parse(p.equipment));
+                     }}
+                     className={`relative w-full p-4 rounded-lg flex items-center gap-4 transition-all overflow-hidden ${activeProfileId === p.id ? 'bg-amber-900/40 border border-amber-500/50 shadow-[inset_0_0_20px_rgba(245,158,11,0.2)]' : 'bg-white/5 border border-white/5 hover:bg-white/10'}`}
+                   >
+                      <div className="w-12 h-12 bg-black/50 rounded flex items-center justify-center shrink-0 border border-white/10 overflow-hidden">
+                        <img src={getSpriteUrl(p.race, p.playerClass, p.equipment ? JSON.parse(p.equipment) : [])} className="h-[200%] object-contain -mt-2" style={{ imageRendering: 'pixelated' }} />
+                      </div>
+                      <div className="flex flex-col text-left flex-1 min-w-0">
+                         <div className={`font-bold truncate text-lg ${activeProfileId === p.id ? 'text-amber-400' : 'text-white'}`}>{p.name}</div>
+                         <div className="text-xs text-neutral-400 capitalize">{p.race} {p.playerClass} • Level {p.level || 1}</div>
+                      </div>
+                   </button>
                  ))}
-              </div>
-              <div className="flex gap-2">
-                 <button
-                   onClick={async () => {
-                      if (!currentUser) return;
-                      const newId = 'prof_' + Date.now();
-                      const newName = nickname || 'New Profile';
-                      const newSkin = characterSkin || 'orange';
-                      const newClass = playerClass || 'warrior';
-                      
-                      const defaultHotbar = [
-                         { type: 103 /* BlockType.Fists */, count: 1 },
-                         null, null, null, null, null, null, null, null, null
-                      ];
-                      
-                      const newProfile = {
-                         id: newId,
-                         name: newName,
-                         skin: newSkin,
-                         playerClass: newClass,
-                         health: 100,
-                         hotbar: JSON.stringify(defaultHotbar),
-                         backpack: JSON.stringify(Array(27).fill(null)),
-                         quests: JSON.stringify([]),
-                         updatedAt: Date.now()
-                      };
-                      
-                          setDoc(doc(db, 'users', currentUser.uid, 'profiles', newId), { ...newProfile, updatedAt: serverTimestamp() });
-                      
-                      setProfiles([...profiles, newProfile]);
-                      setActiveProfileId(newId);
-                      setNickname(newName);
-                      setCharacterSkin(newSkin);
-                      setPlayerClass(newClass);
-                      setHotbar(defaultHotbar);
-                      setLeftActionBar(Array(10).fill(null));
-                      setRightActionBar(Array(10).fill(null));
-                      setBackpack(Array(27).fill(null));
-                      setHealth(20);
-                      setKills(0);
-                      setXp(0);
-                      setLevel(1);
-                      setSkillPoints(0);
-                      setSkills({ strength: 0, dexterity: 0, intelligence: 0 });
-                      setQuests(defaultQuests);
-                   }}
-                   className="px-4 py-2 rounded-xl text-sm font-bold border border-emerald-500/30 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-800/40 transition-all flex items-center justify-center gap-1 w-full"
-                 >
-                   <Plus size={14} /> New Profile
+               </div>
+
+               <div className="mt-6 flex flex-col gap-3">
+                 <button onClick={() => setShowCharacterCreator(true)} className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg font-bold transition-all border border-white/10 text-sm tracking-wider uppercase">
+                   Create New Character
                  </button>
-                 
-                 <button
-                   onClick={async () => {
-                      if (!currentUser || !activeProfileId) return;
-                      if (profiles.length <= 1) {
-                          alert("You cannot delete your only profile.");
-                          return;
+                 {activeProfileId && profiles.length > 0 && (
+                   <button onClick={() => {
+                      if(confirm("Delete this character?")) {
+                         deleteDoc(doc(db, 'users', currentUser!.uid, 'characters_v2', activeProfileId));
+                         const newProfiles = profiles.filter(p => p.id !== activeProfileId);
+                         setProfiles(newProfiles);
+                         if (newProfiles.length > 0) {
+                            const newActive = newProfiles[0];
+                            setActiveProfileId(newActive.id);
+                            setNickname(newActive.name || 'Player');
+                            setCharacterSkin(newActive.skin || 'orange');
+                            setPlayerClass(newActive.playerClass || 'warrior');
+                         } else {
+                            setActiveProfileId(null);
+                         }
                       }
-                      if (!window.confirm("Are you sure you want to delete this profile? This action cannot be undone.")) return;
-                      
-                      const newProfiles = profiles.filter(p => p.id !== activeProfileId);
-                      setProfiles(newProfiles);
-                      
-                      const newActive = newProfiles[0];
-                      setActiveProfileId(newActive.id);
-                      setNickname(newActive.name || 'Player');
-                      setCharacterSkin(newActive.skin || 'orange');
-                      setPlayerClass(newActive.playerClass || 'warrior');
-                      if (newActive.hotbar) setHotbar(JSON.parse(newActive.hotbar));
-                      if (newActive.leftActionBar) setLeftActionBar(JSON.parse(newActive.leftActionBar));
-                      if (newActive.rightActionBar) setRightActionBar(JSON.parse(newActive.rightActionBar));
-                      if (newActive.backpack) setBackpack(JSON.parse(newActive.backpack));
-                      if (newActive.health !== undefined) setHealth(newActive.health);
-                      if (newActive.keybinds) setKeybinds(JSON.parse(newActive.keybinds));
-                      if (newActive.quests) setQuests(JSON.parse(newActive.quests));
-                      
-                          deleteDoc(doc(db, 'users', currentUser.uid, 'profiles', activeProfileId));
-                   }}
-                   className="px-4 py-2 rounded-xl text-sm font-bold border border-red-500/30 bg-red-900/20 text-red-400 hover:bg-red-800/40 transition-all flex items-center justify-center gap-1"
-                 >
-                   <X size={14} /> Delete
-                 </button>
-              </div>
+                   }} className="w-full py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-lg font-bold transition-all border border-red-500/30 text-xs">
+                     Delete Character
+                   </button>
+                 )}
+               </div>
 
-              <div className="grid grid-cols-1 gap-6 mt-6">
-                <div>
-                  <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 block">Display Name</label>
-                  <div className="flex gap-2">
-                     <input 
-                        type="text" 
-                        value={nickname}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setNickname(val);
-                          if (activeProfileId) {
-                             setProfiles(profiles.map(p => p.id === activeProfileId ? { ...p, name: val } : p));
-                          }
-                        }}
-                        className="flex-1 bg-[#0A0A0B]/80 border border-neutral-800 text-neutral-200 rounded-2xl pl-5 pr-5 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-neutral-700 transition-all shadow-inner text-lg placeholder-neutral-600"
-                        onBlur={saveProgress}
-                        placeholder="Enter Nickname..."
-                        maxLength={16}
-                     />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 block">Class</label>
-                  <div className="flex gap-2 mb-4">
-                     {['warrior', 'mage', 'archer'].map(cls => (
-                        <button
-                           key={cls}
-                           onClick={() => {
-                             setPlayerClass(cls);
-                             if (activeProfileId) {
-                                setProfiles(profiles.map(p => p.id === activeProfileId ? { ...p, playerClass: cls } : p));
-                             }
-                           }}
-                           className={`flex-1 py-2 rounded-xl border text-sm font-bold uppercase tracking-wider transition-all ${playerClass === cls ? 'bg-indigo-600/30 border-indigo-500 text-indigo-100 shadow-[0_0_10px_rgba(99,102,241,0.2)]' : 'bg-black/50 border-neutral-800 text-neutral-500 hover:border-neutral-600'}`}
-                        >
-                           {cls}
-                        </button>
-                     ))}
-                  </div>
-                </div>
-        
-                <div>
-                  <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest pl-1 mb-2 block">Character Skin</label>
-                  <div className="flex flex-wrap gap-2 pt-2">
-                     {availableSkins.map(skin => (
-                        <button 
-                          key={skin.id}
-                          onClick={() => {
-                            setCharacterSkin(skin.id);
-                            if (activeProfileId) {
-                               setProfiles(profiles.map(p => p.id === activeProfileId ? { ...p, skin: skin.id } : p));
-                            }
-                          }}
-                          className={`w-10 h-10 rounded-full border-2 transition-all ${characterSkin === skin.id ? 'border-white scale-110 shadow-[0_0_15px_rgba(255,255,255,0.3)]' : 'border-transparent hover:scale-105'}`}
-                          style={{ backgroundColor: skin.color }}
-                          title={skin.name}
-                        />
-                     ))}
-                  </div>
-                </div>
-                {activeProfileId && (
-                  <button
-                    onClick={saveProgress}
-                    className="mt-2 w-full py-4 bg-blue-600/20 hover:bg-blue-500/30 text-blue-400 border border-blue-500/30 rounded-2xl font-bold transition-all text-lg shadow-[0_0_15px_rgba(59,130,246,0.1)]"
-                  >
-                    Save Profile
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="bg-[#0A0A0B]/80 rounded-2xl p-6 border border-neutral-800 mb-6">
-              <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                <Heart size={14} className="text-red-500" /> Vitals
-              </h3>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: 10 }).map((_, i) => {
-                  const val = i * 2;
-                  if (health >= val + 2) {
-                     return <Heart key={i} size={20} className="text-red-500 fill-red-500" />;
-                  } else if (health === val + 1) {
-                     return (
-                       <div key={i} className="relative w-5 h-5">
-                         <Heart size={20} className="absolute text-neutral-800 fill-neutral-800" />
-                         <div className="absolute w-1/2 h-full overflow-hidden">
-                            <Heart size={20} className="text-red-500 fill-red-500" />
-                         </div>
-                       </div>
-                     );
-                  } else {
-                     return <Heart key={i} size={20} className="text-neutral-800 fill-neutral-800" />;
-                  }
-                })}
-              </div>
-              <div className="text-xs text-neutral-500 mt-2">{health} / 20 HP</div>
-            </div>
-
-            <div className="bg-[#0A0A0B]/80 rounded-2xl p-6 border border-neutral-800 mb-6">
-              <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                <Scroll size={14} className="text-amber-500" /> Quests Progress
-              </h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-end">
-                  <span className="text-sm font-medium text-neutral-300">Completed</span>
-                  <span className="text-lg font-black text-white">{quests.filter(q => q.completed).length} <span className="text-neutral-600 text-sm font-medium">/ {quests.length}</span></span>
-                </div>
-                <div className="w-full bg-neutral-900 rounded-full h-1.5 overflow-hidden">
-                  <div className="bg-amber-500 h-full rounded-full" style={{ width: `${quests.length > 0 ? (quests.filter(q => q.completed).length / quests.length) * 100 : 0}%` }}></div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-[#0A0A0B]/80 rounded-2xl p-6 border border-neutral-800">
-              <h3 className="text-xs uppercase tracking-wider font-bold text-neutral-500 mb-4 flex items-center gap-2">
-                <Book size={14} className="text-blue-500" /> Latest Log
-              </h3>
-              <div className="text-sm text-neutral-400">
-                You are currently placed in <span className="text-blue-400 font-bold">{saveStateRef.current.serverName || 'public-lobby'}</span>.
-              </div>
-            </div>
-            
-            {isAdmin && (
-              <button onClick={() => setShowAdminPanel(true)} className="bg-red-600/20 hover:bg-red-600/40 text-red-400 py-3 rounded-2xl text-sm font-bold border border-red-500/30 transition-colors mt-6 w-full flex justify-center items-center gap-2">
-                <Shield size={18} /> Open Admin Panel
-              </button>
-            )}
-
-            {isAdmin && showAdminPanel && (
-              <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-                 <div className="bg-[#141417] p-8 rounded-[2.5rem] border border-red-900/50 shadow-2xl max-w-md w-full relative">
-                    <button onClick={() => setShowAdminPanel(false)} className="absolute top-6 right-6 text-neutral-500 hover:text-white">
-                       <X size={24} />
-                    </button>
-                    <h2 className="text-2xl font-black text-red-500 mb-6 flex items-center gap-2">
-                      <Shield size={28} /> Admin Dashboard
-                    </h2>
-                    <div className="flex flex-col gap-4">
-                      <button onClick={() => handleAdminClick('Wipe World Data')} className="bg-red-600/20 hover:bg-red-600/40 text-red-400 py-3 rounded-xl text-sm font-bold border border-red-500/30 transition-colors">Wipe Targeted World</button>
-                      <button onClick={() => handleAdminClick('Manage Players')} className="bg-red-600/20 hover:bg-red-600/40 text-red-400 py-3 rounded-xl text-sm font-bold border border-red-500/30 transition-colors">Manage Players</button>
-                    </div>
-                 </div>
-              </div>
-            )}
-          </div>
-        </div>
+             </div>
+           </div>
+        )}
       </div>
     );
   }
@@ -2287,6 +2066,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             setInteractPlayerName(playerName);
           }}
           onBlockMined={(minedBlockType) => {
+            if (minedBlockType === 999) return; // Don't add XP orbs to inventory!
             let blockType = minedBlockType;
             if (minedBlockType === BlockType.CoalOre) blockType = BlockType.Coal;
             if (minedBlockType === BlockType.DiamondOre) blockType = BlockType.Diamond;

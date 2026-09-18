@@ -33,6 +33,7 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
   ];
 
   useEffect(() => {
+
     setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
   }, []);
 
@@ -40,13 +41,17 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
     try {
       setLoading(true);
       setError(null);
-      const user = await loginWithGoogle();
+      
+      // Add a timeout to prevent hanging forever
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Authentication timed out (Popup might be blocked or hung). Try again.")), 30000));
+      const user = await Promise.race([loginWithGoogle(), timeoutPromise]) as any;
+      
       onLoginSuccess(user);
     } catch (err: any) {
       setError(err.message || "Failed to authenticate");
-    } finally {
       setLoading(false);
     }
+    // Don't set loading to false in finally if it succeeded, because it's unmounting and we want the button to stay "Authenticating..." during the transition.
   };
 
   return (

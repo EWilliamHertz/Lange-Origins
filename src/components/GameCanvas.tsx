@@ -11,6 +11,8 @@ import { Crosshair } from 'lucide-react';
 interface GameProps {
   nickname: string;
   characterSkin?: string;
+  race?: string;
+  playerClass?: string;
   helmet?: number | null;
   chestplate?: number | null;
   selectedBlock: BlockType | null;
@@ -70,7 +72,23 @@ interface Particle {
   size: number;
 }
 
-export default function Game({ nickname, characterSkin, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
+
+const SpriteCache: Record<string, HTMLImageElement> = {};
+const getPlayerSprite = (race: string, pClass: string, chest: number | null) => {
+   let equipStr = 'none';
+   if (chest === 401 || chest === 408 || chest === 410) equipStr = 'iron_armor';
+   else if (chest) equipStr = 'leather_tunic';
+   const url = `/assets/sprites/${(race || 'human').toLowerCase()}_${(pClass || 'warrior').toLowerCase()}_${equipStr}.png`;
+   
+   if (!SpriteCache[url]) {
+      const img = new Image();
+      img.src = url;
+      SpriteCache[url] = img;
+   }
+   return SpriteCache[url];
+};
+
+export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastReportedStaminaRef = useRef<number>(100);
@@ -257,7 +275,7 @@ export default function Game({ nickname, characterSkin, helmet, chestplate, sele
            gameState.current.player.y = me.y;
         } else {
            // We reconnected! Let the server know our actual local position instead of snapping to spawn
-           socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
+           socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, race: propsRef.current.race, playerClass: propsRef.current.playerClass, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
              x: gameState.current.player.x,
              y: gameState.current.player.y,
              vx: gameState.current.player.vx,
@@ -538,10 +556,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel };
-  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -823,7 +841,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         const currentTool = propsRef.current.selectedBlock;
 
         if (state.socket && (player.x !== oldX || player.y !== oldY || currentIsMining !== state.lastSyncProps.isMining || currentTool !== state.lastSyncProps.tool || Math.random() < 0.05)) {
-           state.socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
+           state.socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, race: propsRef.current.race, playerClass: propsRef.current.playerClass, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
              x: player.x, y: player.y, vx: player.vx, vy: player.vy, facingRight: player.facingRight,
              tool: currentTool, isMining: currentIsMining
            });
@@ -846,7 +864,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
          player.health = player.maxHealth;
          player.stamina = player.maxStamina;
          if (state.socket) {
-           state.socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
+           state.socket.emit('player_update', { name: propsRef.current.nickname, skin: propsRef.current.characterSkin, race: propsRef.current.race, playerClass: propsRef.current.playerClass, helmet: propsRef.current.helmet, chest: propsRef.current.chestplate,
              x: player.x, y: player.y, vx: 0, vy: 0, facingRight: player.facingRight,
              tool: propsRef.current.selectedBlock, isMining: false
            });
@@ -1683,6 +1701,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         facingRight: boolean, 
         skin: string, 
         name: string, 
+        race: string = 'human',
+        pClass: string = 'warrior',
         tool: BlockType | null = null, 
         isMining: boolean = false, 
         isPartyMember: boolean = false, 
@@ -2081,7 +2101,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                 x: item.x + 8,
                 y: item.y - 10,
                 damage: 10,
-                text: '+10 XP',
+                text: '+15 XP',
                 life: 0,
                 maxLife: 40,
                 color: '#4CAF50',
@@ -2287,7 +2307,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            player.isGrappling = false;
       }
       
-      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', selectedBlock, state.miningProgress > 0 || state.interactionCooldown > 150, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, state.interactionCooldown, player.health, player.maxHealth, player.stamina, player.maxStamina, player.isSprinting);
+      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', propsRef.current.race || 'human', propsRef.current.playerClass || 'warrior', selectedBlock, state.miningProgress > 0 || state.interactionCooldown > 150, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, state.interactionCooldown, player.health, player.maxHealth, player.stamina, player.maxStamina, player.isSprinting);
 
       // Draw block highlight outline
       if (inBounds && dist <= MAX_REACH) {

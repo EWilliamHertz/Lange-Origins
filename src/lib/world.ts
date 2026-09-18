@@ -396,6 +396,41 @@ export function generateWorld(roomId: string = 'default'): World {
       if (cx < 0 || cx >= WORLD_WIDTH || cy < 0 || cy >= WORLD_HEIGHT) break;
     }
   }
+
+  // --- Spawn Entities (Monsters) ---
+  for (let x = 10; x < WORLD_WIDTH - 10; x++) {
+    // Surface Spawns
+    if (random() < 0.05) { // 5% chance per column to spawn a surface monster
+      let sy = 0;
+      while(sy < WORLD_HEIGHT && world[x][sy] === BlockType.Air) sy++;
+      if (sy > 0 && sy < WORLD_HEIGHT) {
+         if (world[x][sy] === BlockType.Grass || world[x][sy] === BlockType.Snow || world[x][sy] === BlockType.Sand) {
+            const m = random();
+            if (m < 0.3) world[x][sy - 1] = BlockType.Slime;
+            else if (m < 0.6) world[x][sy - 1] = BlockType.Orc;
+            else if (m < 0.8) world[x][sy - 1] = BlockType.Skeleton;
+            else world[x][sy - 1] = BlockType.Creeper;
+         }
+      }
+    }
+    
+    // Cave Spawns
+    for (let y = 10; y < WORLD_HEIGHT - 10; y++) {
+      if (world[x][y] === BlockType.Air && world[x][y+1] !== BlockType.Air) { // Floor of a cave
+         // ensure it's actually deep
+         let sy = 0;
+         while(sy < WORLD_HEIGHT && world[x][sy] === BlockType.Air) sy++;
+         if (y > sy + 10 && random() < 0.02) {
+            const m = random();
+            if (m < 0.3) world[x][y] = BlockType.Skeleton;
+            else if (m < 0.6) world[x][y] = BlockType.Creeper;
+            else if (m < 0.8) world[x][y] = BlockType.Orc;
+            else world[x][y] = BlockType.Demon;
+         }
+      }
+    }
+  }
+  
 // Generate NPC Building at Spawn Center
   const centerX = Math.floor(WORLD_WIDTH / 2);
   let centerY = 0;
@@ -430,6 +465,7 @@ export function generateWorld(roomId: string = 'default'): World {
   }
   // Add Quest NPC
   world[centerX][centerY - 1] = BlockType.QuestNPC;
+  world[centerX + 1][centerY - 1] = BlockType.GrandExchange;
   world[centerX + 3][centerY - 1] = BlockType.DurelNPC;
   // Spawn Merchant nearby
   world[centerX - 3][centerY - 1] = BlockType.Merchant;
