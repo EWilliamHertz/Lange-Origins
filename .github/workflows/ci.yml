@@ -33,5 +33,19 @@ jobs:
           distribution: temurin
           java-version: 17
       - run: npm ci
+      - name: Download Firestore emulator
+        run: npx firebase setup:emulators:firestore
       - name: Run lifecycle tests against Auth + Firestore emulators
-        run: npx --yes firebase-tools emulators:exec --only auth,firestore "npx vitest run tests/lifecycle.emulator.test.ts"
+        run: |
+          set -o pipefail
+          npx firebase emulators:exec --only auth,firestore --project demo-lange-origins \
+            "npx vitest run tests/lifecycle.emulator.test.ts --reporter=verbose" \
+            2>&1 | tee emulator-run.log
+        env:
+          FORCE_COLOR: "0"
+      - name: Upload emulator log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-run-log
+          path: emulator-run.log
