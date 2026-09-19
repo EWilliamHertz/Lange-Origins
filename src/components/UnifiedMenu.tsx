@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { 
   User, Package, Hammer, BookOpen, Sparkles, Settings, 
   X, Volume2, VolumeX, LogOut, ArrowRight, Check, 
-  Trash2, Shield, Swords, Heart, Zap, Award, Search, Plus, Wrench
+  Trash2, Shield, Swords, Heart, Zap, Award, Search, Plus, Wrench, GripVertical, Lock, Keyboard
 } from 'lucide-react';
 import { BlockType, BlockNames, BlockColors } from '../lib/constants';
 import { RECIPES } from '../lib/crafting';
-import { MMO_ABILITIES } from '../App';
+import { abilitiesForClass, findAbilityOnBars, isAbilityUnlocked, keyForAbility } from '../lib/abilities';
 import { Sounds } from '../lib/audio';
 import { getItemMetadata, RARITY_STYLES, ItemTooltip } from './ItemTooltip';
 
@@ -30,8 +30,12 @@ interface UnifiedMenuProps {
   craftingResult: { result: BlockType; count: number } | null;
   cursorItem?: any;
   onSlotClick: (type: any, index: number, isRightClick?: boolean) => void;
-  onSlotHover?: (slot: any, e: React.MouseEvent, type?: string, index?: number) => void;
+  /** `index` is a slot position, or the ability id when `type` is 'ability' (skill-tree card). */
+  onSlotHover?: (slot: any, e: React.MouseEvent, type?: string, index?: number | string) => void;
   onSlotLeave?: () => void;
+  /** Skill tree → action bars: "Add to Bar" button and drag-and-drop. */
+  onAddAbilityToBar?: (abilityId: string) => void;
+  onAbilityDragStart?: (e: React.DragEvent, abilityId: string) => void;
   onClearCrafting: () => void;
   onQuickSort: () => void;
   onQuickStack: () => void;
@@ -87,6 +91,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   onSlotClick,
   onSlotHover,
   onSlotLeave,
+  onAddAbilityToBar,
+  onAbilityDragStart,
   onClearCrafting,
   onQuickSort,
   onQuickStack,
@@ -1001,48 +1007,82 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
               </div>
 
-              {/* Class MMO Abilities */}
+              {/* Class MMO Abilities — drag onto a bar, or "Add to Bar"; hover + press a key to bind */}
               <div className="bg-neutral-900/60 p-5 rounded-xl border border-amber-500/20 flex flex-col gap-4">
-                <div className="flex justify-between items-center">
+                <div className="flex flex-wrap justify-between items-center gap-2">
                   <h4 className="text-sm font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
                     <Zap size={16} /> Class Combat Abilities
                   </h4>
                   <span className="text-xs text-neutral-400">Class: {playerClass.toUpperCase()}</span>
                 </div>
+                <p className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="flex items-center gap-1"><GripVertical size={12} className="text-cyan-400" /> Drag an unlocked ability onto the hotbar or a side bar</span>
+                  <span className="flex items-center gap-1"><Keyboard size={12} className="text-amber-400" /> Hover a card and press a key to bind it</span>
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {MMO_ABILITIES.filter(a => a.class === playerClass).map(ability => {
-                    const statReq = ability.class === 'warrior' ? safeSkills.strength : ability.class === 'archer' ? safeSkills.dexterity : safeSkills.intelligence;
-                    const isUnlocked = (statReq || 0) >= ability.req;
-                    const boundKey = Object.entries(keybinds).find(([k, v]) => v === ability.id)?.[0];
+                  {abilitiesForClass(playerClass).map(ability => {
+                    const isUnlocked = isAbilityUnlocked(ability, safeSkills);
+                    const boundKey = keyForAbility(keybinds, ability.id);
+                    const placement = findAbilityOnBars({ hotbar, leftActionBar, rightActionBar }, ability.id);
+                    const placementLabel = placement
+                      ? `${placement.bar === 'hotbar' ? 'Hotbar' : placement.bar === 'leftActionBar' ? 'Left bar' : 'Right bar'} ${placement.index + 1}`
+                      : null;
 
                     return (
                       <div 
                         key={ability.id}
-                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2 ${
+                        data-ability-id={ability.id}
+                        draggable={isUnlocked}
+                        onDragStart={(e) => {
+                          if (!isUnlocked) { e.preventDefault(); return; }
+                          onAbilityDragStart?.(e, ability.id);
+                        }}
+                        onMouseEnter={(e) => onSlotHover?.(null, e, 'ability', ability.id)}
+                        onMouseLeave={() => onSlotLeave?.()}
+                        title={isUnlocked ? 'Drag to an action bar, or hover and press a key to bind' : `Requires ${ability.req} ${ability.class === 'warrior' ? 'Strength' : ability.class === 'archer' ? 'Dexterity' : 'Intelligence'}`}
+                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2 transition-colors ${
                           isUnlocked 
-                            ? 'bg-neutral-950/80 border-cyan-500/40 text-neutral-200 shadow-[0_0_15px_rgba(6,182,212,0.1)]' 
-                            : 'bg-neutral-950/40 border-neutral-800/80 text-neutral-500 opacity-60'
+                            ? 'bg-neutral-950/80 border-cyan-500/40 text-neutral-200 shadow-[0_0_15px_rgba(6,182,212,0.1)] cursor-grab active:cursor-grabbing hover:border-cyan-400/70' 
+                            : 'bg-neutral-950/40 border-neutral-800/80 text-neutral-500 opacity-60 cursor-not-allowed'
                         }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-700 flex items-center justify-center">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-8 h-8 shrink-0 rounded-lg bg-neutral-900 border border-neutral-700 flex items-center justify-center">
                               {ability.icon}
                             </div>
-                            <div>
-                              <h6 className="text-xs font-bold text-white">{ability.name}</h6>
-                              <span className="text-[10px] text-neutral-400">Req: Lv {ability.req}</span>
+                            <div className="min-w-0">
+                              <h6 className="text-xs font-bold text-white truncate">{ability.name}</h6>
+                              <span className="text-[10px] text-neutral-400">
+                                {ability.req > 0 ? `Req ${ability.req}` : 'Starter'} · {ability.cost > 0 ? `${ability.cost} MP` : 'Free'} · {ability.cd}s CD
+                              </span>
                             </div>
                           </div>
-                          {boundKey && (
-                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-amber-500 text-neutral-950 rounded">
-                              {boundKey.toUpperCase()}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {!isUnlocked && <Lock size={12} className="text-neutral-500" />}
+                            {boundKey && (
+                              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-amber-500 text-neutral-950 rounded" title={`Bound to ${boundKey.toUpperCase()}`}>
+                                {boundKey.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <p className="text-[11px] text-neutral-400 italic">
                           {ability.desc}
                         </p>
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                          <span className={`text-[10px] font-bold ${placementLabel ? 'text-emerald-400' : 'text-neutral-500'}`}>
+                            {placementLabel ? `On bar: ${placementLabel}` : 'Not on a bar'}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={!isUnlocked || !!placement}
+                            onClick={(e) => { e.stopPropagation(); onAddAbilityToBar?.(ability.id); }}
+                            className="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-cyan-600 text-white font-bold text-[10px] rounded-md transition-colors flex items-center gap-1"
+                          >
+                            <Plus size={11} /> {placement ? 'On Bar' : 'Add to Bar'}
+                          </button>
+                        </div>
                       </div>
                     );
                   })}

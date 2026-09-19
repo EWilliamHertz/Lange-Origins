@@ -23,7 +23,9 @@ economy — with server-authoritative rules so that progress means something.
   snipe, trap, multishot, poison arrow, ground slam, battle shout, arcane blast, teleport),
   projectiles, unarmed actions, ammo, armor, and PvE mobs and bosses.
 - **Action bars** — a 10-slot hotbar plus optional left/right action bars, with drag-and-drop
-  from inventory/backpack, re-binding of abilities to keys, and number-key slot swaps.
+  from inventory/backpack, number-key slot swaps, and class abilities that can be dragged or
+  "Add to Bar"-ed from the skill tree, keybound (reserved keys refused) and cast through one
+  client pipeline; placed abilities persist with the character (`src/lib/abilities.tsx`).
 - **World & crafting** — procedural biomes, mining/woodcutting, crafting and smelting, weapons,
   armor, grappling hook, chests and loot.
 - **Multiplayer** — server browser, socket.io rooms backed by a bitECS entity system, chat,
@@ -71,7 +73,9 @@ computed) and the visible save-state feedback in the HUD.
 
 - **Unified ability progression UI.** Present skill-point upgrades and stat-unlocked class
   abilities together with rank, mana cost, cooldown, requirement and keybind label —
-  extending the existing skill-tree tab.
+  extending the existing skill-tree tab. *Class ability cards already show cost, cooldown,
+  requirement, bar position and binding, and place/bind from the tree; the skill-point rank
+  cards on the character tab still need folding in.*
 - **Talent specializations.** Two paths per class (e.g. warrior → berserker / guardian) with
   capstone abilities; server-side talent effects.
 - **Gear tiers & set bonuses.** Extend the armor system (cloth/leather/iron → tiered sets)
@@ -126,7 +130,7 @@ observability (frame time, socket traffic, error rates) in place.
 | 1 | ✅ Token-verified socket auth + server-side combat validation | 1 |
 | 2 | ✅ Versioned character schema + migrations (v2, revision-guarded saves) | 1 |
 | 3 | ✅ Emulator-based lifecycle tests in CI | 1 |
-| 4 | Unified ability progression view in the skills tab | 2 |
+| 4 | Unified ability progression view in the skills tab (placement, keybinds and labels ✅; ranks pending) | 2 |
 | 5 | Loadout presets for the three action bars | 2 |
 | 6 | Party system groundwork (invites, shared XP) | 3 |
 

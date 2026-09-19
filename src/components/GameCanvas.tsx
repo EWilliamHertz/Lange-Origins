@@ -1,6 +1,7 @@
 import { isUnarmed } from '../lib/profile';
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { GLOBAL_COOLDOWN_MS, canCastAbility, castRejectionText, getAbility } from '../lib/abilities';
 import { auth } from '../lib/firebase';
 import { BlockType, BlockColors, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, BlockHardness, SolidBlocks } from '../lib/constants';
 const ATTACK_RANGE = 64;
@@ -60,6 +61,8 @@ interface GameProps {
   onStaminaChange?: (stamina: number) => void;
   duelingOpponents?: string[];
   keybinds?: Record<string, string>;
+  /** Mana costs only apply once the character has unlocked magic (the mana bar is hidden before). */
+  magicUnlocked?: boolean;
   onDepthChange?: (depth: number) => void;
   socketRef?: React.MutableRefObject<Socket | null>;
 }
@@ -76,7 +79,7 @@ interface Particle {
 }
 
 
-export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel }: GameProps) {
+export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastReportedStaminaRef = useRef<number>(100);
@@ -570,10 +573,10 @@ socket.on('chat_message', (msg: {id: string, name?: string, message: string}) =>
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel };
-  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -591,6 +594,50 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    /**
+     * Unified cast pipeline. Every way of triggering an ability — a custom
+     * keybind handled below, a hotbar number key or a bar click (both arrive
+     * as `cast_ability` window events from App) — ends up here, so cooldowns,
+     * targeting, mana and the socket payload are enforced in exactly one place.
+     * The server re-validates ids and cooldowns; this is only client feedback.
+     */
+    const castAbility = (abilityId: unknown): boolean => {
+      const state = gameState.current;
+      const def = getAbility(abilityId);
+      if (!def || !state.socket) return false;
+      const usesMana = propsRef.current.magicUnlocked === true;
+      const mana = propsRef.current.mana ?? 0;
+      const verdict = canCastAbility(def, {
+        globalCooldownMs: state.globalCooldown,
+        abilityCooldownMs: state.abilityCooldowns[def.id] || 0,
+        hasTarget: !!state.targetId,
+        mana: usesMana ? mana : Number.POSITIVE_INFINITY,
+      });
+      if (verdict.ok === false) {
+        const text = castRejectionText(verdict.reason);
+        if (text) {
+          state.damageTexts.push({ id: Math.random().toString(), text, x: state.player.x, y: state.player.y - 15, life: 1, maxLife: 40, color: verdict.reason === 'no_mana' ? '#4444FF' : '#FF4444', size: 14 });
+        }
+        return false;
+      }
+      state.socket.emit('use_ability', {
+        ability: def.id,
+        targetId: state.targetId || undefined,
+        targetType: state.targetType || undefined,
+        facingRight: state.player.facingRight,
+      });
+      state.globalCooldown = GLOBAL_COOLDOWN_MS;
+      state.abilityCooldowns[def.id] = def.cd * 1000;
+      if (usesMana && def.cost > 0 && propsRef.current.onManaChange) {
+        propsRef.current.onManaChange(Math.max(0, mana - def.cost));
+      }
+      return true;
+    };
+
+    const handleCastEvent = (e: Event) => {
+      castAbility((e as CustomEvent).detail?.abilityId);
+    };
+
     // Input handlers
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === 'INPUT') return;
@@ -600,22 +647,14 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         gameState.current.keys['shift'] = true;
       }
       
-      // MMO Abilities
-      if ((key === 'z' || key === 'x' || key === 'c') && gameState.current.globalCooldown <= 0 && gameState.current.targetId && gameState.current.socket) {
-          const state = gameState.current;
-          let cost = 0;
-          let cd = 0;
-          let abilityName = '';
-          if (key === 'z' && (state.abilityCooldowns['slash'] || 0) <= 0) { cost = 0; cd = 3000; abilityName = 'slash'; }
-          else if (key === 'x' && (state.abilityCooldowns['fireball'] || 0) <= 0) { cost = 10; cd = 5000; abilityName = 'fireball'; }
-          else if (key === 'c' && (state.abilityCooldowns['heal'] || 0) <= 0) { cost = 20; cd = 10000; abilityName = 'heal'; }
-          
-          if (abilityName !== '') {
-              // Note: actual cost logic would hook into props, but for now just send event
-              state.socket.emit('use_ability', { ability: abilityName, targetId: state.targetId, targetType: state.targetType });
-              state.globalCooldown = 1500;
-              state.abilityCooldowns[abilityName] = cd;
-          }
+      // Custom keybinds (bound in the skill tree / by hovering a bar slot).
+      // While the menu is open, key presses are for binding, not casting.
+      if (!propsRef.current.isInventoryOpen && !e.repeat) {
+        const bound = propsRef.current.keybinds?.[key];
+        if (bound) {
+          castAbility(bound);
+          return;
+        }
       }
       
       if (key === 'e') {
@@ -729,6 +768,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
     };
 
     window.addEventListener('toss_item', handleToss);
+    window.addEventListener('cast_ability', handleCastEvent);
 
     canvas.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
@@ -2556,6 +2596,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('toss_item', handleToss);
+      window.removeEventListener('cast_ability', handleCastEvent);
       canvas.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mouseup', handleMouseUp);
       canvas.removeEventListener('mousemove', handleMouseMove);
