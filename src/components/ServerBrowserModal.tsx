@@ -19,7 +19,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Alpha (Main World)',
     category: 'Standard',
     description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
-    players: 1,
+    players: 0,
     maxPlayers: 50,
     ping: 25,
     featured: true
@@ -29,7 +29,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Beta (Wilderness)',
     category: 'Wilderness',
     description: 'Expansive wild frontier with dense forests, mountain peaks, and natural resource veins.',
-    players: 1,
+    players: 0,
     maxPlayers: 50,
     ping: 28,
     featured: true
@@ -39,7 +39,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Gamma (Frontier)',
     category: 'Frontier',
     description: 'A serene expanse with plentiful trees at spawn and undisturbed underground caverns.',
-    players: 1,
+    players: 0,
     maxPlayers: 50,
     ping: 30,
     featured: false

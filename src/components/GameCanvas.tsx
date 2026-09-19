@@ -82,7 +82,7 @@ interface Particle {
 }
 
 
-export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked }: GameProps) {
+export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastReportedStaminaRef = useRef<number>(100);
@@ -247,6 +247,7 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     }
 
     socket.on('connect', () => {
+      const p = gameState.current.player;
       socket.emit('join_room', { 
         roomId, 
         nickname: propsRef.current.nickname, 
@@ -254,7 +255,9 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
         profileId: propsRef.current.profileId,
         race: propsRef.current.race,
         playerClass: propsRef.current.playerClass,
-        skin: propsRef.current.characterSkin
+        skin: propsRef.current.characterSkin,
+        x: p.x !== 0 ? p.x : undefined,
+        y: p.y !== 0 ? p.y : undefined
       });
     });
 
@@ -400,9 +403,11 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     });
     
     socket.on('party_invite', (data: { senderId: string, senderName: string }) => {
-      if (propsRef.current.onPartyInvite) {
-        propsRef.current.onPartyInvite(data.senderId, data.senderName);
-      }
+      propsRef.current.onPartyInvite?.(data.senderId, data.senderName);
+    });
+
+    socket.on('party_update', (party: any) => {
+      propsRef.current.onPartyUpdate?.(party);
     });
 
     socket.on('boss_telegraph', (data: { bossId: string, type: string, x: number, y: number, radius: number, durationMs: number }) => {
@@ -615,10 +620,10 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked };
-  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -1389,8 +1394,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           const isHoe = selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe;
           
           const hardness = BlockHardness[currentBlock] || 1;
-          const isStoneType = hardness >= 2;
-          const isWoodType = currentBlock === BlockType.Wood || currentBlock === BlockType.Leaves || currentBlock === BlockType.Door;
+          const isWoodType = currentBlock === BlockType.Wood || currentBlock === BlockType.Leaves || currentBlock === BlockType.Door || currentBlock === BlockType.Planks || currentBlock === BlockType.Chest || currentBlock === BlockType.Platform;
+          const isStoneType = hardness >= 2 && !isWoodType;
           const isDirtType = currentBlock === BlockType.Dirt || currentBlock === BlockType.Grass || currentBlock === BlockType.Sand;
           
           if (isPickaxe) {
@@ -1407,7 +1412,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
               canMine = true;
               toolMultiplier = 6;
           } else if (isFist) {
-              if (!isStoneType) { // Fist cannot mine stone/ores
+              if (!isStoneType || isWoodType) { // Fist cannot mine stone/ores, but can mine wood
                   canMine = true;
                   toolMultiplier = 1;
               }

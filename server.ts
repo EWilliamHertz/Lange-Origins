@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { Server as SocketIOServer } from 'socket.io';
 import http from 'http';
@@ -262,12 +263,29 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
   };
 
   async function loadRoomPersistentState(roomId: string, room: ServerRoom) {
-    if (!db) return;
-    try {
-      const doc = await db.collection('rooms').doc(roomId).get();
-      if (doc.exists) {
-        const data = doc.data();
-        if (data?.modifiedBlocks) {
+    let data: any = null;
+    if (db) {
+      try {
+        const doc = await db.collection('rooms').doc(roomId).get();
+        if (doc.exists) data = doc.data();
+      } catch (err) {
+        console.warn(`Could not load persistent state from DB for ${roomId}:`, err);
+      }
+    }
+    
+    // Fallback to local file if DB doesn't have it or isn't connected
+    if (!data) {
+      try {
+         if (fs.existsSync(`./.room_${roomId}.json`)) {
+             data = JSON.parse(fs.readFileSync(`./.room_${roomId}.json`, 'utf-8'));
+         }
+      } catch (err) {
+         // ignore
+      }
+    }
+
+    if (data) {
+        if (data.modifiedBlocks) {
           try {
             const modMap = typeof data.modifiedBlocks === 'string' ? JSON.parse(data.modifiedBlocks) : data.modifiedBlocks;
             room.modifiedBlocks = modMap;
@@ -281,15 +299,12 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
             }
           } catch (e) {}
         }
-        if (data?.protectedBlocks) {
+        if (data.protectedBlocks) {
           try {
             const protMap = typeof data.protectedBlocks === 'string' ? JSON.parse(data.protectedBlocks) : data.protectedBlocks;
             room.protectedBlocks = protMap;
           } catch (e) {}
         }
-      }
-    } catch (err) {
-      console.warn(`Could not load persistent state for ${roomId}:`, err);
     }
   }
 
@@ -306,15 +321,22 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       if (room.dirty) {
         room.dirty = false;
         room.lastSavedAt = now;
+        
+        const saveData = {
+          roomId,
+          modifiedBlocks: JSON.stringify(room.modifiedBlocks || {}),
+          protectedBlocks: JSON.stringify(room.protectedBlocks || {}),
+          timeOfDay: room.timeOfDay || 0,
+          updatedAt: now
+        };
+
+        try {
+           fs.writeFileSync(`./.room_${roomId}.json`, JSON.stringify(saveData));
+        } catch(e) {}
+
         if (db) {
           try {
-            await db.collection('rooms').doc(roomId).set({
-              roomId,
-              modifiedBlocks: JSON.stringify(room.modifiedBlocks || {}),
-              protectedBlocks: JSON.stringify(room.protectedBlocks || {}),
-              timeOfDay: room.timeOfDay || 0,
-              updatedAt: now
-            }, { merge: true });
+            await db.collection('rooms').doc(roomId).set(saveData, { merge: true });
           } catch (err) {
             // Silently handle transient db errors to avoid log clutter
           }
@@ -829,8 +851,8 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
 
       // Calculate guaranteed safe ground spawn (avoids floating roofs, sky, void)
       const safeSpawn = getSafeSpawnPoint(activeRooms[roomId].world);
-      const startX = safeSpawn.x;
-      const startY = safeSpawn.y;
+      const startX = typeof data !== 'string' && (data as any).x !== undefined ? (data as any).x : safeSpawn.x;
+      const startY = typeof data !== 'string' && (data as any).y !== undefined ? (data as any).y : safeSpawn.y;
 
       // Add player to room
       activeRooms[roomId].players[socket.id] = { 

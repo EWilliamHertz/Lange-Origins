@@ -964,7 +964,7 @@ export default function App() {
         id: 'party_' + (socketRef.current?.id || 'me'),
         leaderId: socketRef.current?.id || 'me',
         members: [
-          { id: socketRef.current?.id || 'me', name: nickname, isLeader: true, hp: health, maxHp: 100, level, playerClass }
+          { id: socketRef.current?.id || 'me', name: nickname, isLeader: true, hp: health, maxHp: 20 + (skills.strength || 0) * 10, level, playerClass }
         ]
       });
     }
@@ -1000,7 +1000,7 @@ export default function App() {
       socketRef.current.emit('sync_stats', {
         skills,
         hp: health,
-        maxHp: 100,
+        maxHp: 20 + (skills.strength || 0) * 10,
         mana,
         maxMana: 100 + (skills.intelligence || 0) * 20,
         level
@@ -2443,11 +2443,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                  if (np.rightActionBar) setRightActionBar(JSON.parse(np.rightActionBar));
               }
           }}
-          onTradeCancelled={(reason) => {
-              setActiveTrade(null);
-              // Maybe add a toast/chat notification for the reason?
-          }}
+          onTradeCancelled={(tradeId) => { if (activeTrade?.tradeId === tradeId) setActiveTrade(null); }}
           onPartyInvite={(senderId, senderName) => addNotification('party', senderId, senderName)}
+          onPartyUpdate={(updatedParty) => setParty(updatedParty)}
           onFriendRequest={(senderId, senderName) => addNotification('friend', senderId, senderName)}
 
           onDuelRequest={(senderId, senderName) => addNotification('duel', senderId, senderName)}
@@ -2526,6 +2524,18 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             let blockType = minedBlockType;
             if (minedBlockType === BlockType.CoalOre) blockType = BlockType.Coal;
             if (minedBlockType === BlockType.DiamondOre) blockType = BlockType.Diamond;
+            
+            // Random chance for leaves to drop tree seed
+            if (minedBlockType === BlockType.Leaves) {
+               if (Math.random() < 0.25) {
+                   blockType = 206; // TreeSeed
+               } else {
+                   // Drop nothing for most leaves
+                   Sounds.mineBlock();
+                   return;
+               }
+            }
+            
             Sounds.mineBlock();
             
             // Add Woodcutting XP if applicable
@@ -3626,7 +3636,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                            leaderId: n.senderId,
                            members: [
                              { id: n.senderId, name: n.senderName || 'Leader', isLeader: true, hp: 100, maxHp: 100, level: 5, playerClass: 'warrior' },
-                             { id: socketRef.current?.id || 'me', name: nickname, isLeader: false, hp: health, maxHp: 100, level, playerClass }
+                             { id: socketRef.current?.id || 'me', name: nickname, isLeader: false, hp: health, maxHp: 20 + (skills.strength || 0) * 10, level, playerClass }
                            ]
                          });
                          if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your party!', channel: 'party', room: serverName });
