@@ -14,6 +14,7 @@
  */
 
 import { BlockType } from './constants';
+import type { EnchantmentData, SocketedGems } from './enchanting';
 
 /** Bumped whenever the stored document shape changes in a breaking way. */
 export const CHARACTER_SCHEMA_VERSION = 2;
@@ -24,6 +25,8 @@ export interface InventorySlotData {
   durability?: number;
   isAbility?: boolean;
   abilityId?: string;
+  enchantment?: EnchantmentData;
+  sockets?: SocketedGems;
 }
 
 /**
@@ -164,6 +167,27 @@ export function sanitizeSlot(raw: unknown): Slot {
   const slot: InventorySlotData = { type, count: clampInt(raw.count, 1, 1, MAX_STACK) };
   if (typeof raw.durability === 'number' && Number.isFinite(raw.durability)) {
     slot.durability = Math.max(0, Math.min(1000, Math.floor(raw.durability)));
+  }
+  if (isPlainObject(raw.enchantment)) {
+    const rawEnch = raw.enchantment;
+    slot.enchantment = {
+      prefix: typeof rawEnch.prefix === 'string' ? (rawEnch.prefix as any) : undefined,
+      suffix: typeof rawEnch.suffix === 'string' ? (rawEnch.suffix as any) : undefined,
+      level: clampInt(rawEnch.level, 1, 1, 10),
+      bonusDamage: typeof rawEnch.bonusDamage === 'number' ? rawEnch.bonusDamage : undefined,
+      bonusDefense: typeof rawEnch.bonusDefense === 'number' ? rawEnch.bonusDefense : undefined,
+      bonusSpeed: typeof rawEnch.bonusSpeed === 'number' ? rawEnch.bonusSpeed : undefined,
+      lifesteal: typeof rawEnch.lifesteal === 'number' ? rawEnch.lifesteal : undefined,
+      burnDot: typeof rawEnch.burnDot === 'number' ? rawEnch.burnDot : undefined,
+      glowColor: typeof rawEnch.glowColor === 'string' ? rawEnch.glowColor : undefined,
+    };
+  }
+  if (isPlainObject(raw.sockets)) {
+    const rawSockets = raw.sockets;
+    slot.sockets = {
+      slot1: typeof rawSockets.slot1 === 'string' ? (rawSockets.slot1 as any) : null,
+      slot2: typeof rawSockets.slot2 === 'string' ? (rawSockets.slot2 as any) : null,
+    };
   }
   return slot;
 }

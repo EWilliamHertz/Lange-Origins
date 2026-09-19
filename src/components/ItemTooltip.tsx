@@ -1,6 +1,8 @@
 import React from 'react';
 import { BlockType, BlockNames } from '../lib/constants';
-import { Shield, Swords, Pickaxe, Sparkles, Coins, Zap, Heart, Wrench } from 'lucide-react';
+import { Shield, Swords, Pickaxe, Sparkles, Coins, Zap, Heart, Wrench, Layers, Gem } from 'lucide-react';
+import { getSetForPiece } from '../lib/armorSets';
+import { PREFIXES, GEMS, type EnchantmentData, type SocketedGems } from '../lib/enchanting';
 
 export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
 
@@ -329,7 +331,13 @@ export function getItemMetadata(type: BlockType, currentDurability?: number): It
 }
 
 interface ItemTooltipProps {
-  slot: { type: BlockType; count: number; durability?: number } | BlockType | null;
+  slot: {
+    type: BlockType;
+    count: number;
+    durability?: number;
+    enchantment?: EnchantmentData;
+    sockets?: SocketedGems;
+  } | BlockType | null;
   x: number;
   y: number;
   equippedHelmet?: BlockType | null;
@@ -352,28 +360,35 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
 
   const currentDur = typeof slot === 'object' ? slot.durability : undefined;
   const count = typeof slot === 'object' ? slot.count : 1;
+  const enchantment = typeof slot === 'object' ? slot.enchantment : undefined;
+  const sockets = typeof slot === 'object' ? slot.sockets : undefined;
   const info = getItemMetadata(blockType, currentDur);
   const rarityConfig = RARITY_STYLES[info.rarity];
 
   // Comparisons
   let attackComparison: number | null = null;
+  let equippedWeaponName: string | null = null;
   if (info.attack !== undefined && activeWeapon && activeWeapon !== blockType) {
     const equippedInfo = getItemMetadata(activeWeapon);
+    equippedWeaponName = equippedInfo.name;
     if (equippedInfo.attack !== undefined) {
       attackComparison = info.attack - equippedInfo.attack;
     }
   }
 
   let defenseComparison: number | null = null;
+  let equippedArmorName: string | null = null;
   if (info.defense !== undefined) {
     const isHelmet = blockType === BlockType.IronHelmet || blockType === BlockType.GoldHelmet || blockType === BlockType.DiamondHelmet;
     const isChestplate = blockType === BlockType.IronChestplate || blockType === BlockType.GoldChestplate || blockType === BlockType.DiamondChestplate;
     
     if (isHelmet && equippedHelmet && equippedHelmet !== blockType) {
       const eq = getItemMetadata(equippedHelmet);
+      equippedArmorName = eq.name;
       if (eq.defense !== undefined) defenseComparison = info.defense - eq.defense;
     } else if (isChestplate && equippedChestplate && equippedChestplate !== blockType) {
       const eq = getItemMetadata(equippedChestplate);
+      equippedArmorName = eq.name;
       if (eq.defense !== undefined) defenseComparison = info.defense - eq.defense;
     }
   }
@@ -406,9 +421,70 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
             <span className="text-[10px] text-neutral-400 tracking-wide">
               {info.category}
             </span>
+            {enchantment && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                +{enchantment.level}
+              </span>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Enchantment Details Banner */}
+      {enchantment && (
+        <div className="rounded-lg p-2 bg-gradient-to-r from-amber-950/40 via-purple-950/40 to-neutral-900 border border-amber-500/40 text-[11px] flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <span className="font-bold flex items-center gap-1 text-amber-300">
+              <Sparkles size={12} className="text-amber-400" />
+              {enchantment.prefix || 'Enchanted'} {enchantment.suffix || ''} (+{enchantment.level})
+            </span>
+            <span className="text-[10px] uppercase font-mono px-1 bg-amber-500/20 text-amber-200 rounded">
+              Tier {enchantment.level}
+            </span>
+          </div>
+          {enchantment.prefix && PREFIXES[enchantment.prefix] && (
+            <p className="text-[10px] text-neutral-300 italic">
+              {PREFIXES[enchantment.prefix].description}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2 text-[10px] font-mono text-amber-200 mt-0.5">
+            {enchantment.bonusDamage && <span>+{enchantment.bonusDamage} Atk</span>}
+            {enchantment.bonusDefense && <span>+{enchantment.bonusDefense} Def</span>}
+            {enchantment.burnDot && <span className="text-orange-300">🔥 Burn DoT</span>}
+            {enchantment.lifesteal && <span className="text-purple-300">🩸 Lifesteal</span>}
+            {enchantment.bonusSpeed && <span className="text-sky-300">⚡ +15% Speed</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Socketed Gems Section */}
+      {(sockets?.slot1 || sockets?.slot2 || blockType === BlockType.DiamondSword || blockType === BlockType.DiamondChestplate || blockType === BlockType.GoldChestplate) && (
+        <div className="bg-neutral-900/70 p-2 rounded-lg border border-white/10 text-[11px] flex flex-col gap-1.5">
+          <div className="flex items-center justify-between text-neutral-400 text-[10px] font-bold uppercase tracking-wider">
+            <span className="flex items-center gap-1"><Gem size={11} className="text-purple-400" /> Gem Sockets</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {[1, 2].map((slotIdx) => {
+              const gemKey = slotIdx === 1 ? sockets?.slot1 : sockets?.slot2;
+              const gem = gemKey ? GEMS[gemKey] : null;
+              return (
+                <div
+                  key={slotIdx}
+                  className={`p-1.5 rounded border text-[10px] flex items-center gap-1.5 ${
+                    gem ? gem.iconBg : 'bg-neutral-950/60 border-dashed border-neutral-700 text-neutral-500'
+                  }`}
+                >
+                  <Gem size={11} className={gem ? 'animate-pulse' : 'text-neutral-600'} />
+                  <div className="flex flex-col overflow-hidden">
+                    <span className="font-bold truncate">{gem ? gem.name : `Empty Slot ${slotIdx}`}</span>
+                    {gem && <span className="text-[9px] opacity-80 truncate">{gem.description}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Stats Section */}
       {(info.attack !== undefined || info.defense !== undefined || info.miningPower !== undefined) && (
@@ -481,6 +557,54 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
           </div>
         </div>
       )}
+
+      {/* Quick-Equip Comparison Badge */}
+      {(attackComparison !== null || defenseComparison !== null) && (
+        <div className="bg-neutral-900/80 p-2.5 rounded-lg border border-amber-500/40 flex flex-col gap-1.5 text-[11px] shadow-lg">
+          <div className="flex items-center justify-between text-amber-400 font-bold">
+            <span className="flex items-center gap-1"><Zap size={13} className="text-amber-400" /> Comparison vs. Equipped</span>
+            <span className="text-[10px] text-neutral-400 font-normal truncate max-w-[110px]">
+              {equippedArmorName || equippedWeaponName || 'Equipped'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between bg-black/40 p-1.5 rounded border border-white/5 font-mono">
+            {attackComparison !== null && (
+              <span className={`font-bold text-xs ${attackComparison >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                ATK: {attackComparison >= 0 ? `+${attackComparison}` : attackComparison} Power
+              </span>
+            )}
+            {defenseComparison !== null && (
+              <span className={`font-bold text-xs ${defenseComparison >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                DEF: {defenseComparison >= 0 ? `+${defenseComparison}` : defenseComparison} Armor
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Armor Set Bonus Preview */}
+      {(() => {
+        const armorSet = getSetForPiece(blockType);
+        if (!armorSet) return null;
+        const matchingPiecesEquipped = [equippedHelmet, equippedChestplate].filter(
+          (piece) => piece && armorSet.items.includes(piece)
+        ).length;
+        return (
+          <div className="bg-neutral-900/70 p-2 rounded-lg border border-cyan-500/30 flex flex-col gap-1 text-[11px]">
+            <div className="flex items-center justify-between text-cyan-300 font-bold">
+              <span className="flex items-center gap-1"><Layers size={12} /> Set: {armorSet.name}</span>
+              <span className="font-mono text-[10px] text-cyan-200">({matchingPiecesEquipped}/{armorSet.items.length})</span>
+            </div>
+            {armorSet.bonuses.map((b) => (
+              <div key={b.id} className="text-[10px] text-neutral-300">
+                <span className={matchingPiecesEquipped >= b.requiredPieces ? 'text-emerald-400 font-bold' : 'text-neutral-500'}>
+                  ({b.requiredPieces} Pc) {b.perks.join(', ')}
+                </span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Description */}
       <p className="text-[11px] leading-relaxed text-neutral-400 italic">

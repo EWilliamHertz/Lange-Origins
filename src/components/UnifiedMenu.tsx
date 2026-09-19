@@ -2,15 +2,20 @@ import React, { useState } from 'react';
 import { 
   User, Package, Hammer, BookOpen, Sparkles, Settings, 
   X, Volume2, VolumeX, LogOut, ArrowRight, Check, 
-  Trash2, Shield, Swords, Heart, Zap, Award, Search, Plus, Wrench, GripVertical, Lock, Keyboard
+  Trash2, Shield, Swords, Heart, Zap, Award, Search, Plus, Wrench, GripVertical, Lock, Keyboard,
+  Layers, Flame, Star, Compass, LayoutTemplate, Users, Crown, CheckCircle2, UserPlus
 } from 'lucide-react';
 import { BlockType, BlockNames, BlockColors } from '../lib/constants';
 import { RECIPES } from '../lib/crafting';
 import { abilitiesForClass, findAbilityOnBars, isAbilityUnlocked, keyForAbility } from '../lib/abilities';
+import { getTalentTreeForClass, getTalentRank, hasCapstone, getSelectedSpec } from '../lib/talents';
+import { getArmorSetInfo, ARMOR_SETS } from '../lib/armorSets';
 import { Sounds } from '../lib/audio';
 import { getItemMetadata, RARITY_STYLES, ItemTooltip } from './ItemTooltip';
+import { EnchantingStationView } from './EnchantingStationView';
+import { EnchantmentPrefix, GemType } from '../lib/enchanting';
 
-export type UnifiedMenuTab = 'character' | 'inventory' | 'crafting' | 'quests' | 'skills' | 'settings';
+export type UnifiedMenuTab = 'character' | 'inventory' | 'crafting' | 'enchanting' | 'quests' | 'skills' | 'social' | 'settings';
 
 interface UnifiedMenuProps {
   isOpen: boolean;
@@ -39,6 +44,25 @@ interface UnifiedMenuProps {
   onClearCrafting: () => void;
   onQuickSort: () => void;
   onQuickStack: () => void;
+  onTriggerHUDEdit?: () => void;
+  onApplyEnchant?: (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    prefix: EnchantmentPrefix,
+    newLevel: number,
+    cost: { gold: number; materials: { type: BlockType; count: number }[] }
+  ) => void;
+  onApplyGem?: (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    socketIndex: 1 | 2,
+    gemType: GemType
+  ) => void;
+  onDismantle?: (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    yields: { type: BlockType; count: number }[]
+  ) => void;
   onTossItem?: (item: any) => void;
   renderBlockIcon: (slot: any) => React.ReactNode;
   player: {
@@ -54,9 +78,9 @@ interface UnifiedMenuProps {
     statPoints?: number;
     skillPoints?: number;
     skills?: { strength?: number; dexterity?: number; intelligence?: number };
-    abilities?: { slash?: number; fireball?: number; heal?: number; double_jump?: number };
+    abilities?: Record<string, number>;
     onAllocateSkill?: (stat: 'strength' | 'dexterity' | 'intelligence') => void;
-    onAllocateAbility?: (ability: 'slash' | 'fireball' | 'heal' | 'double_jump') => void;
+    onAllocateAbility?: (ability: string) => void;
   };
   quests: any[];
   keybinds: Record<string, string>;
@@ -69,6 +93,12 @@ interface UnifiedMenuProps {
   playerClass?: string;
   selectedSlotIndex?: number;
   onSelectHotbarSlot?: (idx: number) => void;
+  party?: any;
+  nearbyPlayers?: any[];
+  onInvitePlayer?: (id: string) => void;
+  onInspectPlayer?: (player: any) => void;
+  onLeaveParty?: () => void;
+  onStartReadyCheck?: () => void;
 }
 
 export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
@@ -96,6 +126,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   onClearCrafting,
   onQuickSort,
   onQuickStack,
+  onTriggerHUDEdit,
+  onApplyEnchant,
+  onApplyGem,
+  onDismantle,
   onTossItem,
   renderBlockIcon,
   player,
@@ -109,12 +143,20 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   onLeaveWorld,
   playerClass = 'warrior',
   selectedSlotIndex = 0,
-  onSelectHotbarSlot = () => {}
+  onSelectHotbarSlot = () => {},
+  party,
+  nearbyPlayers = [],
+  onInvitePlayer,
+  onInspectPlayer,
+  onLeaveParty,
+  onStartReadyCheck
 }) => {
   const [recipeFilter, setRecipeFilter] = useState('');
   const [recipeCategory, setRecipeCategory] = useState<'all' | 'weapons' | 'armor' | 'tools' | 'resources'>('all');
   const [questFilter, setQuestFilter] = useState<'all' | 'active' | 'completed'>('all');
   const [hoveredTooltip, setHoveredTooltip] = useState<{ slot: any; x: number; y: number } | null>(null);
+  const [selectedSpecId, setSelectedSpecId] = useState<string | null>(null);
+  const [socialInviteSearch, setSocialInviteSearch] = useState('');
 
   if (!isOpen) return null;
 
@@ -136,11 +178,16 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   const totalAttackPower = baseWeaponDmg + (safeSkills.strength || 0) * 2;
   const totalKills = Object.values(player.kills || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
 
+  const partyMembersList: any[] = Array.isArray(party) 
+    ? party 
+    : (party?.members || [{ id: 'self', name: player.nickname || 'Adventurer', hp: player.health, maxHp: 100, isLeader: true, playerClass }]);
+
   // Tab configurations
   const TABS: { id: UnifiedMenuTab; label: string; icon: React.ReactNode; badge?: string | number }[] = [
     { id: 'character', label: 'Character', icon: <User size={18} /> },
     { id: 'inventory', label: 'Inventory & Bag', icon: <Package size={18} /> },
     { id: 'crafting', label: 'Crafting', icon: <Hammer size={18} /> },
+    { id: 'enchanting', label: 'Mystic Anvil', icon: <Sparkles size={18} /> },
     { 
       id: 'quests', 
       label: 'Quest Log', 
@@ -152,6 +199,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
       label: 'Skill Tree', 
       icon: <Sparkles size={18} />, 
       badge: safeSkillPoints > 0 ? safeSkillPoints : undefined 
+    },
+    { 
+      id: 'social', 
+      label: 'Party & Social', 
+      icon: <Users size={18} />, 
+      badge: partyMembersList.length > 1 ? partyMembersList.length : undefined 
     },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
@@ -238,8 +291,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
       <div className="bg-neutral-950/90 backdrop-blur-2xl border border-amber-500/30 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.9),inset_0_1px_1px_rgba(255,255,255,0.1)] w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden text-neutral-200">
         
         {/* Navigation Header */}
-        <div className="flex items-center justify-between px-6 pt-4 pb-3 border-b border-amber-500/20 bg-gradient-to-r from-neutral-950 via-neutral-900/90 to-neutral-950">
-          <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-amber-500/20 bg-gradient-to-r from-neutral-950 via-neutral-900/95 to-neutral-950 shrink-0 select-none z-20">
+          <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1.5 py-0.5 no-scrollbar">
             {TABS.map((t, idx) => {
               const isActive = activeTab === t.id;
               return (
@@ -250,7 +303,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     Sounds.slotClick();
                     onTabChange(t.id);
                   }}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-150 tracking-wide relative ${
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 tracking-wide whitespace-nowrap shrink-0 relative ${
                     isActive
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
                       : 'text-neutral-400 hover:text-neutral-200 hover:bg-white/5 border border-transparent'
@@ -267,7 +320,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                       {t.badge}
                     </span>
                   )}
-                  <span className="hidden md:inline text-[9px] text-neutral-600 font-mono ml-0.5">
+                  <span className="hidden lg:inline text-[9px] text-neutral-600 font-mono ml-0.5">
                     [{idx + 1}]
                   </span>
                 </button>
@@ -275,9 +328,9 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
             })}
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-neutral-500 hidden sm:inline font-mono">
-              [Tab] Cycle • [Esc] Close
+          <div className="shrink-0 flex items-center gap-2 pl-3 border-l border-neutral-800/80 bg-neutral-950/80 rounded-lg py-1 px-2.5">
+            <span className="text-[10px] text-neutral-400 hidden sm:inline font-mono tracking-tight bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">
+              <span className="text-amber-400 font-bold">Tab</span> Cycle • <span className="text-amber-400 font-bold">Esc</span> Close
             </span>
             <button
               id="unified-menu-close-btn"
@@ -285,10 +338,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                 Sounds.slotClick();
                 onClose();
               }}
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
               title="Close Menu (Esc)"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
           </div>
         </div>
@@ -476,117 +529,50 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
               </div>
 
-              {/* Ability Point Allocation Banner */}
-              <div className="md:col-span-12 min-w-0 bg-gradient-to-r from-blue-950/40 via-neutral-900/80 to-blue-950/40 p-4 rounded-xl border border-blue-500/40 flex items-center justify-between mt-4">
-                <div>
-                  <h4 className="text-sm font-bold text-blue-300 flex items-center gap-1.5">
-                    <Sparkles size={16} /> Available Skill Points: <span className="text-white text-base ml-1 font-mono">{safeSkillPoints}</span>
+              {/* Tiered Armor Set Bonuses Panel */}
+              <div className="md:col-span-12 min-w-0 bg-neutral-900/60 p-5 rounded-xl border border-cyan-500/30 flex flex-col gap-3 mt-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-cyan-300 flex items-center gap-2">
+                    <Layers size={16} className="text-cyan-400" /> Tiered Armor Set Bonuses
                   </h4>
-                  <p className="text-xs text-neutral-400 mt-0.5">
-                    1 level up grants exactly 1 skill point. Allocate points to unlock and upgrade combat abilities.
-                  </p>
-                </div>
-              </div>
-
-              {/* Abilities Cards */}
-              <div className="md:col-span-12 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
-                {/* Slash */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <Swords size={16} className="text-red-400" /> Slash
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeAbilities.slash || 0}
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Basic melee attack. Damage increases by +5 per level.
-                    </p>
-                  </div>
                   <button
-                    disabled={safeSkillPoints <= 0}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('slash'); }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                    onClick={() => onTabChange('skills')}
+                    className="px-3 py-1 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 border border-cyan-500/40 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
                   >
-                    <Plus size={14} /> Upgrade (1 Point)
+                    Manage Skills & Talents <ArrowRight size={12} />
                   </button>
                 </div>
-
-                {/* Fireball */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <Zap size={16} className="text-orange-400" /> Fireball
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeAbilities.fireball || 0}
-                      </span>
+                {(() => {
+                  const activeSets = getArmorSetInfo(equipment);
+                  if (activeSets.length === 0) {
+                    return (
+                      <p className="text-xs text-neutral-400 italic">
+                        Equip matching armor sets (e.g., Iron Helmet + Chestplate) to activate powerful tier set bonuses and defensive perks.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
+                      {activeSets.map(s => (
+                        <div key={s.set.id} className="p-3 bg-neutral-950/80 rounded-lg border border-cyan-500/40 flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                              <Shield size={13} className="text-cyan-400" /> {s.set.name}
+                            </span>
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${s.isComplete ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40' : 'bg-neutral-800 text-neutral-400'}`}>
+                              {s.equippedCount} / {s.totalPieces} Pieces
+                            </span>
+                          </div>
+                          {s.activeBonuses.map(b => (
+                            <div key={b.id} className="text-[11px] text-emerald-300 font-medium">
+                              ★ {b.name}: {b.perks.join(', ')}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
                     </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Shoot a flaming projectile. Damage +8 per level.
-                    </p>
-                  </div>
-                  <button
-                    disabled={safeSkillPoints <= 0}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('fireball'); }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
-                  >
-                    <Plus size={14} /> Upgrade (1 Point)
-                  </button>
-                </div>
-                
-                {/* Heal */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <Heart size={16} className="text-rose-400" /> Heal
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeAbilities.heal || 0}
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Restore health over time. Healing rate +2 per level.
-                    </p>
-                  </div>
-                  <button
-                    disabled={safeSkillPoints <= 0}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('heal'); }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
-                  >
-                    <Plus size={14} /> Upgrade (1 Point)
-                  </button>
-                </div>
-                
-                {/* Double Jump */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <ArrowRight size={16} className="text-blue-400 rotate-[-90deg]" /> Double Jump
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeAbilities.double_jump || 0} / 1
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Unlock the ability to jump a second time in mid-air.
-                    </p>
-                  </div>
-                  <button
-                    disabled={safeSkillPoints <= 0 || (safeAbilities.double_jump || 0) >= 1}
-                    onClick={() => { Sounds.slotClick(); player.onAllocateAbility?.('double_jump'); }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
-                  >
-                    <Plus size={14} /> Unlock (1 Point)
-                  </button>
-                </div>
-
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -616,6 +602,18 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                   >
                     <Package size={13} /> Quick Stack
                   </button>
+                  {onTriggerHUDEdit && (
+                    <button
+                      onClick={() => {
+                        Sounds.slotClick();
+                        onTriggerHUDEdit();
+                      }}
+                      className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-bold rounded-lg border border-amber-500/40 transition-colors flex items-center gap-1.5 shadow-sm"
+                      title="Reposition HUD elements & rotate action bars 90 degrees"
+                    >
+                      <LayoutTemplate size={13} /> Edit HUD & Bars
+                    </button>
+                  )}
                 </div>
 
                 {/* Action Bar Toggles */}
@@ -818,6 +816,18 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
             </div>
           )}
 
+          {/* TAB: MYSTIC ANVIL & ENCHANTING */}
+          {activeTab === 'enchanting' && (
+            <EnchantingStationView
+              hotbar={hotbar}
+              backpack={backpack}
+              renderBlockIcon={renderBlockIcon}
+              onApplyEnchant={onApplyEnchant || (() => {})}
+              onApplyGem={onApplyGem || (() => {})}
+              onDismantle={onDismantle || (() => {})}
+            />
+          )}
+
           {/* TAB 4: QUEST LOG */}
           {activeTab === 'quests' && (
             <div className="flex flex-col gap-4">
@@ -909,115 +919,251 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
           {activeTab === 'skills' && (
             <div className="flex flex-col gap-6">
               
-              {/* Stat Point Allocation Banner */}
-              <div className="bg-gradient-to-r from-amber-950/40 via-neutral-900/80 to-amber-950/40 p-4 rounded-xl border border-amber-500/40 flex items-center justify-between">
+              {/* Stat & Skill Points Allocation Header */}
+              <div className="bg-gradient-to-r from-amber-950/50 via-neutral-900/80 to-blue-950/50 p-4 rounded-xl border border-amber-500/40 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h4 className="text-sm font-bold text-amber-300 flex items-center gap-1.5">
-                    <Sparkles size={16} /> Available Stat Points: <span className="text-white text-base ml-1 font-mono">{safeStatPoints}</span>
+                  <h4 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                    <Sparkles size={16} className="text-amber-400" /> Unified Skill & Progression Tree
                   </h4>
                   <p className="text-xs text-neutral-400 mt-0.5">
-                    1 level up grants exactly 1 stat point. Allocate points to empower your character.
+                    Leveling up grants Stat Points for core attributes and Skill Points for combat abilities and talents.
                   </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="bg-neutral-950/80 px-3 py-1.5 rounded-lg border border-amber-500/30 flex items-center gap-1.5 text-xs">
+                    <span className="text-neutral-400">Stat Points:</span>
+                    <span className="font-mono font-bold text-amber-300 text-sm">{safeStatPoints}</span>
+                  </div>
+                  <div className="bg-neutral-950/80 px-3 py-1.5 rounded-lg border border-blue-500/30 flex items-center gap-1.5 text-xs">
+                    <span className="text-neutral-400">Skill Points:</span>
+                    <span className="font-mono font-bold text-blue-300 text-sm">{safeSkillPoints}</span>
+                  </div>
                 </div>
               </div>
 
               {/* 3 Core Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                
-                {/* Strength */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <Swords size={16} className="text-rose-400" /> Strength
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeSkills.strength || 0}
-                      </span>
+              <div>
+                <h5 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-2 flex items-center gap-1.5">
+                  <Award size={14} /> Core Attributes
+                </h5>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  
+                  {/* Strength */}
+                  <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                          <Swords size={16} className="text-rose-400" /> Strength
+                        </h5>
+                        <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                          Lv {safeSkills.strength || 0}
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-400 leading-relaxed">
+                        Authoritatively scales melee weapon strike power (+2 dmg/lvl).
+                      </p>
                     </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Increases melee weapon damage by +2 per level.
-                    </p>
+                    <button
+                      disabled={safeStatPoints <= 0}
+                      onClick={() => {
+                        Sounds.slotClick();
+                        player.onAllocateSkill?.('strength');
+                      }}
+                      className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                    >
+                      <Plus size={14} /> Allocate (1 Point)
+                    </button>
                   </div>
-                  <button
-                    disabled={safeStatPoints <= 0}
-                    onClick={() => {
-                      Sounds.slotClick();
-                      player.onAllocateSkill?.('strength');
-                    }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
-                  >
-                    <Plus size={14} /> Allocate (1 Point)
-                  </button>
-                </div>
 
-                {/* Dexterity */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <Zap size={16} className="text-emerald-400" /> Dexterity
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeSkills.dexterity || 0} / 10
-                      </span>
+                  {/* Dexterity */}
+                  <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                          <Zap size={16} className="text-emerald-400" /> Dexterity
+                        </h5>
+                        <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                          Lv {safeSkills.dexterity || 0} / 10
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-400 leading-relaxed">
+                        Scales archery projectile speed and boosts sprint stamina (+10/lvl).
+                      </p>
                     </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Increases maximum sprint stamina by +10 per level.
-                    </p>
+                    <button
+                      disabled={safeStatPoints <= 0 || (safeSkills.dexterity || 0) >= 10}
+                      onClick={() => {
+                        Sounds.slotClick();
+                        player.onAllocateSkill?.('dexterity');
+                      }}
+                      className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                    >
+                      <Plus size={14} /> Allocate (1 Point)
+                    </button>
                   </div>
-                  <button
-                    disabled={safeStatPoints <= 0 || (safeSkills.dexterity || 0) >= 10}
-                    onClick={() => {
-                      Sounds.slotClick();
-                      player.onAllocateSkill?.('dexterity');
-                    }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
-                  >
-                    <Plus size={14} /> Allocate (1 Point)
-                  </button>
-                </div>
 
-                {/* Intelligence */}
-                <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
-                        <Sparkles size={16} className="text-cyan-400" /> Intelligence
-                      </h5>
-                      <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
-                        Lv {safeSkills.intelligence || 0}
-                      </span>
+                  {/* Intelligence */}
+                  <div className="bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 flex flex-col justify-between gap-3">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <h5 className="font-bold text-white text-sm flex items-center gap-1.5">
+                          <Sparkles size={16} className="text-cyan-400" /> Intelligence
+                        </h5>
+                        <span className="text-xs font-mono font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-700 text-white">
+                          Lv {safeSkills.intelligence || 0}
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-400 leading-relaxed">
+                        Scales staff spell damage, spell mana efficiency, and max mana pool.
+                      </p>
                     </div>
-                    <p className="text-xs text-neutral-400 leading-relaxed">
-                      Amplifies magic staff spells and boosts maximum mana.
-                    </p>
+                    <button
+                      disabled={safeStatPoints <= 0}
+                      onClick={() => {
+                        Sounds.slotClick();
+                        player.onAllocateSkill?.('intelligence');
+                      }}
+                      className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
+                    >
+                      <Plus size={14} /> Allocate (1 Point)
+                    </button>
                   </div>
-                  <button
-                    disabled={safeStatPoints <= 0}
-                    onClick={() => {
-                      Sounds.slotClick();
-                      player.onAllocateSkill?.('intelligence');
-                    }}
-                    className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-neutral-700"
-                  >
-                    <Plus size={14} /> Allocate (1 Point)
-                  </button>
-                </div>
 
+                </div>
               </div>
 
-              {/* Class MMO Abilities — drag onto a bar, or "Add to Bar"; hover + press a key to bind */}
-              <div className="bg-neutral-900/60 p-5 rounded-xl border border-amber-500/20 flex flex-col gap-4">
+              {/* Talent Specializations */}
+              {(() => {
+                const tree = getTalentTreeForClass(playerClass);
+                const currentSpecId = selectedSpecId || getSelectedSpec(safeAbilities, playerClass);
+                const activeSpec = tree.specs.find(s => s.id === currentSpecId) || tree.specs[0];
+
+                return (
+                  <div className="bg-neutral-900/60 p-5 rounded-xl border border-purple-500/30 flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-bold uppercase tracking-wider text-purple-300 flex items-center gap-2">
+                          <Star size={16} className="text-purple-400" /> Talent Specializations
+                        </h4>
+                        <p className="text-xs text-neutral-400 mt-0.5">
+                          Choose a branching specialization and invest skill points into passive combat perks.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 bg-neutral-950/80 p-1 rounded-xl border border-purple-500/20">
+                        {tree.specs.map(s => {
+                          const isSelected = s.id === activeSpec.id;
+                          return (
+                            <button
+                              key={s.id}
+                              onClick={() => {
+                                Sounds.slotClick();
+                                setSelectedSpecId(s.id);
+                                const specIdx = tree.specs.findIndex(x => x.id === s.id);
+                                player.onAllocateAbility?.(`spec_${tree.playerClass}_${specIdx}`);
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                isSelected
+                                  ? 'bg-purple-600 text-white shadow-lg'
+                                  : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'
+                              }`}
+                            >
+                              <span>{s.icon}</span> {s.name} <span className="text-[10px] opacity-70">({s.role})</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-neutral-950/50 rounded-lg border border-purple-500/20 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>{activeSpec.icon}</span> {activeSpec.name} - {activeSpec.role}
+                        </span>
+                        <p className="text-[11px] text-neutral-400 mt-0.5">{activeSpec.description}</p>
+                      </div>
+                    </div>
+
+                    {/* Talent Tiers & Capstone Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {activeSpec.tiers.map((tier) => {
+                        const rank = getTalentRank(safeAbilities, tier.id);
+                        return (
+                          <div key={tier.id} className="p-3 bg-neutral-950/70 rounded-xl border border-neutral-800 flex flex-col justify-between gap-2.5">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold text-white flex items-center gap-1">
+                                  <span>{tier.icon}</span> {tier.name}
+                                </span>
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded font-bold bg-neutral-900 border border-neutral-700 text-purple-300">
+                                  Rank {rank} / {tier.maxRank}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-neutral-400 leading-relaxed">{tier.description}</p>
+                              <span className="text-[10px] text-emerald-400 font-medium block mt-1">
+                                {tier.bonusPerRank}
+                              </span>
+                            </div>
+                            <button
+                              disabled={safeSkillPoints <= 0 || rank >= tier.maxRank}
+                              onClick={() => {
+                                Sounds.slotClick();
+                                player.onAllocateAbility?.(`talent_${tier.id}`);
+                              }}
+                              className="w-full py-1.5 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-[11px] rounded-lg transition-colors flex items-center justify-center gap-1 border border-neutral-700"
+                            >
+                              <Plus size={12} /> {rank >= tier.maxRank ? 'Maxed' : 'Invest (1 SP)'}
+                            </button>
+                          </div>
+                        );
+                      })}
+
+                      {/* Capstone Passive */}
+                      {(() => {
+                        const capstone = activeSpec.capstone;
+                        const unlocked = hasCapstone(safeAbilities, capstone.id);
+                        return (
+                          <div className="p-3 bg-gradient-to-b from-purple-950/40 to-neutral-950/70 rounded-xl border border-purple-500/40 flex flex-col justify-between gap-2.5 shadow-[0_0_15px_rgba(168,85,247,0.15)]">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold text-amber-300 flex items-center gap-1">
+                                  <span>{capstone.icon}</span> {capstone.name}
+                                </span>
+                                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold border ${unlocked ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-neutral-900 text-neutral-500 border-neutral-800'}`}>
+                                  {unlocked ? 'ACTIVE' : 'CAPSTONE'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-neutral-300 leading-relaxed">{capstone.description}</p>
+                            </div>
+                            <button
+                              disabled={safeSkillPoints <= 0 || unlocked}
+                              onClick={() => {
+                                Sounds.slotClick();
+                                player.onAllocateAbility?.(`capstone_${capstone.id}`);
+                              }}
+                              className="w-full py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-[11px] rounded-lg transition-colors flex items-center justify-center gap-1 border border-purple-500/50 shadow-md"
+                            >
+                              <Sparkles size={12} /> {unlocked ? 'Capstone Mastered' : 'Unlock Capstone (1 SP)'}
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Class MMO Abilities — unified with inline rank upgrades, drag onto a bar, or bind */}
+              <div className="bg-neutral-900/60 p-5 rounded-xl border border-cyan-500/30 flex flex-col gap-4">
                 <div className="flex flex-wrap justify-between items-center gap-2">
                   <h4 className="text-sm font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
-                    <Zap size={16} /> Class Combat Abilities
+                    <Zap size={16} /> Class Combat Abilities & Upgrades
                   </h4>
                   <span className="text-xs text-neutral-400">Class: {playerClass.toUpperCase()}</span>
                 </div>
                 <p className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="flex items-center gap-1"><GripVertical size={12} className="text-cyan-400" /> Drag an unlocked ability onto the hotbar or a side bar</span>
+                  <span className="flex items-center gap-1"><GripVertical size={12} className="text-cyan-400" /> Drag an unlocked ability onto action bars</span>
                   <span className="flex items-center gap-1"><Keyboard size={12} className="text-amber-400" /> Hover a card and press a key to bind it</span>
+                  <span className="flex items-center gap-1"><Plus size={12} className="text-emerald-400" /> Spend Skill Points to raise ability rank</span>
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {abilitiesForClass(playerClass).map(ability => {
@@ -1027,6 +1173,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                     const placementLabel = placement
                       ? `${placement.bar === 'hotbar' ? 'Hotbar' : placement.bar === 'leftActionBar' ? 'Left bar' : 'Right bar'} ${placement.index + 1}`
                       : null;
+                    const abilityRank = safeAbilities[ability.id] || (isUnlocked ? 1 : 0);
 
                     return (
                       <div 
@@ -1040,7 +1187,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                         onMouseEnter={(e) => onSlotHover?.(null, e, 'ability', ability.id)}
                         onMouseLeave={() => onSlotLeave?.()}
                         title={isUnlocked ? 'Drag to an action bar, or hover and press a key to bind' : `Requires ${ability.req} ${ability.class === 'warrior' ? 'Strength' : ability.class === 'archer' ? 'Dexterity' : 'Intelligence'}`}
-                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2 transition-colors ${
+                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-colors ${
                           isUnlocked 
                             ? 'bg-neutral-950/80 border-cyan-500/40 text-neutral-200 shadow-[0_0_15px_rgba(6,182,212,0.1)] cursor-grab active:cursor-grabbing hover:border-cyan-400/70' 
                             : 'bg-neutral-950/40 border-neutral-800/80 text-neutral-500 opacity-60 cursor-not-allowed'
@@ -1052,7 +1199,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                               {ability.icon}
                             </div>
                             <div className="min-w-0">
-                              <h6 className="text-xs font-bold text-white truncate">{ability.name}</h6>
+                              <h6 className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                                {ability.name}
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                                  Rank {abilityRank}
+                                </span>
+                              </h6>
                               <span className="text-[10px] text-neutral-400">
                                 {ability.req > 0 ? `Req ${ability.req}` : 'Starter'} · {ability.cost > 0 ? `${ability.cost} MP` : 'Free'} · {ability.cd}s CD
                               </span>
@@ -1067,20 +1219,37 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                             )}
                           </div>
                         </div>
+
                         <p className="text-[11px] text-neutral-400 italic">
                           {ability.desc}
                         </p>
-                        <div className="flex items-center justify-between gap-2 mt-1">
-                          <span className={`text-[10px] font-bold ${placementLabel ? 'text-emerald-400' : 'text-neutral-500'}`}>
-                            {placementLabel ? `On bar: ${placementLabel}` : 'Not on a bar'}
-                          </span>
+
+                        <div className="flex flex-col gap-1.5 pt-1 border-t border-white/5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`text-[10px] font-bold ${placementLabel ? 'text-emerald-400' : 'text-neutral-500'}`}>
+                              {placementLabel ? `On bar: ${placementLabel}` : 'Not on a bar'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={!isUnlocked || !!placement}
+                              onClick={(e) => { e.stopPropagation(); onAddAbilityToBar?.(ability.id); }}
+                              className="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-cyan-600 text-white font-bold text-[10px] rounded-md transition-colors flex items-center gap-1"
+                            >
+                              <Plus size={11} /> {placement ? 'On Bar' : 'Add to Bar'}
+                            </button>
+                          </div>
+
                           <button
                             type="button"
-                            disabled={!isUnlocked || !!placement}
-                            onClick={(e) => { e.stopPropagation(); onAddAbilityToBar?.(ability.id); }}
-                            className="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-cyan-600 text-white font-bold text-[10px] rounded-md transition-colors flex items-center gap-1"
+                            disabled={!isUnlocked || safeSkillPoints <= 0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              Sounds.slotClick();
+                              player.onAllocateAbility?.(ability.id);
+                            }}
+                            className="w-full py-1 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-300 font-bold text-[10px] rounded-md transition-colors flex items-center justify-center gap-1 border border-neutral-700"
                           >
-                            <Plus size={11} /> {placement ? 'On Bar' : 'Add to Bar'}
+                            <Plus size={11} /> Upgrade Rank (1 SP)
                           </button>
                         </div>
                       </div>
@@ -1178,6 +1347,181 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                 </div>
               </div>
 
+            </div>
+          )}
+
+          {/* Social & Party Tab */}
+          {activeTab === 'social' && (
+            <div className="flex flex-col gap-5 max-w-3xl mx-auto py-2">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
+                    <Users size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                      Party & Companions
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 font-mono border border-cyan-800">
+                        {partyMembersList.length}/4 Members
+                      </span>
+                    </h3>
+                    <p className="text-xs text-neutral-400">
+                      Form parties, inspect member gear, coordinate dungeon expeditions & set loot rules.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      Sounds.slotClick();
+                      onStartReadyCheck?.();
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+                  >
+                    <CheckCircle2 size={14} />
+                    <span>Ready Check</span>
+                  </button>
+
+                  {partyMembersList.length > 1 && onLeaveParty && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        Sounds.slotClick();
+                        onLeaveParty();
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+                    >
+                      <LogOut size={13} />
+                      <span>Leave Party</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Party Member Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {partyMembersList.map((member: any) => {
+                  const hp = member.hp ?? 100;
+                  const maxHp = member.maxHp ?? 100;
+                  const hpPercent = Math.max(0, Math.min(100, Math.floor((hp / maxHp) * 100)));
+                  const isSelf = member.id === 'self' || member.id === player.nickname;
+
+                  return (
+                    <div
+                      key={member.id}
+                      className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-3.5 flex flex-col gap-2.5 shadow-md"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {member.isLeader && (
+                            <Crown size={14} className="text-amber-400" title="Party Leader" />
+                          )}
+                          <div className="w-7 h-7 rounded-lg bg-neutral-800 flex items-center justify-center border border-neutral-700">
+                            {member.playerClass === 'mage' ? (
+                              <Sparkles size={14} className="text-cyan-400" />
+                            ) : member.playerClass === 'archer' ? (
+                              <Zap size={14} className="text-emerald-400" />
+                            ) : (
+                              <Shield size={14} className="text-rose-400" />
+                            )}
+                          </div>
+                          <div>
+                            <span className="font-bold text-xs text-white flex items-center gap-1">
+                              {member.name}
+                              {isSelf && <span className="text-[10px] text-neutral-500">(You)</span>}
+                            </span>
+                            <span className="text-[10px] text-neutral-400 font-mono capitalize">
+                              Lv. {member.level || player.level} {member.playerClass || playerClass}
+                            </span>
+                          </div>
+                        </div>
+
+                        {!isSelf && onInspectPlayer && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              Sounds.slotClick();
+                              onInspectPlayer(member);
+                            }}
+                            className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[11px] font-bold border border-neutral-700 active:scale-95"
+                          >
+                            Inspect Gear
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Health Bar */}
+                      <div className="flex flex-col gap-1">
+                        <div className="flex justify-between text-[10px] font-mono text-neutral-400">
+                          <span>Health</span>
+                          <span>{hp} / {maxHp}</span>
+                        </div>
+                        <div className="w-full bg-neutral-950 rounded-full h-2 overflow-hidden border border-neutral-800">
+                          <div
+                            className="h-full bg-emerald-500 rounded-full transition-all"
+                            style={{ width: `${hpPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Nearby Adventurers & Quick Invite */}
+              <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <UserPlus size={15} className="text-cyan-400" />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                      Nearby Adventurers In Realm
+                    </h4>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Filter players..."
+                    value={socialInviteSearch}
+                    onChange={(e) => setSocialInviteSearch(e.target.value)}
+                    className="bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 w-44"
+                  />
+                </div>
+
+                {nearbyPlayers.length === 0 ? (
+                  <p className="text-xs text-neutral-500 italic py-2">
+                    No other players currently near your coordinates.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                    {nearbyPlayers
+                      .filter(p => !socialInviteSearch || p.name.toLowerCase().includes(socialInviteSearch.toLowerCase()))
+                      .map(p => (
+                        <div
+                          key={p.id}
+                          className="flex items-center justify-between p-2 rounded-lg bg-neutral-950/70 border border-neutral-800 text-xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="font-bold text-neutral-200 truncate">{p.name}</span>
+                            {p.level && <span className="text-[10px] text-amber-400 font-mono">L{p.level}</span>}
+                          </div>
+                          {onInvitePlayer && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                Sounds.slotClick();
+                                onInvitePlayer(p.id);
+                              }}
+                              className="px-2 py-0.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[10px] active:scale-95"
+                            >
+                              Invite
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

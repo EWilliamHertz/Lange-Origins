@@ -473,5 +473,112 @@ export function generateWorld(roomId: string = 'default'): World {
   world[centerX - 3][centerY - 3] = BlockType.Torch;
   world[centerX + 3][centerY - 3] = BlockType.Torch;
 
+  // --- Guarantee Plentiful Wood Trees at Spawn on All Worlds ---
+  const plantGuaranteedTree = (treeX: number) => {
+    if (treeX < 5 || treeX >= WORLD_WIDTH - 5) return;
+    let gy = 0;
+    while (gy < WORLD_HEIGHT && world[treeX][gy] === BlockType.Air) gy++;
+    if (gy >= WORLD_HEIGHT - 10) return;
+    
+    // Solidify ground to grass and dirt
+    world[treeX][gy] = BlockType.Grass;
+    if (gy + 1 < WORLD_HEIGHT) world[treeX][gy + 1] = BlockType.Dirt;
+
+    const treeHeight = 5;
+    // Clear air space above ground
+    for (let dy = 1; dy <= treeHeight + 3; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const tx = treeX + dx;
+        const ty = gy - dy;
+        if (tx >= 0 && tx < WORLD_WIDTH && ty >= 0 && ty < WORLD_HEIGHT) {
+          world[tx][ty] = BlockType.Air;
+        }
+      }
+    }
+
+    // Place sturdy wood trunk
+    for (let i = 1; i <= treeHeight; i++) {
+      world[treeX][gy - i] = BlockType.Wood;
+    }
+
+    // Place lush leaves
+    const leafCenter = gy - treeHeight;
+    for (let lx = treeX - 2; lx <= treeX + 2; lx++) {
+      for (let ly = leafCenter - 2; ly <= leafCenter + 1; ly++) {
+        if (lx >= 0 && lx < WORLD_WIDTH && ly >= 0 && ly < WORLD_HEIGHT) {
+          if (world[lx][ly] === BlockType.Air) {
+            world[lx][ly] = BlockType.Leaves;
+          }
+        }
+      }
+    }
+  };
+
+  // Plant cluster of trees on both sides of spawn
+  plantGuaranteedTree(centerX - 8);
+  plantGuaranteedTree(centerX - 12);
+  plantGuaranteedTree(centerX - 16);
+  plantGuaranteedTree(centerX + 8);
+  plantGuaranteedTree(centerX + 12);
+  plantGuaranteedTree(centerX + 16);
+
   return world;
+}
+
+/**
+ * Robust spawn finder that guarantees the player spawns firmly on solid ground
+ * (not on floating roofs, not in the sky, not inside blocks, and not over lava).
+ */
+export function getSafeSpawnPoint(world: World): { x: number; y: number; tileX: number; tileY: number } {
+  const centerX = Math.floor(world.length / 2);
+  
+  // Search offsets prioritizing ground right outside spawn building entrances
+  const searchOffsets = [-6, 6, -7, 7, -5, 5, -8, 8, -2, 2, 0, -10, 10, -15, 15];
+  
+  for (const offset of searchOffsets) {
+    const tx = centerX + offset;
+    if (tx < 5 || tx >= world.length - 5) continue;
+
+    for (let ty = 15; ty < world[tx].length - 10; ty++) {
+      const block = world[tx][ty];
+      
+      // Block must be solid ground
+      if (
+        block !== BlockType.Air &&
+        block !== BlockType.Lava &&
+        block !== BlockType.Leaves &&
+        block !== BlockType.Water
+      ) {
+        // Must NOT be a thin floating roof: ensure there is support underneath
+        if (world[tx][ty + 1] === BlockType.Air) {
+          continue;
+        }
+
+        // Must have clear headroom of at least 2 air blocks above
+        const above1 = world[tx][ty - 1];
+        const above2 = world[tx][ty - 2];
+        const isHeadroomClear = 
+          (above1 === BlockType.Air || above1 === BlockType.Door || above1 === BlockType.DoorOpen) &&
+          (above2 === BlockType.Air || above2 === BlockType.Door || above2 === BlockType.DoorOpen);
+
+        if (isHeadroomClear) {
+          return {
+            tileX: tx,
+            tileY: ty,
+            x: tx * 32,
+            // 48px player height; bottom aligns with top of ground tile (ty * 32)
+            y: ty * 32 - 48 - 1
+          };
+        }
+      }
+    }
+  }
+
+  // Safe fallback
+  return {
+    tileX: centerX,
+    tileY: 150,
+    x: centerX * 32,
+    y: 150 * 32 - 49
+  };
 }

@@ -91,6 +91,16 @@ export enum BlockType {
   DurelNPC = 417,
   WizardStaff = 418,
   BlueCrystal = 419,
+  ArcaneDust = 420,
+  SlimeCore = 421,
+  GolemShard = 422,
+  Ruby = 423,
+  Sapphire = 424,
+  Emerald = 425,
+  Topaz = 426,
+  DungeonKey = 427,
+  GoldenDungeonChest = 428,
+  DungeonBlueprint = 429,
   XpOrb = 999
 }
 
@@ -183,6 +193,16 @@ export const BlockColors: Record<BlockType, string> = {
   [BlockType.WizardStaff]: '#673AB7',
   [BlockType.TreeSeed]: '#4CAF50',
   [BlockType.GrapplingHook]: '#455A64',
+  [BlockType.ArcaneDust]: '#BA68C8',
+  [BlockType.SlimeCore]: '#00E676',
+  [BlockType.GolemShard]: '#7986CB',
+  [BlockType.Ruby]: '#E53935',
+  [BlockType.Sapphire]: '#1E88E5',
+  [BlockType.Emerald]: '#43A047',
+  [BlockType.Topaz]: '#FB8C00',
+  [BlockType.DungeonKey]: '#FFD700',
+  [BlockType.GoldenDungeonChest]: '#FFA000',
+  [BlockType.DungeonBlueprint]: '#80D8FF',
   [BlockType.XpOrb]: '#00FF00'
 };
 
@@ -283,6 +303,16 @@ export const BlockHardness: Record<BlockType, number> = {
   [BlockType.WizardStaff]: 0,
   [BlockType.TreeSeed]: 0,
   [BlockType.GrapplingHook]: 0,
+  [BlockType.ArcaneDust]: 0,
+  [BlockType.SlimeCore]: 0,
+  [BlockType.GolemShard]: 0,
+  [BlockType.Ruby]: 0,
+  [BlockType.Sapphire]: 0,
+  [BlockType.Emerald]: 0,
+  [BlockType.Topaz]: 0,
+  [BlockType.DungeonKey]: 0,
+  [BlockType.GoldenDungeonChest]: 4,
+  [BlockType.DungeonBlueprint]: 0,
   [BlockType.XpOrb]: 0
 };
 
@@ -379,5 +409,15 @@ export const BlockNames: Record<BlockType, string> = {
   [BlockType.DurelNPC]: 'Durel',
   [BlockType.WizardStaff]: 'Wizard Staff',
   [BlockType.BlueCrystal]: 'Blue Crystal',
+  [BlockType.ArcaneDust]: 'Arcane Dust',
+  [BlockType.SlimeCore]: 'Slime Core',
+  [BlockType.GolemShard]: 'Golem Shard',
+  [BlockType.Ruby]: 'Ruby',
+  [BlockType.Sapphire]: 'Sapphire',
+  [BlockType.Emerald]: 'Emerald',
+  [BlockType.Topaz]: 'Topaz',
+  [BlockType.DungeonKey]: 'Dungeon Key',
+  [BlockType.GoldenDungeonChest]: 'Golden Dungeon Chest',
+  [BlockType.DungeonBlueprint]: 'Dungeon Blueprint',
   [BlockType.XpOrb]: 'XP Orb'
 };

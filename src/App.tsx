@@ -18,6 +18,20 @@ import { CharacterMissingError, StaleCharacterError, createCharacterDoc, readCha
 import { Socket } from 'socket.io-client';
 import { UnifiedMenu, UnifiedMenuTab } from './components/UnifiedMenu';
 import { ItemTooltip } from './components/ItemTooltip';
+import { HUDQuestTracker } from './components/HUDQuestTracker';
+import { ActionBarPresets } from './components/ActionBarPresets';
+import { HUDPartyOverlay, PartyData } from './components/HUDPartyOverlay';
+import { ChannelChat, ChatMessage, ChatChannel } from './components/ChannelChat';
+import { Eye, Move, RotateCw } from 'lucide-react';
+import { LobbyServerSelector } from './components/LobbyServerSelector';
+import { loadHUDLayout, saveHUDLayout, DEFAULT_HUD_LAYOUT, HUDLayoutState } from './lib/hudLayout';
+import { HUDEditOverlay } from './components/HUDEditOverlay';
+import { DraggableHUDBar } from './components/DraggableHUDBar';
+import { DynamicRadar } from './components/DynamicRadar';
+import { BuffDebuffTray, ActiveEffect } from './components/BuffDebuffTray';
+import { PartyLootRollModal, LootRollItem } from './components/PartyLootRollModal';
+import { PlayerInspectModal, InspectedPlayer } from './components/PlayerInspectModal';
+import { EnchantmentPrefix, GemType } from './lib/enchanting';
 
 // Class abilities live in src/lib/abilities.tsx (shared by the skill tree, the
 // action bars and GameCanvas's cast pipeline).
@@ -57,6 +71,76 @@ export default function App() {
 
   const [activeTrade, setActiveTrade] = useState<any>(null);
   const [currentParty, setCurrentGang] = useState<any>(null);
+
+  // HUD Layout and Edit Mode
+  const [hudLayout, setHudLayout] = useState<HUDLayoutState>(() => loadHUDLayout());
+  const [isHUDEditMode, setIsHUDEditMode] = useState(false);
+
+  const handleUpdateHUDLayout = (updated: Partial<HUDLayoutState>) => {
+    setHudLayout(prev => {
+      const next = { ...prev, ...updated };
+      saveHUDLayout(next);
+      return next;
+    });
+  };
+
+  const handleRotateHotbar = (bar: 'hotbar' | 'leftActionBar' | 'rightActionBar') => {
+    setHudLayout(prev => {
+      const currentRot = prev[bar].rotation;
+      const newRot = currentRot === 0 ? 90 : 0;
+      const next = {
+        ...prev,
+        [bar]: { ...prev[bar], rotation: newRot }
+      };
+      saveHUDLayout(next);
+      return next;
+    });
+  };
+
+  const handleToggleElementVisibility = (elementKey: keyof HUDLayoutState) => {
+    setHudLayout(prev => {
+      const current = prev[elementKey] || { x: 0, y: 0 };
+      const nextVisible = current.visible === false;
+      const next: HUDLayoutState = {
+        ...prev,
+        [elementKey]: { ...current, visible: nextVisible }
+      };
+      saveHUDLayout(next);
+      return next;
+    });
+  };
+
+  const handleResetHUDLayout = () => {
+    setHudLayout(DEFAULT_HUD_LAYOUT);
+    saveHUDLayout(DEFAULT_HUD_LAYOUT);
+  };
+
+  // Real-time Player Coordinates & Depth for Radar/Compass
+  const [playerCoords, setPlayerCoords] = useState({ x: 250, y: 100 });
+  const [playerDepth, setPlayerDepth] = useState(0);
+
+  // Active Buffs / Debuffs Tray
+  const [activeEffects, setActiveEffects] = useState<ActiveEffect[]>([
+    { id: 'well-fed', name: 'Well Fed', type: 'buff', duration: 180, maxDuration: 180, icon: 'heart', description: '+10% Health Regen' },
+    { id: 'fleetfoot', name: 'Fleetfoot Aura', type: 'buff', duration: 240, maxDuration: 240, icon: 'zap', description: '+15% Movement Speed' }
+  ]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setActiveEffects(prev =>
+        prev
+          .map(e => ({ ...e, duration: e.duration - 1 }))
+          .filter(e => e.duration > 0)
+      );
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Party Loot Roll Modal State
+  const [activeLootRoll, setActiveLootRoll] = useState<LootRollItem | null>(null);
+
+  // Player Inspection Modal State
+  const [inspectedPlayer, setInspectedPlayer] = useState<InspectedPlayer | null>(null);
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasLoadedSave, setHasLoadedSave] = useState(false);
@@ -615,10 +699,19 @@ export default function App() {
     }
   }, [cursorItem]);
 
-  const [chatMessages, setChatMessages] = useState<{sender: string, text: string}[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const [sendChatMsg, setSendChatMsg] = useState<{text: string, timestamp: number} | null>(null);
   
+  // Action bar loadout presets (Preset 1, 2, 3)
+  const [activeLoadoutPreset, setActiveLoadoutPreset] = useState<number>(1);
+  const loadoutPresetsRef = useRef<Record<number, { hotbar: any[]; leftActionBar: any[]; rightActionBar: any[] }>>({});
+
+  // Party system foundation
+  const [party, setParty] = useState<PartyData | null>(null);
+  const [nearbyPlayers, setNearbyPlayers] = useState<{ id: string; name: string; level?: number; playerClass?: string }[]>([]);
+  const [isBlockProtectionActive, setIsBlockProtectionActive] = useState<boolean>(false);
+
   const selectedBlock = hotbar[selectedSlotIndex] ? hotbar[selectedSlotIndex]!.type : BlockType.Air;
 
   // Mouse tracking for cursor item and rich tooltips
@@ -830,6 +923,90 @@ export default function App() {
       }
     }
   };
+
+  // Preset switching logic
+  const handleSelectLoadoutPreset = useCallback((presetId: number) => {
+    setActiveLoadoutPreset(prevPreset => {
+      // Save current bars into current preset slot
+      loadoutPresetsRef.current[prevPreset] = {
+        hotbar: [...hotbar],
+        leftActionBar: [...leftActionBar],
+        rightActionBar: [...rightActionBar],
+      };
+      // Restore target preset bars if saved
+      const target = loadoutPresetsRef.current[presetId];
+      if (target) {
+        setHotbar(target.hotbar);
+        setLeftActionBar(target.leftActionBar);
+        setRightActionBar(target.rightActionBar);
+      }
+      Sounds.slotClick();
+      addNotification('system', 'System', 'System', `Switched to Loadout Preset ${presetId}`);
+      return presetId;
+    });
+  }, [hotbar, leftActionBar, rightActionBar, addNotification]);
+
+  const handleSendChatMessage = useCallback((text: string, channel: ChatChannel) => {
+    if (!text.trim()) return;
+    if (socketRef.current) {
+      socketRef.current.emit('chat_message', { text, channel, room: serverName });
+    } else {
+      setSendChatMsg({ text, timestamp: Date.now() });
+    }
+  }, [serverName]);
+
+  const handleInvitePartyPlayer = useCallback((targetId: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('send_party_invite', { targetId });
+    }
+    if (!party) {
+      setParty({
+        id: 'party_' + (socketRef.current?.id || 'me'),
+        leaderId: socketRef.current?.id || 'me',
+        members: [
+          { id: socketRef.current?.id || 'me', name: nickname, isLeader: true, hp: health, maxHp: 100, level, playerClass }
+        ]
+      });
+    }
+    addNotification('party', targetId, 'System', 'Party invite sent.');
+  }, [party, nickname, health, level, playerClass, addNotification]);
+
+  const handleLeaveParty = useCallback(() => {
+    setParty(null);
+    setIsBlockProtectionActive(false);
+    socketRef.current?.emit('set_party_block_protection', { enabled: false });
+    addNotification('system', 'System', 'System', 'You left the party.');
+  }, [addNotification]);
+
+  const handleToggleBlockProtection = useCallback(() => {
+    const nextState = !isBlockProtectionActive;
+    setIsBlockProtectionActive(nextState);
+    if (socketRef.current) {
+      socketRef.current.emit('set_party_block_protection', { enabled: nextState });
+    }
+    addNotification(
+      'party',
+      socketRef.current?.id || 'me',
+      'Party Leader',
+      nextState 
+        ? '🛡️ Indestructible Party Block Protection ENABLED. Placed blocks cannot be broken by non-members.' 
+        : 'Party Block Protection DISABLED.'
+    );
+  }, [isBlockProtectionActive, addNotification]);
+
+  // Synchronize player stats with server tick for server-side damage scaling
+  useEffect(() => {
+    if (socketRef.current && appState === 'playing') {
+      socketRef.current.emit('sync_stats', {
+        skills,
+        hp: health,
+        maxHp: 100,
+        mana,
+        maxMana: 100 + (skills.intelligence || 0) * 20,
+        level
+      });
+    }
+  }, [skills, health, mana, level, appState]);
 
   // Keyboard shortcuts
 
@@ -1126,6 +1303,13 @@ export default function App() {
         }
       }
 
+      // Shift+1, Shift+2, Shift+3 switches action bar loadout presets
+      if (e.shiftKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
+        e.preventDefault();
+        handleSelectLoadoutPreset(parseInt(e.key));
+        return;
+      }
+
       if (!inventoryOpen && !furnaceOpen && !questLogOpen && !npcDialog) {
         const num = parseInt(e.key);
         if (num >= 1 && num <= 9) {
@@ -1151,7 +1335,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('swap_hotbar', handleSwap); };
-  }, [appState, inventoryOpen, furnaceOpen, isChatOpen, unifiedMenuTab, cursorItem, chestOpen, merchantOpen, npcDialog, showInstructions, activeTrade, instancesOpen, hotbar, backpack, selectedSlotIndex, leftActionBar, rightActionBar, keybinds, returnCursorItemToInventory]);
+  }, [appState, inventoryOpen, furnaceOpen, isChatOpen, unifiedMenuTab, cursorItem, chestOpen, merchantOpen, npcDialog, showInstructions, activeTrade, instancesOpen, hotbar, backpack, selectedSlotIndex, leftActionBar, rightActionBar, keybinds, returnCursorItemToInventory, handleSelectLoadoutPreset]);
 
   const handleChatSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1357,6 +1541,115 @@ export default function App() {
         return newHb;
      });
      Sounds.slotClick();
+  };
+
+  const handleApplyEnchant = (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    prefix: EnchantmentPrefix,
+    newLevel: number,
+    cost: { gold: number; materials: { type: BlockType; count: number }[] }
+  ) => {
+    const setter = slotSource === 'hotbar' ? setHotbar : setBackpack;
+    setter(prev => {
+      const copy = [...prev];
+      const target = copy[slotIndex];
+      if (!target) return prev;
+      copy[slotIndex] = {
+        ...target,
+        prefix,
+        enchantLevel: newLevel
+      };
+      return copy;
+    });
+
+    // Deduct materials from backpack/hotbar
+    for (const mat of cost.materials) {
+      let remaining = mat.count;
+      setBackpack(bp => {
+        return bp.map(s => {
+          if (!s || remaining <= 0 || s.type !== mat.type) return s;
+          const take = Math.min(s.count || 1, remaining);
+          remaining -= take;
+          const newCount = (s.count || 1) - take;
+          return newCount <= 0 ? null : { ...s, count: newCount };
+        });
+      });
+      if (remaining > 0) {
+        setHotbar(hb => {
+          return hb.map(s => {
+            if (!s || remaining <= 0 || s.type !== mat.type) return s;
+            const take = Math.min(s.count || 1, remaining);
+            remaining -= take;
+            const newCount = (s.count || 1) - take;
+            return newCount <= 0 ? null : { ...s, count: newCount };
+          });
+        });
+      }
+    }
+
+    Sounds.anvilHit();
+    addNotification('system', 'System', 'System', `Successfully enhanced equipment to +${newLevel}!`);
+  };
+
+  const handleApplyGem = (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    socketIndex: 1 | 2,
+    gemType: GemType
+  ) => {
+    const setter = slotSource === 'hotbar' ? setHotbar : setBackpack;
+    setter(prev => {
+      const copy = [...prev];
+      const target = copy[slotIndex];
+      if (!target) return prev;
+      copy[slotIndex] = {
+        ...target,
+        [socketIndex === 1 ? 'gem1' : 'gem2']: gemType
+      };
+      return copy;
+    });
+    Sounds.craft();
+    addNotification('system', 'System', 'System', `Socketed ${gemType.toUpperCase()} gem!`);
+  };
+
+  const handleDismantle = (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    yields: { type: BlockType; count: number }[]
+  ) => {
+    const setter = slotSource === 'hotbar' ? setHotbar : setBackpack;
+    setter(prev => {
+      const copy = [...prev];
+      copy[slotIndex] = null;
+      return copy;
+    });
+
+    setBackpack(prev => {
+      let copy = [...prev];
+      for (const y of yields) {
+        let added = false;
+        for (let i = 0; i < copy.length; i++) {
+          if (copy[i] && copy[i]?.type === y.type) {
+            copy[i] = { ...copy[i], count: (copy[i]?.count || 1) + y.count };
+            added = true;
+            break;
+          }
+        }
+        if (!added) {
+          for (let i = 0; i < copy.length; i++) {
+            if (!copy[i]) {
+              copy[i] = { type: y.type, count: y.count };
+              added = true;
+              break;
+            }
+          }
+        }
+      }
+      return copy;
+    });
+    Sounds.anvilHit();
+    addNotification('system', 'System', 'System', 'Gear dismantled into magical crafting essence.');
   };
 
   const handleSlotClick = (type: 'hotbar' | 'leftActionBar' | 'rightActionBar' | 'backpack' | 'equipment' | 'crafting' | 'craftingResult' | 'furnaceInput' | 'furnaceFuel' | 'furnaceOutput' | 'chest' | 'merchantPayment' | 'merchantOutput', index: number, isRightClick: boolean = false) => {
@@ -1787,16 +2080,28 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
         <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-black/90"></div>
         
-        {/* Top Right Header */}
-        {currentUser && (
-          <div className="absolute top-6 right-6 z-40 flex items-center gap-4 bg-black/40 backdrop-blur-md px-5 py-2.5 rounded-full border border-white/10 shadow-2xl">
-             <span className="text-white font-medium text-sm hidden md:block">{currentUser.displayName}</span>
-             <button onClick={handleSignOut} className="px-4 py-2 rounded-xl text-sm font-bold bg-white/10 text-white hover:bg-white/20 transition-all">Sign Out</button>
+        {/* Top Left Header */}
+        <div className="absolute top-6 left-6 z-30 flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center font-black text-white text-lg shadow-lg border border-amber-400/30">
+              L
+            </div>
+            <div>
+              <div className="text-white font-black text-sm tracking-wider uppercase leading-none" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>Lange: Origins</div>
+              <div className="text-neutral-400 text-[11px] font-medium">Realm Lobby</div>
+            </div>
           </div>
-        )}
+          {currentUser && (
+            <div className="flex items-center gap-3 bg-black/50 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 shadow-xl">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="text-white font-medium text-xs max-w-[150px] truncate">{currentUser.displayName || currentUser.email || 'Adventurer'}</span>
+              <button onClick={handleSignOut} className="px-3 py-1 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/20 transition-all">Sign Out</button>
+            </div>
+          )}
+        </div>
 
         {showCharacterCreator ? (
-           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
              {/* Character Creator Modal */}
              <div className="w-full max-w-5xl h-[80vh] bg-neutral-900 border border-white/10 rounded-2xl flex overflow-hidden shadow-2xl relative">
                 
@@ -1914,7 +2219,16 @@ let targetArray = type === 'hotbar' ? [...hotbar]
            </div>
         ) : (
            <div className="absolute inset-0 z-10 flex">
-             {/* Left/Center: Selected Character Model */}
+             {/* Left side: Realm / World Selector with modal */}
+             <div className="hidden md:flex flex-col justify-center pl-8 pr-4 pt-20 pb-8 z-20 max-w-xs shrink-0">
+               <LobbyServerSelector
+                 selectedServerId={joinInput}
+                 onSelectServer={(id) => setJoinInput(id)}
+                 onDirectJoin={(id) => joinServer(id)}
+               />
+             </div>
+
+             {/* Center: Selected Character Model */}
              <div className="flex-1 flex flex-col items-center justify-end pb-20 relative">
                {activeProfile ? (
                  <>
@@ -2111,6 +2425,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           onStaminaChange={setStamina}
           skills={skills}
           mana={mana}
+          currentParty={party}
           keybinds={keybinds}
           magicUnlocked={quests.find(q => q.id === 'q5')?.completed === true}
           onManaChange={setMana}
@@ -2154,6 +2469,19 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              });
              const xpGain = type === 'golem_boss' ? 250 : type === 'slime' ? 10 : 25;
              grantPlayerXp(xpGain);
+
+             if (type === 'golem_boss') {
+               setActiveLootRoll({
+                 id: 'roll-' + Date.now(),
+                 itemName: 'Obsidian Heart Greatsword',
+                 itemType: BlockType.Diamond,
+                 rarity: 'epic',
+                 levelRequirement: 10,
+                 timerSeconds: 25,
+                 enchantment: '+3 Flametouched',
+                 description: 'A colossal blade forged from molten obsidian and the pulsating core of the ancient golem.'
+               });
+             }
           }}
           onGiveSp={(amount) => setSkillPoints(sp => sp + amount)}
           onGiveXp={(amount) => grantPlayerXp(amount)}
@@ -2167,7 +2495,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           onFireWeapon={handleFireWeapon}
 
           sendChatMsg={sendChatMsg}
-          onChatMessage={(msg) => setChatMessages(prev => [...prev.slice(-9), msg])}
+          onChatMessage={(msg) => setChatMessages(prev => [...prev.slice(-49), { ...msg, id: Math.random().toString(), timestamp: msg.timestamp || Date.now() }])}
+          onNearbyPlayersChange={setNearbyPlayers}
           socketRef={socketRef}
           
           
@@ -2417,12 +2746,29 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             }
           }}
           onDepthChange={(depth) => {
+            setPlayerDepth(depth);
             setQuests(prev => prev.map(q => {
               if (q.id === 'q5' && !q.completed && depth >= 30 && q.prerequisiteId && prev.find(p => p.id === q.prerequisiteId)?.completed) {
                 return { ...q, current: 1, completed: true };
               }
               return q;
             }));
+          }}
+          onPlayerCoordsChange={(x, y) => {
+            setPlayerCoords({ x, y });
+          }}
+          onWorldPing={(x, y, pingType) => {
+            Sounds.slotClick();
+            setChatMessages(prev => [
+              ...prev,
+              {
+                id: Math.random().toString(),
+                sender: 'Danger Beacon',
+                text: `${nickname || 'Player'} pinged danger beacon at [${x}, ${y}]!`,
+                timestamp: Date.now()
+              }
+            ]);
+            addNotification('system', 'System', 'System', `Danger beacon pinged at (${x}, ${y})!`);
           }}
         />
         
@@ -2431,43 +2777,136 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           Playing on server: <span className="font-bold text-blue-400">{serverName}</span>
         </div>
 
-                {/* Left Action Bar */}
-        <div className={`absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 p-2 rounded-xl border border-white/10 flex flex-col gap-1 z-10 ${inventoryOpen ? 'z-[60]' : ''}`}>
-           
-           {leftActionBar.map((slot, index) => (
-             <button
-               key={'l'+index}
-               onClick={() => { handleSlotClick('leftActionBar', index); }}
-               onDragOver={handleDragOver}
-               onDrop={(e) => handleDrop(e, 'leftActionBar', index)}
-               onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'leftActionBar', index }; }}
-               onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
-               onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('leftActionBar', index, true); }}
-               className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
-             >
-               {renderBlockIcon(slot)}
-             </button>
-           ))}
-        </div>
+        {/* Collapsible Draggable HUD Quest Tracker */}
+        <HUDQuestTracker
+          quests={quests}
+          onOpenMenu={() => {
+            setUnifiedMenuTab('quests');
+            setInventoryOpen(true);
+          }}
+          position={hudLayout.questTracker}
+          onPositionChange={(pos) => handleUpdateHUDLayout({ questTracker: { ...hudLayout.questTracker, ...pos, isCustom: true } })}
+          isEditMode={isHUDEditMode}
+          visible={hudLayout.questTracker.visible !== false}
+          onHide={() => handleToggleElementVisibility('questTracker')}
+        />
 
-        {/* Right Action Bar */}
-        <div className={`absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 p-2 rounded-xl border border-white/10 flex flex-col gap-1 z-10 ${inventoryOpen ? 'z-[60]' : ''}`}>
-           
-           {rightActionBar.map((slot, index) => (
-             <button
-               key={'r'+index}
-               onClick={() => { handleSlotClick('rightActionBar', index); }}
-               onDragOver={handleDragOver}
-               onDrop={(e) => handleDrop(e, 'rightActionBar', index)}
-               onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'rightActionBar', index }; }}
-               onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
-               onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('rightActionBar', index, true); }}
-               className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
-             >
-               {renderBlockIcon(slot)}
-             </button>
-           ))}
-        </div>
+        {/* Dynamic Biome Mini-Radar & Depth Gauge */}
+        <DynamicRadar
+          playerPos={playerCoords}
+          partyMembers={party?.members ? party.members.map(m => ({ id: m.id, name: m.name, x: m.x ?? (playerCoords.x + 8), y: m.y ?? (playerCoords.y - 4) })) : []}
+          questTargets={quests.filter(q => !q.completed).map(q => ({ id: q.id, name: q.title || 'Quest', x: playerCoords.x + 25, y: playerCoords.y + 10 }))}
+          depth={playerDepth}
+          position={hudLayout.radar}
+          onPositionChange={(pos) => handleUpdateHUDLayout({ radar: { ...hudLayout.radar, ...pos, isCustom: true } })}
+          isEditMode={isHUDEditMode}
+          visible={hudLayout.radar.visible !== false}
+          onHide={() => handleToggleElementVisibility('radar')}
+          onSendPing={(type) => {
+            addNotification('system', 'Party Ping', 'Party Beacon', `${nickname || 'Hero'} beaconed a ${type} ping on coordinates [${Math.floor(playerCoords.x)}, ${Math.floor(playerCoords.y)}].`);
+          }}
+        />
+
+        {/* Status Effects / Buffs & Debuffs Tray */}
+        {(hudLayout.buffTray?.visible !== false || isHUDEditMode) && (
+          <BuffDebuffTray
+            effects={activeEffects}
+            onDismiss={(id) => setActiveEffects(prev => prev.filter(e => e.id !== id))}
+          />
+        )}
+
+        {/* HUD Party Overlay */}
+        <HUDPartyOverlay
+          party={party}
+          nearbyPlayers={nearbyPlayers}
+          currentUserId={socketRef.current?.id || ''}
+          playerPos={playerCoords}
+          position={hudLayout.partyOverlay}
+          onPositionChange={(pos) => handleUpdateHUDLayout({ partyOverlay: { ...hudLayout.partyOverlay, ...pos, isCustom: true } })}
+          isEditMode={isHUDEditMode}
+          visible={hudLayout.partyOverlay.visible !== false}
+          onHide={() => handleToggleElementVisibility('partyOverlay')}
+          isBlockProtectionActive={isBlockProtectionActive}
+          onToggleBlockProtection={handleToggleBlockProtection}
+          onInvitePlayer={handleInvitePartyPlayer}
+          onLeaveParty={handleLeaveParty}
+          onStartReadyCheck={() => {
+            addNotification('system', 'Ready Check', 'Party', '10-Second Party Ready Check initiated!');
+          }}
+          onInspectMember={(member) => {
+            setInspectedPlayer({
+              id: member.id,
+              name: member.name,
+              level: member.level || 10,
+              playerClass: member.playerClass || 'warrior',
+              equipment: equipment.slice(0, 4),
+              stats: {
+                hp: member.hp || 200,
+                maxHp: member.maxHp || 200,
+                defense: 15,
+                attack: 25
+              }
+            });
+          }}
+        />
+
+        {/* Left Action Bar (Draggable & Rotatable) */}
+        <DraggableHUDBar
+          id="hud-left-action-bar"
+          title="Left Action Bar"
+          layout={hudLayout.leftActionBar}
+          onLayoutChange={(updated) => handleUpdateHUDLayout({ leftActionBar: { ...hudLayout.leftActionBar, ...updated } })}
+          onRotate={() => handleRotateHotbar('leftActionBar')}
+          onHide={() => handleToggleElementVisibility('leftActionBar')}
+          isEditMode={isHUDEditMode}
+          defaultPositionStyle={{ left: '8px', top: '50%', transform: 'translateY(-50%)' }}
+        >
+          <div className={`bg-black/60 backdrop-blur-md p-2 rounded-xl border border-white/10 flex ${hudLayout.leftActionBar.rotation === 90 ? 'flex-row' : 'flex-col'} gap-1 shadow-2xl ${inventoryOpen ? 'pointer-events-auto' : ''}`}>
+            {leftActionBar.map((slot, index) => (
+              <button
+                key={'l' + index}
+                onClick={() => { handleSlotClick('leftActionBar', index); }}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, 'leftActionBar', index)}
+                onMouseEnter={() => { if (hoveredSlotRef) hoveredSlotRef.current = { type: 'leftActionBar', index }; }}
+                onMouseLeave={() => { if (hoveredSlotRef) hoveredSlotRef.current = null; }}
+                onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('leftActionBar', index, true); }}
+                className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
+              >
+                {renderBlockIcon(slot)}
+              </button>
+            ))}
+          </div>
+        </DraggableHUDBar>
+
+        {/* Right Action Bar (Draggable & Rotatable) */}
+        <DraggableHUDBar
+          id="hud-right-action-bar"
+          title="Right Action Bar"
+          layout={hudLayout.rightActionBar}
+          onLayoutChange={(updated) => handleUpdateHUDLayout({ rightActionBar: { ...hudLayout.rightActionBar, ...updated } })}
+          onRotate={() => handleRotateHotbar('rightActionBar')}
+          onHide={() => handleToggleElementVisibility('rightActionBar')}
+          isEditMode={isHUDEditMode}
+          defaultPositionStyle={{ right: '8px', top: '50%', transform: 'translateY(-50%)' }}
+        >
+          <div className={`bg-black/60 backdrop-blur-md p-2 rounded-xl border border-white/10 flex ${hudLayout.rightActionBar.rotation === 90 ? 'flex-row' : 'flex-col'} gap-1 shadow-2xl ${inventoryOpen ? 'pointer-events-auto' : ''}`}>
+            {rightActionBar.map((slot, index) => (
+              <button
+                key={'r' + index}
+                onClick={() => { handleSlotClick('rightActionBar', index); }}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, 'rightActionBar', index)}
+                onMouseEnter={() => { if (hoveredSlotRef) hoveredSlotRef.current = { type: 'rightActionBar', index }; }}
+                onMouseLeave={() => { if (hoveredSlotRef) hoveredSlotRef.current = null; }}
+                onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('rightActionBar', index, true); }}
+                className="w-12 h-12 p-1.5 rounded-lg relative bg-black/50 hover:bg-white/10 transition-colors"
+              >
+                {renderBlockIcon(slot)}
+              </button>
+            ))}
+          </div>
+        </DraggableHUDBar>
 
                 {/* Player Status HUD */}
         <div className="absolute top-4 right-4 flex flex-col gap-3 w-64 bg-black/50 p-4 rounded-xl border border-white/10 backdrop-blur-md shadow-2xl">
@@ -2531,65 +2970,66 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              </div>
            )}
         </div>
-        {/* Chat System */}
-        <div className="absolute bottom-24 left-4 w-72 z-10 flex flex-col justify-end pointer-events-none">
-           <div className="flex flex-col gap-1 mb-2 max-h-48 overflow-y-auto">
-             {chatMessages.map((msg, idx) => (
-               <div key={idx} className="bg-black/40 text-white text-sm px-2 py-1 rounded w-fit break-all">
-                 <span className="opacity-50 text-xs mr-2">{msg.sender}:</span>
-                 {msg.text}
-               </div>
-             ))}
-           </div>
-           
-           {isChatOpen && (
-             <form onSubmit={handleChatSubmit} className="pointer-events-auto bg-black/60 p-2 rounded flex items-center shadow-lg">
-               <MessageSquare size={16} className="text-white/50 mr-2 shrink-0" />
-               <input 
-                 ref={chatInputRef}
-                 type="text" 
-                 className="bg-transparent text-white outline-none w-full text-sm"
-                 placeholder="Say something... (Enter)"
-                 onBlur={() => setIsChatOpen(false)}
-                 maxLength={100}
-               />
-             </form>
-           )}
-           {!isChatOpen && (
-             <div className="text-white/30 text-xs ml-1 flex items-center drop-shadow-md">
-               <MessageSquare size={12} className="mr-1" /> Press Enter to chat
-             </div>
-           )}
+        {/* Multi-Channel Chat System */}
+        <ChannelChat
+          messages={chatMessages}
+          isOpen={isChatOpen}
+          onOpenChange={setIsChatOpen}
+          onSendMessage={handleSendChatMessage}
+        />
+
+        {/* Action Bar Loadout Presets */}
+        <div className={`absolute bottom-[78px] left-1/2 transform -translate-x-1/2 ${inventoryOpen ? 'z-[60]' : 'z-20'}`}>
+          <ActionBarPresets
+            activePreset={activeLoadoutPreset}
+            onSelectPreset={handleSelectLoadoutPreset}
+          />
         </div>
         
-        {/* UI Overlay - Hotbar */}
-        <div className={`absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-1 p-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl ${inventoryOpen ? 'z-[60]' : 'z-20'}`}>
-          {hotbar.map((slot, index) => {
-            const isSelected = selectedSlotIndex === index && !inventoryOpen;
-            return (
-              <button
-                key={index}
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, 'hotbar', index)}
-                onMouseEnter={() => { if(hoveredSlotRef) hoveredSlotRef.current = { type: 'hotbar', index }; }}
-                onMouseLeave={() => { if(hoveredSlotRef) hoveredSlotRef.current = null; }}
-                onClick={() => {
-                  handleSlotClick('hotbar', index);
-
-                }}
-                onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('hotbar', index, true); }}
-                className={`w-12 h-12 p-1.5 rounded-lg relative transition-all duration-200 ${
-                  isSelected 
-                    ? 'ring-2 ring-amber-400 scale-110 bg-gradient-to-t from-white/20 to-transparent shadow-[0_0_15px_rgba(251,191,36,0.5)] z-10' 
-                    : 'hover:bg-white/10 opacity-70 hover:opacity-100 bg-black/50'
-                }`}
-              >
-                <div className="absolute -top-1 -left-1 text-[9px] font-black bg-black/60 text-white w-4 h-4 flex items-center justify-center rounded border border-white/20 shadow-sm">{index + 1}</div>
-                {renderBlockIcon(slot)}
-              </button>
-            );
-          })}
-        </div>
+        {/* UI Overlay - Hotbar (Draggable & Rotatable 90 deg) */}
+        <DraggableHUDBar
+          id="hud-main-hotbar"
+          title="Main Hotbar"
+          layout={hudLayout.hotbar}
+          onLayoutChange={(updated) => handleUpdateHUDLayout({ hotbar: { ...hudLayout.hotbar, ...updated } })}
+          onRotate={() => handleRotateHotbar('hotbar')}
+          onHide={() => handleToggleElementVisibility('hotbar')}
+          isEditMode={isHUDEditMode}
+          defaultPositionStyle={{ bottom: '24px', left: '50%', transform: 'translateX(-50%)' }}
+        >
+          <div className={`flex gap-1 p-2 bg-black/50 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl ${hudLayout.hotbar.rotation === 90 ? 'flex-col' : 'flex-row'} ${inventoryOpen ? 'pointer-events-auto' : ''}`}>
+            {hotbar.map((slot, index) => {
+              const isSelected = selectedSlotIndex === index && !inventoryOpen;
+              return (
+                <button
+                  key={index}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, 'hotbar', index)}
+                  onMouseEnter={() => { if (hoveredSlotRef) hoveredSlotRef.current = { type: 'hotbar', index }; }}
+                  onMouseLeave={() => { if (hoveredSlotRef) hoveredSlotRef.current = null; }}
+                  onClick={() => {
+                    handleSlotClick('hotbar', index);
+                  }}
+                  onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('hotbar', index, true); }}
+                  className={`w-12 h-12 p-1.5 rounded-lg relative transition-all duration-200 ${
+                    isSelected 
+                      ? 'ring-2 ring-amber-400 scale-110 bg-gradient-to-t from-white/20 to-transparent shadow-[0_0_15px_rgba(251,191,36,0.5)] z-10' 
+                      : 'hover:bg-white/10 opacity-70 hover:opacity-100 bg-black/50'
+                  }`}
+                >
+                  <div className="absolute -top-1 -left-1 text-[9px] font-black bg-black/60 text-white w-4 h-4 flex items-center justify-center rounded border border-white/20 shadow-sm">{index + 1}</div>
+                  {renderBlockIcon(slot)}
+                  {/* Persistent active slot indicator dot */}
+                  {isSelected && (
+                    <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex items-center justify-center pointer-events-none">
+                      <div className="w-3.5 h-1 bg-amber-400 rounded-full shadow-[0_0_8px_#fbbf24] animate-pulse" />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </DraggableHUDBar>
         {/* Consolidated Unified Menu */}
         <UnifiedMenu
           isOpen={inventoryOpen}
@@ -2607,6 +3047,28 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           setShowLeftActionBar={setShowLeftActionBar}
           showRightActionBar={showRightActionBar}
           setShowRightActionBar={setShowRightActionBar}
+          party={party}
+          nearbyPlayers={nearbyPlayers}
+          onInvitePartyPlayer={handleInvitePartyPlayer}
+          onInspectPartyPlayer={(member) => {
+            setInspectedPlayer({
+              id: member.id,
+              name: member.name,
+              level: member.level || 10,
+              playerClass: member.playerClass || 'warrior',
+              equipment: equipment.slice(0, 4),
+              stats: {
+                hp: member.hp || 200,
+                maxHp: member.maxHp || 200,
+                defense: 15,
+                attack: 25
+              }
+            });
+          }}
+          onLeaveParty={handleLeaveParty}
+          onStartReadyCheck={() => {
+            addNotification('system', 'Ready Check', 'Party', 'Party Ready Check broadcasted!');
+          }}
           equipment={equipment}
           craftingGrid={craftingGrid}
           craftingResult={craftingResult}
@@ -2616,6 +3078,13 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           onQuickSort={handleQuickSort}
           onQuickStack={handleQuickStack}
           onTossItem={handleTossItem}
+          onTriggerHUDEdit={() => {
+            setInventoryOpen(false);
+            setIsHUDEditMode(true);
+          }}
+          onApplyEnchant={handleApplyEnchant}
+          onApplyGem={handleApplyGem}
+          onDismantle={handleDismantle}
           onSlotHover={(_slot, _e, type, index) => {
             if (type && index !== undefined) {
               hoveredSlotRef.current = { type, index };
@@ -2653,6 +3122,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
               Sounds.levelUp();
             },
             onAllocateAbility: (ability) => {
+              if (ability.startsWith('spec_')) {
+                setAbilities(a => ({ ...a, [ability]: 1 }));
+                return;
+              }
               if (skillPoints <= 0) return;
               if (ability === 'double_jump' && (abilities.double_jump || 0) >= 1) return;
               setSkillPoints(sp => Math.max(0, sp - 1));
@@ -2919,6 +3392,39 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                 Add Friend
               </button>
               <button 
+                onClick={() => {
+                  const targetMember = party?.members.find(m => m.id === interactPlayerId);
+                  setInspectedPlayer({
+                    id: interactPlayerId,
+                    name: interactPlayerName || 'Hero',
+                    level: 12,
+                    playerClass: (targetMember?.role === 'tank' ? 'Warrior' : targetMember?.role === 'healer' ? 'Mage' : 'Ranger') as any,
+                    race: 'Human',
+                    equipment: [
+                      { type: BlockType.Diamond, prefix: 'flametouched', enchantLevel: 5, gem1: 'ruby' },
+                      { type: 104, prefix: 'fortified', enchantLevel: 3, gem1: 'emerald' },
+                      { type: 105, prefix: 'fleetfoot', enchantLevel: 2, gem1: 'sapphire' }
+                    ],
+                    stats: {
+                      attack: 54,
+                      defense: 38,
+                      health: 240,
+                      maxHealth: 240,
+                      mana: 160,
+                      maxMana: 160,
+                      critChance: 18,
+                      speedBonus: 15
+                    },
+                    guild: 'Silver Vanguard',
+                    achievementsCount: 24
+                  });
+                  setInteractPlayerId(null);
+                }}
+                className="w-full bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 py-3 rounded-xl font-bold border border-purple-500/30 transition-colors flex items-center justify-center gap-2"
+              >
+                <Eye size={18} /> Inspect Player Gear
+              </button>
+              <button 
                 onClick={() => setInteractPlayerId(null)}
                 className="w-full bg-neutral-800 hover:bg-neutral-700 text-white py-3 rounded-xl font-bold transition-colors mt-2"
               >
@@ -3115,8 +3621,15 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                              chatInputRef.current.focus();
                          }
                      } else if (n.type === 'party') {
-                         setSendChatMsg({text: 'I joined your party!', timestamp: Date.now()});
-                         if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your party!', room: serverName });
+                         setParty({
+                           id: 'party_' + n.senderId,
+                           leaderId: n.senderId,
+                           members: [
+                             { id: n.senderId, name: n.senderName || 'Leader', isLeader: true, hp: 100, maxHp: 100, level: 5, playerClass: 'warrior' },
+                             { id: socketRef.current?.id || 'me', name: nickname, isLeader: false, hp: health, maxHp: 100, level, playerClass }
+                           ]
+                         });
+                         if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I joined your party!', channel: 'party', room: serverName });
                      } else if (n.type === 'friend') {
                          setSendChatMsg({text: 'I accepted your friend request!', timestamp: Date.now()});
                          if (socketRef.current) socketRef.current.emit('chat_message', { text: 'I accepted your friend request!', room: serverName });
@@ -3280,6 +3793,45 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           </div>
         )}
 
+        {/* HUD Edit Mode Overlay */}
+        <HUDEditOverlay
+          isActive={isHUDEditMode}
+          layout={hudLayout}
+          onClose={() => setIsHUDEditMode(false)}
+          onReset={handleResetHUDLayout}
+          onToggleVisibility={handleToggleElementVisibility}
+          onRotateBar={handleRotateHotbar}
+        />
+
+        {/* Interactive Party Loot Roll Window */}
+        {activeLootRoll && (
+          <PartyLootRollModal
+            item={activeLootRoll}
+            onRoll={(decision) => {
+              Sounds.slotClick();
+              setChatMessages(prev => [
+                ...prev,
+                {
+                  id: Math.random().toString(),
+                  sender: 'Loot System',
+                  text: `${nickname || 'Hero'} selected [${decision.toUpperCase()}] for ${activeLootRoll.itemName}.`,
+                  timestamp: Date.now()
+                }
+              ]);
+              setActiveLootRoll(null);
+            }}
+            onClose={() => setActiveLootRoll(null)}
+          />
+        )}
+
+        {/* Deep Player Inspection Modal */}
+        {inspectedPlayer && (
+          <PlayerInspectModal
+            player={inspectedPlayer}
+            onClose={() => setInspectedPlayer(null)}
+            renderBlockIcon={renderBlockIcon}
+          />
+        )}
         
         {/* Instructions Modal */}
         {showInstructions && (

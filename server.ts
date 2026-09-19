@@ -3,7 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { Server as SocketIOServer } from 'socket.io';
 import http from 'http';
-import { generateWorld, World } from './src/lib/world';
+import { generateWorld, getSafeSpawnPoint, World } from './src/lib/world';
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
@@ -219,7 +219,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
     }
 }
 
-  const activeRooms: Record<string, {
+  interface ServerRoom {
     world: World;
     players: Record<string, any>;
     mobs: Record<string, any>;
@@ -229,10 +229,16 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
     parties: Record<string, any>;
     trades: Record<string, any>;
     projectiles: Record<string, any>;
+    protectedBlocks: Record<string, { partyId: string; leaderId: string; ownerName: string }>;
+    modifiedBlocks: Record<string, number>;
+    dirty: boolean;
+    lastSavedAt: number;
     timeOfDay: number;
-  }> = {
-    'public-lobby': {
-      world: generateWorld('public-lobby'),
+  }
+
+  function createInitialRoom(seed: string): ServerRoom {
+    return {
+      world: generateWorld(seed),
       players: {},
       mobs: {},
       items: {},
@@ -241,9 +247,81 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       parties: {},
       trades: {},
       projectiles: {},
+      protectedBlocks: {},
+      modifiedBlocks: {},
+      dirty: false,
+      lastSavedAt: Date.now(),
       timeOfDay: 0
-    }
+    };
+  }
+
+  const activeRooms: Record<string, ServerRoom> = {
+    'public-lobby': createInitialRoom('public-lobby'),
+    'realm-2': createInitialRoom('realm-2'),
+    'realm-3': createInitialRoom('realm-3')
   };
+
+  async function loadRoomPersistentState(roomId: string, room: ServerRoom) {
+    if (!db) return;
+    try {
+      const doc = await db.collection('rooms').doc(roomId).get();
+      if (doc.exists) {
+        const data = doc.data();
+        if (data?.modifiedBlocks) {
+          try {
+            const modMap = typeof data.modifiedBlocks === 'string' ? JSON.parse(data.modifiedBlocks) : data.modifiedBlocks;
+            room.modifiedBlocks = modMap;
+            for (const key in modMap) {
+              const [txStr, tyStr] = key.split('_');
+              const tx = parseInt(txStr, 10);
+              const ty = parseInt(tyStr, 10);
+              if (!isNaN(tx) && !isNaN(ty) && room.world[tx] && room.world[tx][ty] !== undefined) {
+                room.world[tx][ty] = modMap[key];
+              }
+            }
+          } catch (e) {}
+        }
+        if (data?.protectedBlocks) {
+          try {
+            const protMap = typeof data.protectedBlocks === 'string' ? JSON.parse(data.protectedBlocks) : data.protectedBlocks;
+            room.protectedBlocks = protMap;
+          } catch (e) {}
+        }
+      }
+    } catch (err) {
+      console.warn(`Could not load persistent state for ${roomId}:`, err);
+    }
+  }
+
+  // Load persistent modifications on startup for basic realms
+  loadRoomPersistentState('public-lobby', activeRooms['public-lobby']);
+  loadRoomPersistentState('realm-2', activeRooms['realm-2']);
+  loadRoomPersistentState('realm-3', activeRooms['realm-3']);
+
+  // 100ms server state loop: checks dirty flag and syncs room state
+  setInterval(async () => {
+    const now = Date.now();
+    for (const roomId in activeRooms) {
+      const room = activeRooms[roomId];
+      if (room.dirty) {
+        room.dirty = false;
+        room.lastSavedAt = now;
+        if (db) {
+          try {
+            await db.collection('rooms').doc(roomId).set({
+              roomId,
+              modifiedBlocks: JSON.stringify(room.modifiedBlocks || {}),
+              protectedBlocks: JSON.stringify(room.protectedBlocks || {}),
+              timeOfDay: room.timeOfDay || 0,
+              updatedAt: now
+            }, { merge: true });
+          } catch (err) {
+            // Silently handle transient db errors to avoid log clutter
+          }
+        }
+      }
+    }
+  }, 100);
 
   setInterval(() => {
     for (const roomId in activeRooms) {
@@ -497,7 +575,121 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
         } else if (Math.abs(mob.vx) > 3) {
           mob.vx *= 0.8; // friction if knocked back
         } else {
-          mob.vx = mob.facingRight ? 2 : -2;
+          // Tactical Mob AI: Boss wind-up or pack aggro chasing
+          if (mob.type === 'golem_boss') {
+            mob.bossAttackCooldown = Math.max(0, (mob.bossAttackCooldown || 0) - 1);
+
+            // Active wind-up ground slam
+            if (mob.telegraph) {
+              mob.vx = 0; // Freeze in place while telegraphing
+              mob.telegraph.progress = (mob.telegraph.progress || 0) + 1;
+
+              if (mob.telegraph.progress >= (mob.telegraph.maxProgress || 20)) {
+                // Ground slam executes!
+                const slamRadius = mob.telegraph.radius || 130;
+                const slamDmg = 35;
+                for (const pId in room.players) {
+                  const p = room.players[pId];
+                  const pDist = Math.hypot(p.x - mob.x, p.y - mob.y);
+                  if (pDist <= slamRadius) {
+                    p.hp = Math.max(0, (p.hp || 100) - slamDmg);
+                    io.to(pId).emit('take_damage', { amount: slamDmg, facingRight: p.x > mob.x });
+                    io.to(roomId).emit('damage_indicator', {
+                      id: Math.random().toString(),
+                      x: p.x,
+                      y: p.y,
+                      damage: slamDmg,
+                      isPlayer: true
+                    });
+                  }
+                }
+                io.to(roomId).emit('boss_slam_impact', { bossId: mob.id, x: mob.x, y: mob.y, radius: slamRadius });
+                mob.telegraph = null;
+                mob.bossAttackCooldown = 120; // 6 second cooldown (at 20 ticks/s)
+              }
+            } else {
+              // Find target or chase
+              let targetPlayer: any = null;
+              if (mob.targetPlayerId && room.players[mob.targetPlayerId]) {
+                targetPlayer = room.players[mob.targetPlayerId];
+              } else {
+                // Seek nearest player within 250px
+                let nearestDist = 250;
+                for (const pId in room.players) {
+                  const p = room.players[pId];
+                  const d = Math.hypot(p.x - mob.x, p.y - mob.y);
+                  if (d < nearestDist) {
+                    nearestDist = d;
+                    targetPlayer = p;
+                    mob.targetPlayerId = pId;
+                  }
+                }
+              }
+
+              if (targetPlayer) {
+                const dx = targetPlayer.x - mob.x;
+                const dist = Math.hypot(dx, targetPlayer.y - mob.y);
+                if (dist < 110 && mob.bossAttackCooldown <= 0) {
+                  // Initiate telegraphed ground slam!
+                  mob.telegraph = {
+                    type: 'ground_slam',
+                    progress: 0,
+                    maxProgress: 20,
+                    x: mob.x,
+                    y: mob.y,
+                    radius: 130
+                  };
+                  io.to(roomId).emit('boss_telegraph', {
+                    bossId: mob.id,
+                    type: 'ground_slam',
+                    x: mob.x,
+                    y: mob.y,
+                    radius: 130,
+                    durationMs: 1000
+                  });
+                } else if (dist < 320) {
+                  mob.vx = dx > 0 ? 2.5 : -2.5;
+                  mob.facingRight = dx > 0;
+                } else {
+                  mob.vx = mob.facingRight ? 1.5 : -1.5;
+                }
+              } else {
+                mob.vx = mob.facingRight ? 1.5 : -1.5;
+              }
+            }
+          } else {
+            // Standard / Pack Aggro AI
+            let targetPlayer: any = null;
+            if (mob.targetPlayerId && room.players[mob.targetPlayerId]) {
+              targetPlayer = room.players[mob.targetPlayerId];
+            } else {
+              // Pack detection range: 180px
+              let nearestDist = 180;
+              for (const pId in room.players) {
+                const p = room.players[pId];
+                const d = Math.hypot(p.x - mob.x, p.y - mob.y);
+                if (d < nearestDist) {
+                  nearestDist = d;
+                  targetPlayer = p;
+                  mob.targetPlayerId = pId;
+                }
+              }
+            }
+
+            if (targetPlayer) {
+              const dx = targetPlayer.x - mob.x;
+              const dist = Math.hypot(dx, targetPlayer.y - mob.y);
+              if (dist < 260) {
+                mob.vx = dx > 0 ? 3.2 : -3.2;
+                mob.facingRight = dx > 0;
+              } else {
+                mob.targetPlayerId = null; // target escaped
+                mob.vx = mob.facingRight ? 2 : -2;
+              }
+            } else {
+              mob.vx = mob.facingRight ? 2 : -2;
+            }
+          }
         }
         
         mob.x += mob.vx;
@@ -596,7 +788,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
   io.on('connection', (socket) => {
     let currentRoom: string | null = null;
 
-    socket.on('join_room', (data: { roomId: string, nickname?: string, uid?: string, email?: string, profileId?: string } | string) => { 
+    socket.on('join_room', async (data: { roomId: string, nickname?: string, uid?: string, email?: string, profileId?: string } | string) => { 
       const roomId = typeof data === 'string' ? data : data.roomId; 
       const nickname = typeof data === 'string' ? 'Player' : (data.nickname || 'Player');
       const profileId = typeof data === 'string' ? undefined : data.profileId;
@@ -629,50 +821,16 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
 
       // Initialize room if it doesn't exist
       if (!activeRooms[roomId]) {
-        activeRooms[roomId] = {
-
-          world: generateWorld(roomId),
-          players: {},
-          mobs: (() => {
-             const m: any = {};
-             if (roomId.startsWith('dungeon')) {
-                 const tunnelLevel = 250 / 2; // WORLD_HEIGHT is 250
-                 for (let x = 30; x < 970; x += 50) { // WORLD_WIDTH is 1000, up to 970
-                     const id = 'mob_' + Date.now() + '_' + x;
-                     m[id] = { id, type: 'skeleton', x: x * 32, y: tunnelLevel * 32, vx: 0, vy: 0, hp: 50, maxHp: 50 };
-                     
-                     const id2 = 'mob_z_' + Date.now() + '_' + x;
-                     m[id2] = { id: id2, type: 'zombie', x: (x + 20) * 32, y: tunnelLevel * 32, vx: 0, vy: 0, hp: 80, maxHp: 80 };
-                 }
-                 const bossId = 'boss_' + Date.now();
-                 m[bossId] = { id: bossId, type: 'golem_boss', x: 970 * 32, y: tunnelLevel * 32, vx: 0, vy: 0, hp: 1000, maxHp: 1000 };
-             }
-             return m;
-          })(),
-        
-          items: {},
-          chests: {},
-          createdAt: Date.now(),
-          parties: {},
-          trades: {},
-          projectiles: {},
-          timeOfDay: 0
-        };
+        activeRooms[roomId] = createInitialRoom(roomId);
+        await loadRoomPersistentState(roomId, activeRooms[roomId]);
       }
 
       const roomCreatedAt = (activeRooms[roomId] as any).createdAt;
 
-      // Calculate reliable spawn
-      const world = activeRooms[roomId].world;
-      // We also use a seeded random for the spawn point so they spawn near each other
-      const spawnSeed = roomId.length + 42;
-      const spawnX = Math.floor(world.length / 2) + (spawnSeed % 10 - 5);
-      let spawnY = 0;
-      while (spawnY < world[0].length && world[spawnX][spawnY] === 0) {
-        spawnY++;
-      }
-      const startX = spawnX * 32;
-      const startY = (spawnY - 2) * 32;
+      // Calculate guaranteed safe ground spawn (avoids floating roofs, sky, void)
+      const safeSpawn = getSafeSpawnPoint(activeRooms[roomId].world);
+      const startX = safeSpawn.x;
+      const startY = safeSpawn.y;
 
       // Add player to room
       activeRooms[roomId].players[socket.id] = { 
@@ -697,6 +855,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
         players: activeRooms[roomId].players,
         mobs: activeRooms[roomId].mobs,
         items: activeRooms[roomId].items,
+        protectedBlocks: activeRooms[roomId].protectedBlocks || {},
         id: socket.id,
         roomCreatedAt: roomCreatedAt
       });
@@ -780,16 +939,31 @@ socket.on('open_chest', async (data: { tx: number, ty: number }) => {
 
     
     
-socket.on('chat_message', (message: string) => {
+socket.on('sync_stats', (data: { skills?: { strength?: number; dexterity?: number; intelligence?: number }, hp?: number, maxHp?: number, mana?: number, maxMana?: number, level?: number }) => {
+      if (!currentRoom || !activeRooms[currentRoom]) return;
+      const player = activeRooms[currentRoom].players[socket.id];
+      if (!player) return;
+      if (data.skills) player.skills = data.skills;
+      if (data.hp !== undefined) player.hp = data.hp;
+      if (data.maxHp !== undefined) player.maxHp = data.maxHp;
+      if (data.mana !== undefined) player.mana = data.mana;
+      if (data.maxMana !== undefined) player.maxMana = data.maxMana;
+      if (data.level !== undefined) player.level = data.level;
+    });
+
+    socket.on('chat_message', (payload: any) => {
       if (!currentRoom) return;
       const room = activeRooms[currentRoom];
       const player = room?.players[socket.id];
       if (!player) return;
 
+      const message = typeof payload === 'string' ? payload : (payload?.message || payload?.text || '');
+      const rawChannel = typeof payload === 'object' && payload?.channel ? payload.channel : 'zone';
+
       // ---- Admin-only commands ----
       if (message.startsWith('/give ') || message.startsWith('/give_sp ') || message.startsWith('/give_xp ') || message.startsWith('/give_level ') || message.startsWith('/mob ')) {
         if (!player.isAdmin) {
-          socket.emit('chat_message', { id: 'system', name: 'System', message: '⛔ You do not have permission to use this command.' });
+          socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: '⛔ You do not have permission to use this command.', channel: 'system' });
           return;
         }
 
@@ -801,33 +975,33 @@ socket.on('chat_message', (message: string) => {
           if (!isNaN(typeId)) {
             const itemId = 'item_' + Date.now() + '_' + Math.floor(Math.random()*1000);
             room.items[itemId] = { id: itemId, type: typeId, count, x: player.x, y: player.y - 32, vx: 0, vy: -3, spawnTime: Date.now() };
-            socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Spawned item ${typeId} x${count}.` });
+            socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `✅ Spawned item ${typeId} x${count}.`, channel: 'system' });
           }
         } else if (message.startsWith('/give_sp ')) {
           const amount = parseInt(parts[1]) || 1;
           socket.emit('give_sp', amount);
-          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Granted ${amount} Skill Points.` });
+          socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `✅ Granted ${amount} Skill Points.`, channel: 'system' });
         } else if (message.startsWith('/give_xp ')) {
           const amount = parseInt(parts[1]) || 100;
           socket.emit('give_xp', amount);
-          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Granted ${amount} XP.` });
+          socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `✅ Granted ${amount} XP.`, channel: 'system' });
         } else if (message.startsWith('/give_level ')) {
           const amount = parseInt(parts[1]) || 1;
           socket.emit('give_level', amount);
-          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Granted ${amount} levels.` });
+          socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `✅ Granted ${amount} levels.`, channel: 'system' });
         } else if (message.startsWith('/mob ')) {
           const mobType = parts[1] || 'slime';
           const mobId = 'mob_admin_' + Date.now();
           room.mobs[mobId] = { id: mobId, type: mobType, x: player.x + 64, y: player.y, vx: 0, vy: 0, hp: mobType === 'golem_boss' ? 300 : 10, maxHp: mobType === 'golem_boss' ? 300 : 10, facingRight: false };
           io.to(currentRoom).emit('mobs_update', room.mobs);
-          socket.emit('chat_message', { id: 'system', name: 'System', message: `✅ Spawned mob: ${mobType}.` });
+          socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `✅ Spawned mob: ${mobType}.`, channel: 'system' });
         }
         return;
       }
       
       if (message.startsWith('/spawn')) {
-         socket.emit('teleport', { x: 4000, y: 1000 }); // Will teleport player and let physics drop them to spawn
-         socket.emit('chat_message', { id: 'system', name: 'System', message: `Teleported to spawn.` });
+         socket.emit('teleport', { x: 4000, y: 1000 });
+         socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `Teleported to spawn.`, channel: 'system' });
          return;
       }
 
@@ -840,7 +1014,6 @@ socket.on('chat_message', (message: string) => {
            let targetSocketId = null;
            let actualTargetName = '';
            
-           // Search all rooms to allow cross-server whispers!
            for (const rId in activeRooms) {
                for (const p of Object.values(activeRooms[rId].players)) {
                   if (p.name.toLowerCase() === targetName) {
@@ -853,14 +1026,36 @@ socket.on('chat_message', (message: string) => {
            }
 
            if (targetSocketId) {
-              io.to(targetSocketId).emit('chat_message', { id: socket.id, name: player.name, message: `(Whisper from ${player.name}): ${whisperMsg}` });
-              socket.emit('chat_message', { id: socket.id, name: player.name, message: `(Whisper to ${actualTargetName}): ${whisperMsg}` });
+              io.to(targetSocketId).emit('chat_message', { id: socket.id, name: player.name, sender: player.name, text: `(Whisper from ${player.name}): ${whisperMsg}`, channel: 'party', timestamp: Date.now() });
+              socket.emit('chat_message', { id: socket.id, name: player.name, sender: player.name, text: `(Whisper to ${actualTargetName}): ${whisperMsg}`, channel: 'party', timestamp: Date.now() });
            } else {
-              socket.emit('chat_message', { id: 'system', name: 'System', message: `Player ${parts[1]} not found or offline.` });
+              socket.emit('chat_message', { id: 'system', name: 'System', sender: 'System', text: `Player ${parts[1]} not found or offline.`, channel: 'system' });
            }
         }
       } else {
-        io.to(currentRoom).emit('chat_message', { id: socket.id, name: player.name, message });
+        // Channel classification
+        let channel = rawChannel;
+        let cleanText = message;
+        if (message.startsWith('/p ') || message.startsWith('/party ')) {
+          channel = 'party';
+          cleanText = message.replace(/^\/(p|party)\s+/, '');
+        } else if (message.startsWith('/t ') || message.startsWith('/trade ')) {
+          channel = 'trade';
+          cleanText = message.replace(/^\/(t|trade)\s+/, '');
+        } else if (message.startsWith('/z ') || message.startsWith('/zone ')) {
+          channel = 'zone';
+          cleanText = message.replace(/^\/(z|zone)\s+/, '');
+        }
+
+        io.to(currentRoom).emit('chat_message', { 
+          id: socket.id, 
+          name: player.name, 
+          sender: player.name, 
+          text: cleanText, 
+          message: cleanText, 
+          channel: channel || 'zone', 
+          timestamp: Date.now() 
+        });
       }
     });
 
@@ -917,9 +1112,29 @@ socket.on('chat_message', (message: string) => {
 
     socket.on('block_update', (data: { tx: number, ty: number, blockType: number }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
-      const { world, players } = activeRooms[currentRoom];
+      const room = activeRooms[currentRoom];
+      const { world, players } = room;
       const player = players[socket.id];
       if (!player) return;
+
+      const blockKey = `${data.tx}_${data.ty}`;
+      const protectedInfo = room.protectedBlocks?.[blockKey];
+
+      // Indestructible protection check for party owners / parties
+      if (protectedInfo) {
+        const isPartyMember = 
+          (player.partyId && player.partyId === protectedInfo.partyId) || 
+          socket.id === protectedInfo.leaderId;
+        
+        if (!isPartyMember) {
+          socket.emit('action_rejected', { 
+            reason: `Indestructible! Block is protected by party of ${protectedInfo.ownerName}.` 
+          });
+          // Roll back / preserve the protected block on client
+          socket.emit('world_updated', { tx: data.tx, ty: data.ty, blockType: world[data.tx][data.ty] });
+          return;
+        }
+      }
 
       // World edits must originate near the player; AdminBrick is admin-only.
       const identity = (socket.data.identity as SocketIdentity | null) || null;
@@ -932,8 +1147,81 @@ socket.on('chat_message', (message: string) => {
       if (!verdict.ok) return;
 
       world[data.tx][data.ty] = data.blockType;
+
+      // Update protected blocks tracking
+      if (data.blockType === 0) {
+        if (room.protectedBlocks?.[blockKey]) {
+          delete room.protectedBlocks[blockKey];
+          io.to(currentRoom).emit('block_protection_removed', { tx: data.tx, ty: data.ty });
+        }
+      } else {
+        // If player has party protection mode active, protect newly placed blocks
+        if (player.partyProtectionEnabled && player.partyId) {
+          if (!room.protectedBlocks) room.protectedBlocks = {};
+          room.protectedBlocks[blockKey] = {
+            partyId: player.partyId,
+            leaderId: socket.id,
+            ownerName: player.name || 'Party Leader'
+          };
+          io.to(currentRoom).emit('block_protection_set', {
+            tx: data.tx,
+            ty: data.ty,
+            partyId: player.partyId,
+            ownerName: player.name || 'Party Leader'
+          });
+        }
+      }
+
+      // Record modified blocks and flag room dirty for 100ms state saver
+      if (!room.modifiedBlocks) room.modifiedBlocks = {};
+      room.modifiedBlocks[blockKey] = data.blockType;
+      room.dirty = true;
+
       // Broadcast to everyone else in room (sender predicts locally)
       socket.to(currentRoom).emit('world_updated', data);
+    });
+
+    socket.on('set_party_block_protection', (data: { enabled: boolean }) => {
+      if (!currentRoom || !activeRooms[currentRoom]) return;
+      const room = activeRooms[currentRoom];
+      const player = room.players[socket.id];
+      if (!player) return;
+      player.partyProtectionEnabled = !!data.enabled;
+      socket.emit('party_block_protection_state', { enabled: player.partyProtectionEnabled });
+    });
+
+    socket.on('protect_targeted_block', (data: { tx: number, ty: number }) => {
+      if (!currentRoom || !activeRooms[currentRoom]) return;
+      const room = activeRooms[currentRoom];
+      const player = room.players[socket.id];
+      if (!player) return;
+
+      const blockKey = `${data.tx}_${data.ty}`;
+      if (!room.protectedBlocks) room.protectedBlocks = {};
+
+      if (room.protectedBlocks[blockKey]) {
+        // Toggle off if already protected by this party
+        if (room.protectedBlocks[blockKey].partyId === player.partyId || room.protectedBlocks[blockKey].leaderId === socket.id) {
+          delete room.protectedBlocks[blockKey];
+          room.dirty = true;
+          io.to(currentRoom).emit('block_protection_removed', { tx: data.tx, ty: data.ty });
+        }
+      } else {
+        // Protect block for party
+        const partyId = player.partyId || ('party_' + socket.id);
+        room.protectedBlocks[blockKey] = {
+          partyId,
+          leaderId: socket.id,
+          ownerName: player.name || 'Party Leader'
+        };
+        room.dirty = true;
+        io.to(currentRoom).emit('block_protection_set', {
+          tx: data.tx,
+          ty: data.ty,
+          partyId,
+          ownerName: player.name || 'Party Leader'
+        });
+      }
     });
 
     
@@ -948,8 +1236,17 @@ socket.on('chat_message', (message: string) => {
         const clean = sanitizeProjectile(data, { x: player.x, y: player.y });
         if (!clean) return;
 
+        // Server-Side Stat Scaling for Projectiles:
+        // Dexterity authoritatively scales arrow/physical projectiles; Intelligence scales magical spells.
+        let scaledDamage = clean.damage;
+        if (clean.type === 'arrow' || clean.type === 'poison_arrow' || clean.type === 'bullet') {
+          scaledDamage += Math.floor((player.skills?.dexterity || 0) * 1.5);
+        } else if (clean.type === 'fireball' || clean.type === 'frostbolt' || clean.type === 'arcane_blast') {
+          scaledDamage += Math.floor((player.skills?.intelligence || 0) * 2.0);
+        }
+
         const pId = 'proj_' + Math.random().toString(36).substr(2, 9);
-        room.projectiles[pId] = { id: pId, ownerId: socket.id, ...clean };
+        room.projectiles[pId] = { id: pId, ownerId: socket.id, ...clean, damage: scaledDamage };
     });
 
 
@@ -975,14 +1272,18 @@ socket.on('chat_message', (message: string) => {
         if (!verdict.ok) return;
         attacker.lastHitAt = now;
 
+        // Server-side strength scaling bonus
+        const strBonus = Math.floor((attacker.skills?.strength || 0) * 2);
+        const finalDamage = Math.min(60, verdict.damage + strBonus);
+
         // Apply damage locally on their client
-        io.to(data.targetId).emit('take_damage', { amount: verdict.damage, facingRight: data.facingRight });
+        io.to(data.targetId).emit('take_damage', { amount: finalDamage, facingRight: data.facingRight });
         // Emit damage indicator
         io.to(currentRoom).emit('damage_indicator', {
             id: Math.random().toString(),
             x: targetPlayer.x,
             y: targetPlayer.y,
-            damage: verdict.damage, isPlayer: true
+            damage: finalDamage, isPlayer: true
         });
       }
     });
@@ -1003,15 +1304,24 @@ socket.on('chat_message', (message: string) => {
         if (!verdict.ok) return;
         attacker.lastHitAt = now;
 
+        // Server-Side Stat Scaling for Melee (strength bonus authoritative calculation)
+        const strBonus = Math.floor((attacker.skills?.strength || 0) * 2);
+        const finalDamage = Math.min(60, verdict.damage + strBonus);
+
         const hitX = primaryMob.x;
         const hitY = primaryMob.y;
         const splashRadius = 64; // ~2 blocks splash damage
 
+        // Pack aggro: alert attacked mob and all nearby pack members within 240px
+        primaryMob.targetPlayerId = socket.id;
         for (const mId in room.mobs) {
           const m = room.mobs[mId];
-          const dist = Math.sqrt(Math.pow(m.x - hitX, 2) + Math.pow(m.y - hitY, 2));
-          if (dist <= splashRadius) {
-            m.hp -= verdict.damage;
+          const distToHit = Math.hypot(m.x - hitX, m.y - hitY);
+          if (distToHit <= 240) {
+            m.targetPlayerId = socket.id;
+          }
+          if (distToHit <= splashRadius) {
+            m.hp -= finalDamage;
             m.vy = -6;
             m.vx = (m.x > hitX) ? 8 : (m.x < hitX) ? -8 : (data.facingRight ? 8 : -8);
             m.lastHitBy = socket.id; // Always use authoritative socket.id
@@ -1021,7 +1331,7 @@ socket.on('chat_message', (message: string) => {
               id: Math.random().toString(), 
               x: m.x, 
               y: m.y, 
-              damage: verdict.damage, isPlayer: false 
+              damage: finalDamage, isPlayer: false 
             });
           }
         }

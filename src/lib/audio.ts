@@ -1,20 +1,25 @@
 // Simple Web Audio API Synthesizer for game sounds
-const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-const ctx = new AudioContext();
+const isBrowser = typeof window !== 'undefined';
+const AudioContextClass = isBrowser ? (window.AudioContext || (window as any).webkitAudioContext) : null;
+const ctx: AudioContext | null = AudioContextClass ? new AudioContextClass() : null;
 
-const masterGain = ctx.createGain();
-masterGain.gain.value = 0.5; // Default volume 50%
-masterGain.connect(ctx.destination);
+const masterGain: GainNode | null = ctx ? ctx.createGain() : null;
+if (masterGain && ctx) {
+  masterGain.gain.value = 0.5; // Default volume 50%
+  masterGain.connect(ctx.destination);
+}
 
 export const AudioController = {
   setVolume: (vol: number) => {
+    if (!ctx || !masterGain) return;
     if (ctx.state === 'suspended') ctx.resume();
     masterGain.gain.linearRampToValueAtTime(Math.max(0, Math.min(1, vol)), ctx.currentTime + 0.1);
   },
-  getVolume: () => masterGain.gain.value
+  getVolume: () => masterGain?.gain.value ?? 0.5
 };
 
 function playTone(freq: number, type: OscillatorType, duration: number, vol: number = 0.1) {
+  if (!ctx || !masterGain) return;
   if (ctx.state === 'suspended') ctx.resume();
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -35,6 +40,7 @@ function playTone(freq: number, type: OscillatorType, duration: number, vol: num
 // Noise buffer for breaking blocks
 let noiseBuffer: AudioBuffer | null = null;
 function getNoiseBuffer() {
+  if (!ctx) return null;
   if (noiseBuffer) return noiseBuffer;
   const bufferSize = ctx.sampleRate * 0.5;
   const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -427,5 +433,19 @@ export const Sounds = {
   },
   shoot: () => {
     playTone(400, 'square', 0.1, 0.1);
+  },
+  anvilHit: () => {
+    playTone(180, 'triangle', 0.15, 0.25);
+    setTimeout(() => playTone(880, 'sine', 0.2, 0.3), 30);
+    setTimeout(() => playTone(1760, 'sine', 0.1, 0.15), 50);
+  },
+  craft: () => {
+    playTone(440, 'triangle', 0.1, 0.18);
+    setTimeout(() => playTone(554.37, 'triangle', 0.12, 0.2), 75);
+    setTimeout(() => playTone(659.25, 'sine', 0.25, 0.22), 150);
+  },
+  shield: () => {
+    playTone(320, 'triangle', 0.15, 0.2);
+    setTimeout(() => playTone(640, 'sine', 0.2, 0.15), 40);
   },
 };
