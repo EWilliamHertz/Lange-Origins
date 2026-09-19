@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ABILITY_SLOT_TYPE,
   CHARACTER_SCHEMA_VERSION,
   INVENTORY_SIZES,
   createDefaultCharacterDoc,
   decodeCharacterDoc,
   encodeCharacterFields,
+  isAbilitySlot,
   sanitizeInventoryPayload,
   sanitizeSlot,
   sanitizeSlots,
@@ -112,9 +114,29 @@ describe('slot sanitization', () => {
   });
 
   it('keeps ability slots only with a real ability id', () => {
-    expect(sanitizeSlot({ type: 102, isAbility: true, abilityId: 'slash' }))
-      .toEqual({ type: 102, count: 1, isAbility: true, abilityId: 'slash' });
-    expect(sanitizeSlot({ type: 102, isAbility: true })).toBeNull();
+    // The in-memory shape the client places has no `type` at all.
+    expect(sanitizeSlot({ isAbility: true, abilityId: 'slash' }))
+      .toEqual({ type: ABILITY_SLOT_TYPE, count: 1, isAbility: true, abilityId: 'slash' });
+    expect(sanitizeSlot({ isAbility: true })).toBeNull();
+    expect(sanitizeSlot({ isAbility: true, abilityId: '' })).toBeNull();
+    expect(sanitizeSlot({ isAbility: true, abilityId: 42 })).toBeNull();
+    expect(sanitizeSlot({ isAbility: true, abilityId: 'Fire Ball!' })).toBeNull();
+    expect(sanitizeSlot({ isAbility: true, abilityId: 'a'.repeat(41) })).toBeNull();
+    // `isAbility` must be literally true; anything else is an ordinary item slot.
+    expect(sanitizeSlot({ type: 105, count: 2, isAbility: 'yes', abilityId: 'slash' })).toEqual({ type: 105, count: 2 });
+  });
+
+  it('never lets an ability slot masquerade as an item', () => {
+    // A stored `type` (real item id or garbage) is normalised to the marker, so
+    // weapon/selection logic that reads `slot.type` sees empty hands.
+    for (const type of [102, 999999, -1, 'sword', undefined]) {
+      const slot = sanitizeSlot({ type, isAbility: true, abilityId: 'ground_slam' });
+      expect(slot).toEqual({ type: ABILITY_SLOT_TYPE, count: 1, isAbility: true, abilityId: 'ground_slam' });
+      expect(isAbilitySlot(slot)).toBe(true);
+    }
+    expect(isAbilitySlot({ type: 105, count: 1 })).toBe(false);
+    expect(isAbilitySlot(null)).toBe(false);
+    expect(isAbilitySlot({ isAbility: true, abilityId: '' })).toBe(false);
   });
 
   it('pads short arrays and truncates long ones to the declared size', () => {
@@ -169,5 +191,31 @@ describe('createDefaultCharacterDoc / encodeCharacterFields', () => {
     expect(payload.updatedAt).toBe(123456);
     expect(payload.schemaVersion).toBe(CHARACTER_SCHEMA_VERSION);
     expect('revision' in payload).toBe(false);
+  });
+
+  it('keeps placed abilities on every action bar across save and reload', () => {
+    // Regression: ability slots were dropped by the item-id check on save, so
+    // every ability placed on a bar vanished on the next reload.
+    const placed = { isAbility: true, abilityId: 'fireball' }; // exact client shape (no `type`)
+    const hotbar = [placed, { type: 105, count: 1 }, ...Array(8).fill(null)];
+    const leftActionBar = [null, { isAbility: true, abilityId: 'heal' }, ...Array(8).fill(null)];
+    const rightActionBar = [...Array(9).fill(null), { isAbility: true, abilityId: 'teleport' }];
+    const payload = encodeCharacterFields({ hotbar, leftActionBar, rightActionBar, backpack: [], equipment: [] });
+
+    const expected = (id: string) => ({ type: ABILITY_SLOT_TYPE, count: 1, isAbility: true, abilityId: id });
+    expect(JSON.parse(payload.hotbar as string)[0]).toEqual(expected('fireball'));
+    expect(JSON.parse(payload.hotbar as string)[1]).toEqual({ type: 105, count: 1 });
+    expect(JSON.parse(payload.leftActionBar as string)[1]).toEqual(expected('heal'));
+    expect(JSON.parse(payload.rightActionBar as string)[9]).toEqual(expected('teleport'));
+
+    // What Firestore hands back decodes to the same slots, and stays stable on a second pass.
+    const { data } = decodeCharacterDoc({ ...payload, id: 'prof_1', revision: 3 });
+    expect(JSON.parse(data.hotbar)[0]).toEqual(expected('fireball'));
+    expect(JSON.parse(data.leftActionBar)[1]).toEqual(expected('heal'));
+    expect(JSON.parse(data.rightActionBar)[9]).toEqual(expected('teleport'));
+    const again = encodeCharacterFields({ ...data });
+    expect(again.hotbar).toBe(payload.hotbar);
+    expect(again.leftActionBar).toBe(payload.leftActionBar);
+    expect(again.rightActionBar).toBe(payload.rightActionBar);
   });
 });

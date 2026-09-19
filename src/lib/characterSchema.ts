@@ -26,7 +26,36 @@ export interface InventorySlotData {
   abilityId?: string;
 }
 
+/**
+ * An action-bar slot holding a class ability instead of an item stack. The
+ * canonical shape is `{ type: ABILITY_SLOT_TYPE, count: 1, isAbility: true,
+ * abilityId }` — `type` is a marker only, never a real item id, so code that
+ * derives the held item from `slot.type` sees empty hands.
+ */
+export interface AbilitySlotData extends InventorySlotData {
+  type: typeof ABILITY_SLOT_TYPE;
+  count: 1;
+  isAbility: true;
+  abilityId: string;
+}
+
 export type Slot = InventorySlotData | null;
+
+/** Marker `type` for ability slots (Air: "no item here"). */
+export const ABILITY_SLOT_TYPE = BlockType.Air;
+
+/** Ability ids are short snake_case identifiers (`fireball`, `ground_slam`). */
+export const ABILITY_ID_PATTERN = /^[a-z][a-z0-9_]{0,39}$/;
+
+/** True for any slot value that references an ability (persisted or in-memory shape). */
+export function isAbilitySlot(slot: unknown): slot is AbilitySlotData {
+  return (
+    typeof slot === 'object' && slot !== null && !Array.isArray(slot) &&
+    (slot as Record<string, unknown>).isAbility === true &&
+    typeof (slot as Record<string, unknown>).abilityId === 'string' &&
+    ((slot as Record<string, unknown>).abilityId as string).length > 0
+  );
+}
 
 export interface CharacterDoc {
   id: string;
@@ -117,14 +146,20 @@ export function parseJsonValue(value: unknown): unknown {
 /** Sanitize one inventory slot; returns null for anything unrecognized. */
 export function sanitizeSlot(raw: unknown): Slot {
   if (!isPlainObject(raw)) return null;
+  if (raw.isAbility === true) {
+    // Ability slots reference an ability id, not an item stack. They must be
+    // recognised *before* the item-id check: the client places them without a
+    // `type`, and running them through the item validation first wiped every
+    // placed ability on save. Whatever `type` came in, the stored marker is
+    // always ABILITY_SLOT_TYPE so an ability can never masquerade as an item.
+    const abilityId = typeof raw.abilityId === 'string' ? raw.abilityId : '';
+    if (!ABILITY_ID_PATTERN.test(abilityId)) return null;
+    const slot: AbilitySlotData = { type: ABILITY_SLOT_TYPE, count: 1, isAbility: true, abilityId };
+    return slot;
+  }
   const type = clampInt(raw.type, NaN, 0, Number.MAX_SAFE_INTEGER);
   if (!Number.isFinite(type) || !KNOWN_ITEM_TYPES.has(type) || FORBIDDEN_SLOT_TYPES.has(type)) {
     return null;
-  }
-  if (raw.isAbility === true) {
-    // Ability slots reference an ability id, not an item stack.
-    const abilityId = typeof raw.abilityId === 'string' ? raw.abilityId.slice(0, 40) : '';
-    return abilityId ? { type, count: 1, isAbility: true, abilityId } : null;
   }
   const slot: InventorySlotData = { type, count: clampInt(raw.count, 1, 1, MAX_STACK) };
   if (typeof raw.durability === 'number' && Number.isFinite(raw.durability)) {

@@ -6,38 +6,21 @@ import { BlockType, BlockColors, BlockNames } from './lib/constants';
 import { getBlockIcon } from './lib/icons';
 import GameCanvas from './components/GameCanvas';
 import LandingPage from './components/LandingPage';
-import { Heart, MessageSquare, ArrowRight, Hand, LogOut, User, Star, Clock, Globe, Scroll, X, Book, Shield, Plus, Layers, ShoppingBag, Volume2, VolumeX, Sword, Flame, Pickaxe , Wind, Snowflake, Crosshair, Tent, FastForward, Activity , Compass, LayoutGrid, Zap, Award, Package, Coins } from 'lucide-react';
+import { Heart, MessageSquare, ArrowRight, Hand, LogOut, User, Star, Clock, Globe, Scroll, X, Book, Shield, Plus, Layers, ShoppingBag, Volume2, VolumeX, Sword, Flame, Pickaxe, Activity, Compass, LayoutGrid, Zap, Award, Package, Coins } from 'lucide-react';
 import { checkRecipe, RECIPES } from './lib/crafting';
 import { Sounds } from './lib/audio';
 import { auth, logout, db } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs, deleteDoc, updateDoc, increment, orderBy, query, limit } from 'firebase/firestore';
 import { createDefaultCharacterDoc, decodeCharacterDoc, encodeCharacterFields } from './lib/characterSchema';
+import { type BarKey, type Bars, bindAbilityKey, getAbility, isAbilitySlot, keyForAbility, makeAbilitySlot, placeAbilityOnBars } from './lib/abilities';
 import { CharacterMissingError, StaleCharacterError, createCharacterDoc, readCharacterRevision, saveCharacterDoc } from './lib/characterPersistence';
 import { Socket } from 'socket.io-client';
 import { UnifiedMenu, UnifiedMenuTab } from './components/UnifiedMenu';
 import { ItemTooltip } from './components/ItemTooltip';
 
-export const MMO_ABILITIES = [
-
-    { id: 'ground_slam', class: 'warrior', name: 'Ground Slam', desc: 'Slam the ground to damage enemies.', req: 8, cost: 20, cd: 12, icon: <Activity size={24}/> },
-    { id: 'battle_shout', class: 'warrior', name: 'Battle Shout', desc: 'Heal yourself slightly and buff.', req: 10, cost: 25, cd: 20, icon: <Heart size={24} className="text-red-500" /> },
-    { id: 'arcane_blast', class: 'mage', name: 'Arcane Blast', desc: 'A huge blast of magic energy.', req: 8, cost: 30, cd: 15, icon: <Activity size={24} className="text-purple-500"/> },
-    { id: 'teleport', class: 'mage', name: 'Teleport', desc: 'Instantly travel a short distance.', req: 10, cost: 25, cd: 12, icon: <FastForward size={24} className="text-cyan-500"/> },
-    { id: 'multishot', class: 'archer', name: 'Multishot', desc: 'Fire multiple arrows at once.', req: 8, cost: 25, cd: 8, icon: <Crosshair size={24} className="text-yellow-500"/> },
-    { id: 'poison_arrow', class: 'archer', name: 'Poison Arrow', desc: 'Fire a toxic arrow.', req: 10, cost: 20, cd: 10, icon: <Crosshair size={24} className="text-green-500"/> },
-
-    { id: 'slash', class: 'warrior', name: 'Slash', desc: 'Melee attack dealing standard physical damage.', req: 0, cost: 0, cd: 3, icon: <Sword size={24}/> },
-    { id: 'whirlwind', class: 'warrior', name: 'Whirlwind', desc: 'Spinning attack damaging all nearby enemies.', req: 3, cost: 15, cd: 8, icon: <Wind size={24}/> },
-    { id: 'dash', class: 'warrior', name: 'Dash', desc: 'Lunge forward quickly.', req: 5, cost: 10, cd: 5, icon: <FastForward size={24}/> },
-    { id: 'fireball', class: 'mage', name: 'Fireball', desc: 'Shoot a flaming projectile.', req: 0, cost: 10, cd: 5, icon: <Flame size={24}/> },
-    { id: 'frostbolt', class: 'mage', name: 'Frostbolt', desc: 'Launch ice that slows enemies.', req: 3, cost: 15, cd: 6, icon: <Snowflake size={24}/> },
-    { id: 'heal', class: 'mage', name: 'Heal', desc: 'Restore 20 HP.', req: 5, cost: 20, cd: 10, icon: <Heart size={24}/> },
-    { id: 'shoot', class: 'archer', name: 'Shoot', desc: 'Fire a fast arrow.', req: 0, cost: 0, cd: 2, icon: <Crosshair size={24}/> },
-    { id: 'snipe', class: 'archer', name: 'Snipe', desc: 'A devastating heavy shot.', req: 3, cost: 20, cd: 10, icon: <Crosshair size={24} className="text-red-500" /> },
-    { id: 'trap', class: 'archer', name: 'Trap', desc: 'Place a trap that damages enemies.', req: 5, cost: 15, cd: 15, icon: <Tent size={24}/> },
-];
-
+// Class abilities live in src/lib/abilities.tsx (shared by the skill tree, the
+// action bars and GameCanvas's cast pipeline).
 
 const checkEquipable = (type: number) => (type >= 100 && type <= 109) || type === 302 || type === 400 || type === 401;
 
@@ -460,36 +443,98 @@ export default function App() {
   }, [currentUser, hasLoadedSave, appState, gold, equipment, hotbar, leftActionBar, rightActionBar, backpack, quests, health, xp, level, statPoints, skillPoints, skills, abilities, keybinds, kills]);
 
   const socketRef = useRef<Socket | null>(null);
-  const hoveredSlotRef = useRef<{type: string, index: number} | null>(null);
+  // `index` is the slot position for bars/containers, or the ability id for skill-tree cards (type 'ability').
+  const hoveredSlotRef = useRef<{type: string, index: number | string} | null>(null);
   const [furnaceInput, setFurnaceInput] = useState<InventorySlot>(null);
   const [furnaceFuel, setFurnaceFuel] = useState<InventorySlot>(null);
   const [furnaceOutput, setFurnaceOutput] = useState<InventorySlot>(null);
   const [cursorItem, setCursorItem] = useState<InventorySlot>(null);
-  const [draggedItemInfo, setDraggedItemInfo] = useState<{type: string, index: number} | null>(null);
+  const [draggedItemInfo, setDraggedItemInfo] = useState<{type: string, index: number | string} | null>(null);
+
+  /**
+   * Merge an item stack into a backpack array (stacking onto matching items
+   * first, then the first empty slot). Returns the new array plus how much
+   * did not fit. Ability slots are never stashed: they are not items and can
+   * be re-added from the skill tree at any time.
+   */
+  const stashInBackpack = (item: InventorySlot, current: InventorySlot[]): { next: InventorySlot[]; remaining: number } => {
+     if (!item || item.type === 0 || isAbilitySlot(item)) return { next: current, remaining: 0 };
+     const next = [...current];
+     let remaining = item.count;
+     for (let i = 0; i < next.length && remaining > 0; i++) {
+        if (next[i] && !isAbilitySlot(next[i]) && next[i].type === item.type && next[i].count < 64) {
+           const add = Math.min(remaining, 64 - next[i].count);
+           next[i] = { ...next[i], count: next[i].count + add };
+           remaining -= add;
+        }
+     }
+     if (remaining > 0) {
+        const empty = next.findIndex(s => !s);
+        if (empty !== -1) {
+           next[empty] = { type: item.type, count: remaining, durability: item.durability };
+           remaining = 0;
+        }
+     }
+     return { next, remaining };
+  };
 
   const returnCursorItemToInventory = (item) => {
      if (!item || item.type === 0) return;
-     setBackpack(prev => {
-        const next = [...prev];
-        let remaining = item.count;
-        for (let i = 0; i < next.length; i++) {
-           if (next[i] && next[i].type === item.type && next[i].count < 64) {
-              const space = 64 - next[i].count;
-              const add = Math.min(remaining, space);
-              next[i] = { ...next[i], count: next[i].count + add };
-              remaining -= add;
-              if (remaining <= 0) return next;
-           }
-        }
-        for (let i = 0; i < next.length; i++) {
-           if (!next[i]) {
-              next[i] = { type: item.type, count: remaining, durability: item.durability };
-              return next;
-           }
-        }
-        return next;
-     });
+     setBackpack(prev => stashInBackpack(item, prev).next);
      setCursorItem(null);
+  };
+
+  // --- Ability placement & keybinds -------------------------------------
+  // Abilities live on the three action bars as ability slots (see
+  // lib/abilities.tsx). Everything that puts one on a bar goes through
+  // makeAbilitySlot / placeAbilityOnBars so slots always have the canonical,
+  // persistable shape.
+  const bars: Bars = { hotbar, leftActionBar, rightActionBar };
+  const setBar = (bar: BarKey, next: InventorySlot[]) => {
+    if (bar === 'hotbar') setHotbar(next);
+    else if (bar === 'leftActionBar') setLeftActionBar(next);
+    else setRightActionBar(next);
+  };
+
+  /** Bind a key to an ability; returns false for reserved keys / unknown abilities. */
+  const bindKeyToAbility = (key: string, abilityId: string): boolean => {
+    // bindAbilityKey is pure and returns its input untouched when it refuses.
+    if (bindAbilityKey(keybinds, key, abilityId) === keybinds) return false;
+    setKeybinds(prev => bindAbilityKey(prev, key, abilityId));
+    Sounds.slotClick();
+    return true;
+  };
+
+  /** "Add to Bar": first free slot on the hotbar, then the side bars. */
+  const handleAddAbilityToBar = (abilityId: string) => {
+    const result = placeAbilityOnBars(bars, abilityId);
+    if (result.ok === true) {
+      setBar(result.bar, result.bars[result.bar]);
+      if (result.bar === 'leftActionBar' && !showLeftActionBar) setShowLeftActionBar(true);
+      if (result.bar === 'rightActionBar' && !showRightActionBar) setShowRightActionBar(true);
+      Sounds.equipGear();
+    } else if (result.reason === 'already_placed') {
+      const name = getAbility(abilityId)?.name || 'Ability';
+      addNotification('system', 'System', 'System', `${name} is already on your ${result.bar === 'hotbar' ? 'hotbar' : 'action bar'} (slot ${(result.index ?? 0) + 1}).`);
+    } else if (result.reason === 'no_free_slot') {
+      addNotification('system', 'System', 'System', 'No free action bar slot. Clear a slot first.');
+    }
+  };
+
+  /**
+   * Every cast — hotbar number key, bar click, or custom keybind — funnels
+   * into GameCanvas's single `cast_ability` listener, which owns cooldowns,
+   * targeting, mana and the socket.
+   */
+  const requestCast = (abilityId: string) => {
+    window.dispatchEvent(new CustomEvent('cast_ability', { detail: { abilityId } }));
+  };
+
+  /** Skill-tree cards are dragged with the same payload the bars already accept. */
+  const handleAbilityDragStart = (e: React.DragEvent, abilityId: string) => {
+    e.dataTransfer.setData('text/plain', 'ability,' + abilityId);
+    e.dataTransfer.effectAllowed = 'copy';
+    setDraggedItemInfo({ type: 'ability', index: abilityId });
   };
 
   
@@ -815,7 +860,7 @@ export default function App() {
             setBackpack(b => { nextB = [...b]; return b; });
             const temp = nextH[hotbarIdx];
             nextH[hotbarIdx] = nextB[index];
-            nextB[index] = temp;
+            nextB[index] = isAbilitySlot(temp) ? null : temp; // abilities only live on bars
             setHotbar(nextH);
             setBackpack(nextB);
         } else if (type === 'leftActionBar') {
@@ -974,8 +1019,9 @@ export default function App() {
         }
 
         // 2. If hovering an inventory or action bar slot -> drop hovered item
-        if (hoveredSlotRef.current) {
-          const { type: sType, index: sIdx } = hoveredSlotRef.current;
+        if (hoveredSlotRef.current && typeof hoveredSlotRef.current.index === 'number') {
+          const sType = hoveredSlotRef.current.type;
+          const sIdx = hoveredSlotRef.current.index;
           let targetItem: InventorySlot = null;
           if (sType === 'hotbar') targetItem = hotbar[sIdx];
           else if (sType === 'backpack') targetItem = backpack[sIdx];
@@ -1041,16 +1087,18 @@ export default function App() {
         return;
       }
       
-      if (hoveredSlotRef.current && (inventoryOpen || (!inventoryOpen && !isChatOpen))) {
+      // Loadout editing happens with the menu open: hover + key binds or places an
+      // ability. With the menu closed the same keys *cast* (GameCanvas), so the two
+      // never overlap.
+      if (hoveredSlotRef.current && inventoryOpen) {
+        const pressedKey = e.key.toLowerCase();
+
+        // Hovering a skill-tree card: press a key to bind that ability.
+        // (Escape / Tab / E / Q / I / J / L were already handled above.)
         if (hoveredSlotRef.current.type === 'ability') {
-           const key = e.key.toLowerCase();
-           if (key !== 'escape' && key !== 'tab' && key !== 'e' && key !== 'enter') {
-               setKeybinds(prev => {
-                   const next = { ...prev };
-                   for (const k in next) if (next[k] === hoveredSlotRef.current.index) delete next[k];
-                   next[key] = hoveredSlotRef.current.index;
-                   return next;
-               });
+           const abilityId = String(hoveredSlotRef.current.index);
+           if (!bindKeyToAbility(pressedKey, abilityId) && pressedKey.length === 1) {
+              addNotification('system', 'System', 'System', `"${pressedKey.toUpperCase()}" is reserved (movement, menus or hotbar). Choose another key.`);
            }
            return;
         }
@@ -1058,28 +1106,21 @@ export default function App() {
         const hRef = hoveredSlotRef.current;
         const isActionBar = ['hotbar', 'leftActionBar', 'rightActionBar'].includes(hRef.type);
         if (isActionBar) {
-            const targetArr = hRef.type === 'hotbar' ? [...hotbar] : hRef.type === 'leftActionBar' ? [...leftActionBar] : [...rightActionBar];
-            const slot = targetArr[hRef.index];
-            const pressedKey = e.key.toLowerCase();
+            const barKey = hRef.type as BarKey;
+            const slotIndex = Number(hRef.index);
+            const targetArr = [...bars[barKey]];
+            const slot = targetArr[slotIndex];
             
-            // If hovering an existing ability, bind it to the new key!
-            if (slot && typeof slot === 'object' && slot.isAbility && pressedKey !== 'escape' && pressedKey !== 'tab' && pressedKey !== 'e' && pressedKey !== 'enter') {
-                setKeybinds(prev => {
-                    const next = { ...prev };
-                    for (const k in next) if (next[k] === slot.abilityId) delete next[k];
-                    next[pressedKey] = slot.abilityId;
-                    return next;
-                });
-                return;
+            // Hovering a placed ability: bind it to the pressed key.
+            if (isAbilitySlot(slot)) {
+                if (bindKeyToAbility(pressedKey, slot.abilityId)) return;
             }
             
-            // If empty or non-ability, and we pressed a key that is bound to an ability, put it in!
-            const boundAbility = keybinds[pressedKey];
-            if (boundAbility) {
-                targetArr[hRef.index] = { isAbility: true, abilityId: boundAbility };
-                if (hRef.type === 'hotbar') setHotbar(targetArr);
-                if (hRef.type === 'leftActionBar') setLeftActionBar(targetArr);
-                if (hRef.type === 'rightActionBar') setRightActionBar(targetArr);
+            // Hovering an empty/non-ability slot: a bound key drops its ability in here.
+            const boundSlot = !isAbilitySlot(slot) ? makeAbilitySlot(keybinds[pressedKey]) : null;
+            if (boundSlot) {
+                targetArr[slotIndex] = boundSlot;
+                setBar(barKey, targetArr);
                 return;
             }
         }
@@ -1089,15 +1130,15 @@ export default function App() {
         const num = parseInt(e.key);
         if (num >= 1 && num <= 9) {
           const slot = hotbar[num - 1];
-          if (slot && typeof slot === 'object' && slot.isAbility) {
-             window.dispatchEvent(new CustomEvent('cast_ability', { detail: { abilityId: slot.abilityId } }));
+          if (isAbilitySlot(slot)) {
+             requestCast(slot.abilityId);
           } else {
              setSelectedSlotIndex(num - 1);
           }
         }
       } else if (inventoryOpen) {
         const num = parseInt(e.key);
-        if (hoveredSlotRef.current && num >= 1 && num <= 9) {
+        if (hoveredSlotRef.current && typeof hoveredSlotRef.current.index === 'number' && num >= 1 && num <= 9) {
            const hotbarIdx = num - 1;
            const hRef = hoveredSlotRef.current;
            window.dispatchEvent(new CustomEvent('swap_hotbar', { detail: { hotbarIdx, type: hRef.type, index: hRef.index } }));
@@ -1219,7 +1260,7 @@ export default function App() {
      const allItems: { type: number, count: number }[] = [];
      
      const processSlot = (slot: InventorySlot) => {
-         if (!slot) return;
+         if (!slot || isAbilitySlot(slot)) return; // abilities stay where they are
          const existing = allItems.find(i => i.type === slot.type);
          if (existing) {
              existing.count += slot.count;
@@ -1234,8 +1275,8 @@ export default function App() {
      // Sort by type (optional, but grouping is the main goal)
      allItems.sort((a, b) => a.type - b.type);
      
-     // Re-distribute
-     const newHotbar: InventorySlot[] = Array(10).fill(null);
+     // Re-distribute around any abilities placed on the hotbar
+     const newHotbar: InventorySlot[] = hotbar.map(s => (isAbilitySlot(s) ? s : null));
      const newBackpack: InventorySlot[] = Array(27).fill(null);
      
      let itemIndex = 0;
@@ -1326,12 +1367,20 @@ export default function App() {
         if (type === 'leftActionBar') arr = leftActionBar;
         if (type === 'rightActionBar') arr = rightActionBar;
         const slot = arr[index];
-        if (slot && typeof slot === 'object' && slot.isAbility) {
-             window.dispatchEvent(new CustomEvent('cast_ability', { detail: { abilityId: slot.abilityId } }));
+        if (isAbilitySlot(slot)) {
+             requestCast(slot.abilityId);
         } else if (type === 'hotbar') {
              setSelectedSlotIndex(index);
              Sounds.slotClick();
         }
+        return;
+    }
+
+    // An ability picked up on the cursor may only be put down on an action bar;
+    // clicking anywhere else discards it (it can be re-added from the skill tree).
+    if (isAbilitySlot(cursorItem) && type !== 'hotbar' && type !== 'leftActionBar' && type !== 'rightActionBar') {
+        setCursorItem(null);
+        Sounds.slotClick();
         return;
     }
 
@@ -1347,6 +1396,11 @@ export default function App() {
     // Helper to merge stacks
     const tryMerge = (target: InventorySlot, source: InventorySlot, isRightClick: boolean): { remainingTarget: InventorySlot, remainingSource: InventorySlot } => {
       if (!source && !target) return { remainingTarget: null, remainingSource: null };
+
+      // Ability slots are references, not stacks: never merge or split them, just pick up / swap.
+      if (isAbilitySlot(source) || isAbilitySlot(target)) {
+        return { remainingTarget: source, remainingSource: target };
+      }
       
       // Right click with empty cursor on a full target slot: pick up half
       if (!source && target) {
@@ -1550,14 +1604,36 @@ let targetArray = type === 'hotbar' ? [...hotbar]
     // Actually, we can just call handleSlotClick to pick up, then place.
     // Wait, handleSlotClick uses `cursorItem`. If we bypass cursorItem, we need to swap.
     
-    // const { type: srcType, index: srcIndex } = draggedItemInfo;
+    // Dragging a skill-tree card: abilities only live on the action bars.
     if (srcType === 'ability') {
-        const targetArr = [...(targetType === 'backpack' ? backpack : targetType === 'hotbar' ? hotbar : targetType === 'leftActionBar' ? leftActionBar : targetType === 'rightActionBar' ? rightActionBar : targetType === 'equipment' ? equipment : [])];
-        targetArr[targetIndex] = { isAbility: true, abilityId: srcIndex as string };
-        if (targetType === 'backpack') setBackpack(targetArr);
-        if (targetType === 'hotbar') setHotbar(targetArr);
-        if (targetType === 'leftActionBar') setLeftActionBar(targetArr);
-        if (targetType === 'rightActionBar') setRightActionBar(targetArr);
+        const slot = makeAbilitySlot(srcIndex);
+        const isBar = targetType === 'hotbar' || targetType === 'leftActionBar' || targetType === 'rightActionBar';
+        if (slot && isBar) {
+            const barKey = targetType as BarKey;
+            // A displaced item goes back to the backpack instead of being destroyed.
+            const displaced = bars[barKey][targetIndex];
+            if (displaced && !isAbilitySlot(displaced)) {
+                const { next, remaining } = stashInBackpack(displaced, backpack);
+                if (remaining > 0) {
+                    addNotification('system', 'System', 'System', 'Backpack is full; clear the slot first.');
+                    setDraggedItemInfo(null);
+                    return;
+                }
+                setBackpack(next);
+            }
+            // One ability, one slot: drop any earlier copy across the bars, then place.
+            for (const key of Object.keys(bars) as BarKey[]) {
+                const arr = bars[key];
+                const dupIdx = arr.findIndex(s => isAbilitySlot(s) && s.abilityId === slot.abilityId);
+                const isTarget = key === barKey;
+                if (dupIdx === -1 && !isTarget) continue;
+                const next = [...arr];
+                if (dupIdx !== -1) next[dupIdx] = null;
+                if (isTarget) next[targetIndex] = slot;
+                setBar(key, next);
+            }
+            Sounds.equipGear();
+        }
         setDraggedItemInfo(null);
         return;
     }
@@ -1590,9 +1666,17 @@ let targetArray = type === 'hotbar' ? [...hotbar]
     
     const srcItem = srcArr[srcIndex];
     const targetItem = targetArr[targetIndex];
+
+    // Ability slots only belong on the action bars; dragging one elsewhere just removes it.
+    if (isAbilitySlot(srcItem) && !['hotbar', 'leftActionBar', 'rightActionBar'].includes(targetType)) {
+        srcArr[srcIndex] = null;
+        setArray(srcType, srcArr);
+        setDraggedItemInfo(null);
+        return;
+    }
     
-    // Stack merge
-    if (srcItem && targetItem && srcItem.type === targetItem.type) {
+    // Stack merge (never for ability slots — they are references, not stacks)
+    if (srcItem && targetItem && srcItem.type === targetItem.type && !isAbilitySlot(srcItem) && !isAbilitySlot(targetItem)) {
         targetArr[targetIndex] = { type: srcItem.type, count: targetItem.count + srcItem.count };
         srcArr[srcIndex] = null;
     } else {
@@ -1620,12 +1704,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
     let type: BlockType;
     let count: number = 1;
     
-    if (typeof slot === 'object' && slot.isAbility) {
-       const ability = MMO_ABILITIES.find(a => a.id === slot.abilityId);
-       const Icon = ability ? React.cloneElement(ability.icon as React.ReactElement, { className: 'w-full h-full p-1 text-cyan-400 drop-shadow-md' }) : null;
+    if (isAbilitySlot(slot)) {
+       const ability = getAbility(slot.abilityId);
        if (!ability) return null;
-       const boundKey = Object.entries(keybinds).find(([k, v]) => v === slot.abilityId)?.[0];
-       return <div data-tooltip={ability.name} className="w-full h-full rounded-sm shadow-sm relative group flex items-center justify-center overflow-hidden bg-neutral-900 border border-cyan-500/30">{ability.icon}{boundKey && <span className="absolute top-0 right-0 bg-amber-500 text-black font-black text-[10px] px-1 rounded shadow-md z-10 leading-none">{boundKey.toUpperCase()}</span>}</div>;
+       const boundKey = keyForAbility(keybinds, slot.abilityId);
+       return <div data-tooltip={`${ability.name}${boundKey ? ` [${boundKey.toUpperCase()}]` : ''}`} className="w-full h-full rounded-sm shadow-sm relative group flex items-center justify-center overflow-hidden bg-neutral-900 border border-cyan-500/30">{ability.icon}{boundKey && <span className="absolute top-0 right-0 bg-amber-500 text-black font-black text-[10px] px-1 rounded shadow-md z-10 leading-none">{boundKey.toUpperCase()}</span>}</div>;
     }
     if (typeof slot === 'number') {
        type = slot;
@@ -2029,6 +2112,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           skills={skills}
           mana={mana}
           keybinds={keybinds}
+          magicUnlocked={quests.find(q => q.id === 'q5')?.completed === true}
           onManaChange={setMana}
 
           onTradeRequest={(senderId, senderName) => addNotification('trade', senderId, senderName)}
@@ -2540,6 +2624,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           onSlotLeave={() => {
             hoveredSlotRef.current = null;
           }}
+          onAddAbilityToBar={handleAddAbilityToBar}
+          onAbilityDragStart={handleAbilityDragStart}
           renderBlockIcon={renderBlockIcon}
           player={{
             nickname: nickname || 'Hero',
