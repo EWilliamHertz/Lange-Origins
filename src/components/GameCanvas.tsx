@@ -556,7 +556,9 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
 
     
     socket.on('grappled', (data: { hx: number, hy: number }) => {
-      gameState.current.grapplePoint = { x: data.hx, y: data.hy };
+      // Clamp the incoming grapple target too, so being grappled by another
+      // player can't drag you above the top of the world either.
+      gameState.current.grapplePoint = { x: data.hx, y: Math.max(TILE_SIZE, data.hy) };
       gameState.current.grappleTimer = 30;
       gameState.current.player.grounded = false;
     });
@@ -1286,6 +1288,9 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                    }
                }
                if (hit) {
+                   // Never let a grapple point sit above the playable world (the "sky"),
+                   // otherwise landing on it yanks the camera/character off the top of the map.
+                   hy = Math.max(TILE_SIZE, hy);
                    if (hitPlayerId && state.socket) {
                        state.socket.emit('grapple_pull', { targetId: hitPlayerId, hx: player.x, hy: player.y });
                    }
