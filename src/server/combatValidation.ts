@@ -188,8 +188,8 @@ export function sanitizeProjectile(
 // Block edits (block_update)
 // ---------------------------------------------------------------------------
 
-/** Client mining/placement reach is 6 tiles; allow a little latency slack. */
-export const BLOCK_REACH_PX = 6 * 32 + 48;
+/** Client mining/placement reach is 6 tiles; allow generous reach for tree planting, canopies, and latency. */
+export const BLOCK_REACH_PX = 10 * 32 + 64; // 384px
 
 export interface BlockEditVerdict {
   ok: boolean;

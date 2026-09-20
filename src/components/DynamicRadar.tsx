@@ -71,8 +71,8 @@ export const DynamicRadar: React.FC<DynamicRadarProps> = ({
     setIsDragging(true);
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
 
-    const currentX = position?.x ?? localPos.x;
-    const currentY = position?.y ?? localPos.y;
+    const currentX = position?.x ?? (localPos.x > 0 ? localPos.x : Math.max(16, window.innerWidth - 204));
+    const currentY = position?.y ?? (localPos.y > 0 ? localPos.y : 16);
 
     dragStartRef.current = {
       startMouseX: e.clientX,

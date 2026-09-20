@@ -198,14 +198,34 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
 
           {error && <div className="text-red-400 font-bold mb-6 bg-red-900/50 p-3 rounded-xl border border-red-500/30 w-full">{error}</div>}
 
-          <div className="flex flex-col items-center justify-center w-full max-w-xs">
+          <div className="flex flex-col items-center justify-center w-full max-w-xs gap-3">
             <button 
+              id="google-login-btn"
               onClick={handleGoogleAuth}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-3 px-8 py-4 bg-white text-neutral-900 font-bold rounded-2xl hover:bg-neutral-200 transition-all shadow-lg hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-3 px-8 py-3.5 bg-white text-neutral-900 font-bold rounded-2xl hover:bg-neutral-200 transition-all shadow-lg hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 text-sm"
             >
               <GoogleIcon />
               {loading ? "Authenticating..." : "Login with Google"}
+            </button>
+
+            <button
+              id="guest-play-btn"
+              onClick={() => {
+                const guestId = 'guest_' + Math.random().toString(36).substring(2, 9);
+                const guestUser = {
+                  uid: guestId,
+                  displayName: 'Adventurer ' + Math.floor(1000 + Math.random() * 9000),
+                  email: 'guest@langeorigins.local',
+                  isAnonymous: true,
+                  isGuest: true
+                };
+                onLoginSuccess(guestUser);
+              }}
+              disabled={loading}
+              className="w-full py-3 px-6 bg-neutral-900/80 hover:bg-neutral-800/90 text-amber-300 border border-amber-500/30 rounded-2xl font-bold text-xs uppercase tracking-wider transition-all hover:border-amber-400/60 active:scale-[0.98]"
+            >
+              Play as Guest (Quick Play)
             </button>
           </div>
         </motion.div>

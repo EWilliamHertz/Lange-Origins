@@ -10,6 +10,7 @@ export interface ServerRealm {
   players: number;
   maxPlayers: number;
   ping: number;
+  biomeTag?: string;
   featured?: boolean;
 }
 
@@ -19,29 +20,32 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Alpha (Main World)',
     category: 'Standard',
     description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
-    players: 0,
-    maxPlayers: 50,
-    ping: 25,
+    players: 8,
+    maxPlayers: 20,
+    ping: 42,
+    biomeTag: 'Verdant Woodlands',
     featured: true
   },
   {
     id: 'realm-2',
     name: 'Realm Beta (Wilderness)',
     category: 'Wilderness',
-    description: 'Expansive wild frontier with dense forests, mountain peaks, and natural resource veins.',
-    players: 0,
-    maxPlayers: 50,
-    ping: 28,
+    description: 'Expansive wild frontier with dense forests, volcanic crags, and deep crystal caverns.',
+    players: 14,
+    maxPlayers: 20,
+    ping: 38,
+    biomeTag: 'Obsidian Caverns',
     featured: true
   },
   {
     id: 'realm-3',
     name: 'Realm Gamma (Frontier)',
     category: 'Frontier',
-    description: 'A serene expanse with plentiful trees at spawn and undisturbed underground caverns.',
-    players: 0,
-    maxPlayers: 50,
-    ping: 30,
+    description: 'A serene expanse with snow-capped mountain peaks and undisturbed subterranean ruins.',
+    players: 5,
+    maxPlayers: 20,
+    ping: 54,
+    biomeTag: 'Glacial Peaks',
     featured: false
   }
 ];
@@ -203,6 +207,12 @@ export const ServerBrowserModal: React.FC<ServerBrowserModalProps> = ({
                   <div className="flex items-center gap-2 flex-wrap">
                     <h4 className="text-base font-bold text-white tracking-wide">{srv.name}</h4>
                     {getCategoryBadge(srv.category)}
+                    {srv.biomeTag && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 flex items-center gap-1">
+                        <Sparkles size={10} className="text-emerald-400" />
+                        {srv.biomeTag}
+                      </span>
+                    )}
                     {isSelected && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
                         <Check size={11} /> Selected
@@ -215,7 +225,8 @@ export const ServerBrowserModal: React.FC<ServerBrowserModalProps> = ({
                       <Users size={13} className="text-sky-400" /> {srv.players}/{srv.maxPlayers} Adventurers
                     </span>
                     <span className="flex items-center gap-1">
-                      <Wifi size={13} className={srv.ping < 30 ? 'text-emerald-400' : 'text-amber-400'} /> {srv.ping}ms
+                      <span className={`w-1.5 h-1.5 rounded-full ${srv.ping < 40 ? 'bg-emerald-400' : (srv.ping < 60 ? 'bg-amber-400' : 'bg-rose-400')} animate-pulse`} />
+                      <Wifi size={13} className={srv.ping < 40 ? 'text-emerald-400' : 'text-amber-400'} /> {srv.ping}ms
                     </span>
                     <span className="text-neutral-500">ID: {srv.id}</span>
                   </div>

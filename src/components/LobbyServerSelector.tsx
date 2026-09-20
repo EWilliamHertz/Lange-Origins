@@ -18,12 +18,13 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
   const activeServer =
     PRESET_SERVERS.find(s => s.id === selectedServerId) || {
       id: selectedServerId || 'public-lobby',
-      name: selectedServerId ? `Custom Realm (${selectedServerId})` : 'Public Realm (Default)',
+      name: selectedServerId ? `Custom Realm (${selectedServerId})` : 'Realm Alpha (Main World)',
       category: 'Standard' as const,
-      description: 'Connected to custom realm world instance.',
-      players: 1,
-      maxPlayers: 50,
-      ping: 25
+      description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
+      players: 8,
+      maxPlayers: 20,
+      ping: 42,
+      biomeTag: 'Verdant Woodlands'
     };
 
   return (
@@ -63,11 +64,19 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
             {activeServer.description}
           </p>
 
+          {activeServer.biomeTag && (
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
+              <Sparkles size={12} className="text-emerald-400" />
+              <span>Biome Seed: {activeServer.biomeTag}</span>
+            </div>
+          )}
+
           <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs font-mono text-neutral-400">
             <span className="flex items-center gap-1">
-              <Users size={12} className="text-sky-400" /> {activeServer.players} Adventurers
+              <Users size={12} className="text-sky-400" /> {activeServer.players}/20 Adventurers
             </span>
-            <span className="flex items-center gap-1 text-emerald-400">
+            <span className={`flex items-center gap-1 font-bold ${activeServer.ping < 40 ? 'text-emerald-400' : (activeServer.ping < 60 ? 'text-amber-400' : 'text-rose-400')}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${activeServer.ping < 40 ? 'bg-emerald-400' : (activeServer.ping < 60 ? 'bg-amber-400' : 'bg-rose-400')} animate-pulse`} />
               <Wifi size={12} /> {activeServer.ping}ms
             </span>
           </div>

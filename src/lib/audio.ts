@@ -3,22 +3,95 @@ const isBrowser = typeof window !== 'undefined';
 const AudioContextClass = isBrowser ? (window.AudioContext || (window as any).webkitAudioContext) : null;
 const ctx: AudioContext | null = AudioContextClass ? new AudioContextClass() : null;
 
-const masterGain: GainNode | null = ctx ? ctx.createGain() : null;
-if (masterGain && ctx) {
-  masterGain.gain.value = 0.5; // Default volume 50%
-  masterGain.connect(ctx.destination);
+// Read saved audio channel volumes
+function getSavedAudioChannels() {
+  if (typeof localStorage === 'undefined') return { master: 0.7, music: 0.5, sfx: 0.7, ui: 0.8 };
+  try {
+    const raw = localStorage.getItem('lange_audio_channels');
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return { master: 0.7, music: 0.5, sfx: 0.7, ui: 0.8 };
 }
 
-export const AudioController = {
-  setVolume: (vol: number) => {
+const savedChannels = getSavedAudioChannels();
+
+const masterGain: GainNode | null = ctx ? ctx.createGain() : null;
+const musicGain: GainNode | null = ctx ? ctx.createGain() : null;
+const sfxGain: GainNode | null = ctx ? ctx.createGain() : null;
+const uiGain: GainNode | null = ctx ? ctx.createGain() : null;
+
+if (masterGain && ctx) {
+  masterGain.gain.value = savedChannels.master ?? 0.7;
+  masterGain.connect(ctx.destination);
+}
+if (musicGain && masterGain) {
+  musicGain.gain.value = savedChannels.music ?? 0.5;
+  musicGain.connect(masterGain);
+}
+if (sfxGain && masterGain) {
+  sfxGain.gain.value = savedChannels.sfx ?? 0.7;
+  sfxGain.connect(masterGain);
+}
+if (uiGain && masterGain) {
+  uiGain.gain.value = savedChannels.ui ?? 0.8;
+  uiGain.connect(masterGain);
+}
+
+function persistAudioChannels() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem('lange_audio_channels', JSON.stringify({
+      master: masterGain?.gain.value ?? 0.7,
+      music: musicGain?.gain.value ?? 0.5,
+      sfx: sfxGain?.gain.value ?? 0.7,
+      ui: uiGain?.gain.value ?? 0.8,
+    }));
+  } catch (e) {}
+}
+
+export const AudioChannels = {
+  setMasterVolume: (vol: number) => {
     if (!ctx || !masterGain) return;
     if (ctx.state === 'suspended') ctx.resume();
-    masterGain.gain.linearRampToValueAtTime(Math.max(0, Math.min(1, vol)), ctx.currentTime + 0.1);
+    const clamped = Math.max(0, Math.min(1, vol));
+    masterGain.gain.linearRampToValueAtTime(clamped, ctx.currentTime + 0.05);
+    persistAudioChannels();
   },
-  getVolume: () => masterGain?.gain.value ?? 0.5
+  setMusicVolume: (vol: number) => {
+    if (!ctx || !musicGain) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const clamped = Math.max(0, Math.min(1, vol));
+    musicGain.gain.linearRampToValueAtTime(clamped, ctx.currentTime + 0.05);
+    persistAudioChannels();
+  },
+  setSfxVolume: (vol: number) => {
+    if (!ctx || !sfxGain) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const clamped = Math.max(0, Math.min(1, vol));
+    sfxGain.gain.linearRampToValueAtTime(clamped, ctx.currentTime + 0.05);
+    persistAudioChannels();
+  },
+  setUiVolume: (vol: number) => {
+    if (!ctx || !uiGain) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const clamped = Math.max(0, Math.min(1, vol));
+    uiGain.gain.linearRampToValueAtTime(clamped, ctx.currentTime + 0.05);
+    persistAudioChannels();
+  },
+  getVolumes: () => ({
+    master: masterGain?.gain.value ?? 0.7,
+    music: musicGain?.gain.value ?? 0.5,
+    sfx: sfxGain?.gain.value ?? 0.7,
+    ui: uiGain?.gain.value ?? 0.8,
+  })
 };
 
-function playTone(freq: number, type: OscillatorType, duration: number, vol: number = 0.1) {
+export const AudioController = {
+  setVolume: AudioChannels.setMasterVolume,
+  getVolume: () => masterGain?.gain.value ?? 0.7
+};
+
+function playTone(freq: number, type: OscillatorType, duration: number, vol: number = 0.1, channel: 'sfx' | 'ui' | 'music' = 'sfx') {
   if (!ctx || !masterGain) return;
   if (ctx.state === 'suspended') ctx.resume();
   const osc = ctx.createOscillator();
@@ -31,7 +104,8 @@ function playTone(freq: number, type: OscillatorType, duration: number, vol: num
   gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
   
   osc.connect(gain);
-  gain.connect(masterGain);
+  const targetGain = channel === 'ui' ? uiGain : (channel === 'music' ? musicGain : sfxGain);
+  gain.connect(targetGain || masterGain);
   
   osc.start();
   osc.stop(ctx.currentTime + duration);
@@ -70,7 +144,7 @@ export const Sounds = {
     
     lofiGain = ctx.createGain();
     lofiGain.gain.value = 0.2; // Background volume
-    lofiGain.connect(masterGain);
+    lofiGain.connect(musicGain || masterGain);
     
     // Chill Lofi Hiphop procedural generator
     const tempo = 80; // BPM
@@ -268,7 +342,7 @@ export const Sounds = {
     
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(masterGain);
+    gain.connect(sfxGain || masterGain);
     
     source.start();
     source.stop(ctx.currentTime + 0.1);
@@ -289,7 +363,7 @@ export const Sounds = {
     
     source.connect(filter);
     filter.connect(windGain);
-    windGain.connect(masterGain);
+    windGain.connect(musicGain || masterGain);
     
     source.start();
     
@@ -330,7 +404,7 @@ export const Sounds = {
     
     battleMusicOsc.connect(filter);
     filter.connect(battleMusicGain);
-    battleMusicGain.connect(masterGain);
+    battleMusicGain.connect(musicGain || masterGain);
     
     battleMusicOsc.start();
     
@@ -370,20 +444,20 @@ export const Sounds = {
     }, 280);
   },
   equipGear: () => {
-    playTone(700, 'sine', 0.08, 0.15);
-    setTimeout(() => playTone(1050, 'triangle', 0.12, 0.2), 40);
+    playTone(700, 'sine', 0.08, 0.15, 'ui');
+    setTimeout(() => playTone(1050, 'triangle', 0.12, 0.2, 'ui'), 40);
   },
   dropItem: () => {
-    playTone(280, 'sine', 0.08, 0.12);
-    setTimeout(() => playTone(180, 'sine', 0.12, 0.15), 35);
+    playTone(280, 'sine', 0.08, 0.12, 'ui');
+    setTimeout(() => playTone(180, 'sine', 0.12, 0.15, 'ui'), 35);
   },
   craftSuccess: () => {
-    playTone(440, 'triangle', 0.1, 0.18); // A4
-    setTimeout(() => playTone(554.37, 'triangle', 0.12, 0.2), 75); // C#5
-    setTimeout(() => playTone(659.25, 'sine', 0.25, 0.22), 150); // E5
+    playTone(440, 'triangle', 0.1, 0.18, 'ui'); // A4
+    setTimeout(() => playTone(554.37, 'triangle', 0.12, 0.2, 'ui'), 75); // C#5
+    setTimeout(() => playTone(659.25, 'sine', 0.25, 0.22, 'ui'), 150); // E5
   },
   slotClick: () => {
-    playTone(850, 'sine', 0.03, 0.08);
+    playTone(850, 'sine', 0.03, 0.08, 'ui');
   },
   slotHover: (() => {
     let lastHover = 0;
@@ -391,7 +465,7 @@ export const Sounds = {
       const now = performance.now();
       if (now - lastHover > 60) {
         lastHover = now;
-        playTone(1200, 'sine', 0.02, 0.03);
+        playTone(1200, 'sine', 0.02, 0.03, 'ui');
       }
     };
   })(),

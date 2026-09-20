@@ -1,5 +1,6 @@
 import { BlockType, SolidBlocks, PlatformBlocks, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from './constants';
 import { World } from './world';
+import { loadKeybinds } from './keybinds';
 
 export interface PlayerState {
   x: number;
@@ -35,11 +36,19 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
   if (player.stamina === undefined) player.stamina = 100;
   if (player.maxStamina === undefined) player.maxStamina = 100;
 
+  // Custom keybinds
+  const binds = loadKeybinds();
+  const leftKey = binds.moveLeft?.toLowerCase() || 'a';
+  const rightKey = binds.moveRight?.toLowerCase() || 'd';
+  const jumpKey = binds.jump?.toLowerCase() || 'w';
+  const dropKey = binds.dropPlatform?.toLowerCase() || 's';
+  const sprintKey = binds.sprint?.toLowerCase() || 'shift';
+
   // Movement Input Checks
-  const isMovingLeft = Boolean(keys['a'] || keys['ArrowLeft']);
-  const isMovingRight = Boolean(keys['d'] || keys['ArrowRight']);
+  const isMovingLeft = Boolean(keys['a'] || keys['ArrowLeft'] || keys[leftKey]);
+  const isMovingRight = Boolean(keys['d'] || keys['ArrowRight'] || keys[rightKey]);
   const isMovingHorizontally = isMovingLeft || isMovingRight;
-  const isShiftPressed = Boolean(keys['shift'] || keys['Shift'] || keys['ShiftLeft'] || keys['ShiftRight']);
+  const isShiftPressed = Boolean(keys['shift'] || keys['Shift'] || keys['ShiftLeft'] || keys['ShiftRight'] || keys[sprintKey]);
 
   // Sprinting evaluation: Shift held, moving horizontally, and has stamina
   const canSprint = isShiftPressed && isMovingHorizontally && player.stamina > 1.5;
@@ -80,7 +89,8 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
   }
   
   // Jumping
-  if ((keys['w'] || keys['ArrowUp'] || keys[' ']) && player.grounded) {
+  const isJumping = Boolean(keys['w'] || keys['ArrowUp'] || keys[' '] || keys[jumpKey]);
+  if (isJumping && player.grounded) {
     player.vy = JUMP_POWER;
     player.grounded = false;
     // Small stamina consumption on sprint jump
@@ -90,7 +100,7 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
   }
 
   // Falling through platforms
-  const isHoldingDown = keys['s'] || keys['ArrowDown'];
+  const isHoldingDown = Boolean(keys['s'] || keys['ArrowDown'] || keys[dropKey]);
 
   // Friction when no input
   if (!isMovingHorizontally) {
@@ -194,12 +204,12 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
       player.y = Math.floor((player.y + player.height) / TILE_SIZE) * TILE_SIZE - player.height - 0.01;
       player.grounded = true;
       
-      // Fall Damage Check
-      if (oldVy > 14) {
-        const damage = Math.floor((oldVy - 14) * 0.8);
+      // Fall Damage Check (only for high terminal velocity drops, not small platform falls)
+      if (oldVy > 20) {
+        const damage = Math.floor((oldVy - 20) * 0.7);
         if (damage > 0 && player.invulnerableTimer <= 0) {
           player.health -= damage;
-          player.invulnerableTimer = 30;
+          player.invulnerableTimer = 40;
         }
       }
     } else if (player.vy < 0) { // Hit ceiling
@@ -221,5 +231,14 @@ export function updatePhysics(player: PlayerState, world: World, keys: Record<st
         player.health -= 2;
         player.invulnerableTimer = 40;
      }
+  }
+
+  // Safety clamp: Prevent falling off world bounds into infinity
+  if (player.y < 0) {
+    player.y = 0;
+    if (player.vy < 0) player.vy = 0;
+  } else if (player.y > (WORLD_HEIGHT - 2) * TILE_SIZE) {
+    player.y = (WORLD_HEIGHT - 3) * TILE_SIZE;
+    player.vy = 0;
   }
 }

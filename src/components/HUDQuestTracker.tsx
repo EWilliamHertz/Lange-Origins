@@ -38,10 +38,10 @@ export const HUDQuestTracker: React.FC<HUDQuestTrackerProps> = ({
 
   const isTrackerVisible = visible ?? position?.visible ?? true;
 
-  // Fallback / initial position if not specified
+  // Fallback / initial position if not specified (placed comfortably beneath Dynamic Radar)
   const [localPos, setLocalPos] = useState<{ x: number; y: number }>({
     x: position?.x ?? 0,
-    y: position?.y ?? 64
+    y: position?.y ?? 272
   });
 
   useEffect(() => {
@@ -56,8 +56,8 @@ export const HUDQuestTracker: React.FC<HUDQuestTrackerProps> = ({
     setIsDragging(true);
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
 
-    const currentX = position?.x ?? localPos.x;
-    const currentY = position?.y ?? localPos.y;
+    const currentX = position?.x ?? (localPos.x > 0 ? localPos.x : Math.max(16, window.innerWidth - 276));
+    const currentY = position?.y ?? (localPos.y > 0 ? localPos.y : 272);
 
     dragStartRef.current = {
       startMouseX: e.clientX,
@@ -101,7 +101,7 @@ export const HUDQuestTracker: React.FC<HUDQuestTrackerProps> = ({
   const stylePosition: React.CSSProperties =
     position?.x !== undefined || localPos.x > 0
       ? { left: `${localPos.x}px`, top: `${localPos.y}px` }
-      : { right: '16px', top: '64px' };
+      : { right: '16px', top: '272px' };
 
   if (!isTrackerVisible) {
     if (!isEditMode) return null;

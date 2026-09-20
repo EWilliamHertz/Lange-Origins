@@ -35,6 +35,11 @@ interface HUDPartyOverlayProps {
   party: PartyMember[] | PartyData | null;
   nearbyPlayers: { id: string; name: string; playerClass?: string; level?: number }[];
   currentUserId: string;
+  currentUserName?: string;
+  currentHealth?: number;
+  maxHealth?: number;
+  currentMana?: number;
+  maxMana?: number;
   playerPos?: { x: number; y: number };
   isEditMode?: boolean;
   visible?: boolean;
@@ -57,6 +62,11 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
   party,
   nearbyPlayers,
   currentUserId,
+  currentUserName,
+  currentHealth,
+  maxHealth,
+  currentMana,
+  maxMana,
   playerPos,
   isEditMode = false,
   visible,
@@ -101,8 +111,8 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
     setIsDragging(true);
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
 
-    const currentX = position?.x ?? localPos.x;
-    const currentY = position?.y ?? localPos.y;
+    const currentX = position?.x ?? (localPos.x > 0 ? localPos.x : 16);
+    const currentY = position?.y ?? (localPos.y > 0 ? localPos.y : 76);
 
     dragStartRef.current = {
       startMouseX: e.clientX,
@@ -131,10 +141,26 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
     (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
   };
 
+  const defaultHp = currentHealth !== undefined ? Math.round(currentHealth) : 20;
+  const defaultMaxHp = maxHealth !== undefined ? Math.max(1, maxHealth) : 20;
+  const defaultMana = currentMana !== undefined ? Math.round(currentMana) : 100;
+  const defaultMaxMana = maxMana !== undefined ? Math.max(1, maxMana) : 100;
+
   const members: PartyMember[] = Array.isArray(party) 
     ? party 
     : (party?.members || [
-        { id: currentUserId, name: 'You', playerClass: 'warrior', role: 'tank', level: 10, hp: 200, maxHp: 200, mana: 100, maxMana: 100, isLeader: true }
+        { 
+          id: currentUserId || 'self', 
+          name: currentUserName || 'You', 
+          playerClass: 'warrior', 
+          role: 'tank', 
+          level: 1, 
+          hp: defaultHp, 
+          maxHp: defaultMaxHp, 
+          mana: defaultMana, 
+          maxMana: defaultMaxMana, 
+          isLeader: true 
+        }
       ]);
 
   const isLeader = members.find(m => m.id === currentUserId)?.isLeader ?? true;
@@ -353,24 +379,28 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
 
         {/* Party Member Frames */}
         {members.map(member => {
-          const hp = Math.max(0, member.hp || 0);
-          const maxHp = Math.max(1, member.maxHp || 100);
-          const hpPercent = Math.max(0, Math.min(100, Math.floor((hp / maxHp) * 100)));
+          const isSelf = member.id === currentUserId || member.name === 'You' || member.id === 'self' || (Boolean(currentUserName) && member.name === currentUserName);
+          const rawHp = isSelf && currentHealth !== undefined ? currentHealth : member.hp;
+          const rawMaxHp = isSelf && maxHealth !== undefined ? maxHealth : member.maxHp;
+          const rawMana = isSelf && currentMana !== undefined ? currentMana : member.mana;
+          const rawMaxMana = isSelf && maxMana !== undefined ? maxMana : member.maxMana;
 
-          const mana = member.mana ?? 100;
-          const maxMana = member.maxMana ?? 100;
-          const manaPercent = Math.max(0, Math.min(100, Math.floor((mana / maxMana) * 100)));
+          const hp = Math.max(0, Math.round(rawHp ?? 0));
+          const memberMaxHp = Math.max(1, Math.round(rawMaxHp ?? 20));
+          const hpPercent = Math.max(0, Math.min(100, Math.floor((hp / memberMaxHp) * 100)));
+
+          const mana = Math.max(0, Math.round(rawMana ?? 100));
+          const memberMaxMana = Math.max(1, Math.round(rawMaxMana ?? 100));
+          const manaPercent = Math.max(0, Math.min(100, Math.floor((mana / memberMaxMana) * 100)));
 
           // Distance calculation if playerPos exists
           let distanceStr = '';
-          if (playerPos && member.x !== undefined && member.y !== undefined && member.id !== currentUserId) {
+          if (playerPos && member.x !== undefined && member.y !== undefined && !isSelf) {
             const dx = member.x - playerPos.x;
             const dy = member.y - playerPos.y;
             const dist = Math.round(Math.sqrt(dx * dx + dy * dy));
             distanceStr = `${dist}m`;
           }
-
-          const isSelf = member.id === currentUserId;
 
           return (
             <div
@@ -442,7 +472,7 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
                   style={{ width: `${hpPercent}%` }}
                 />
                 <span className="absolute inset-0 flex items-center justify-center text-[8px] font-mono font-black text-white/90 drop-shadow-[0_1px_1px_black]">
-                  {hp} / {maxHp} ({hpPercent}%)
+                  {hp} / {memberMaxHp} ({hpPercent}%)
                 </span>
               </div>
 

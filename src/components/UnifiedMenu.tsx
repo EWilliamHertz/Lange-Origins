@@ -3,14 +3,15 @@ import {
   User, Package, Hammer, BookOpen, Sparkles, Settings, 
   X, Volume2, VolumeX, LogOut, ArrowRight, Check, 
   Trash2, Shield, Swords, Heart, Zap, Award, Search, Plus, Wrench, GripVertical, Lock, Keyboard,
-  Layers, Flame, Star, Compass, LayoutTemplate, Users, Crown, CheckCircle2, UserPlus
+  Layers, Flame, Star, Compass, LayoutTemplate, Users, Crown, CheckCircle2, UserPlus, HelpCircle
 } from 'lucide-react';
 import { BlockType, BlockNames, BlockColors } from '../lib/constants';
 import { RECIPES } from '../lib/crafting';
 import { abilitiesForClass, findAbilityOnBars, isAbilityUnlocked, keyForAbility } from '../lib/abilities';
 import { getTalentTreeForClass, getTalentRank, hasCapstone, getSelectedSpec } from '../lib/talents';
 import { getArmorSetInfo, ARMOR_SETS } from '../lib/armorSets';
-import { Sounds } from '../lib/audio';
+import { Sounds, AudioChannels } from '../lib/audio';
+import { loadKeybinds, saveKeybinds, resetKeybinds, DEFAULT_KEYBINDS, KEYBIND_LABELS, KeybindMap } from '../lib/keybinds';
 import { getItemMetadata, RARITY_STYLES, ItemTooltip } from './ItemTooltip';
 import { EnchantingStationView } from './EnchantingStationView';
 import { EnchantmentPrefix, GemType } from '../lib/enchanting';
@@ -71,7 +72,9 @@ interface UnifiedMenuProps {
     level: number;
     xp: number;
     health: number;
+    maxHealth?: number;
     mana: number;
+    maxMana?: number;
     stamina: number;
     maxStamina: number;
     kills?: Record<string, number>;
@@ -99,6 +102,7 @@ interface UnifiedMenuProps {
   onInspectPlayer?: (player: any) => void;
   onLeaveParty?: () => void;
   onStartReadyCheck?: () => void;
+  onOpenInstructions?: () => void;
 }
 
 export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
@@ -149,7 +153,8 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   onInvitePlayer,
   onInspectPlayer,
   onLeaveParty,
-  onStartReadyCheck
+  onStartReadyCheck,
+  onOpenInstructions
 }) => {
   const [recipeFilter, setRecipeFilter] = useState('');
   const [recipeCategory, setRecipeCategory] = useState<'all' | 'weapons' | 'armor' | 'tools' | 'resources'>('all');
@@ -157,6 +162,48 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   const [hoveredTooltip, setHoveredTooltip] = useState<{ slot: any; x: number; y: number } | null>(null);
   const [selectedSpecId, setSelectedSpecId] = useState<string | null>(null);
   const [socialInviteSearch, setSocialInviteSearch] = useState('');
+
+  // Audio channels state
+  const [audioVols, setAudioVols] = useState(() => AudioChannels.getVolumes());
+
+  // Custom keybinds state
+  const [activeKeybinds, setActiveKeybinds] = useState<KeybindMap>(() => loadKeybinds());
+  const [listeningKeybindAction, setListeningKeybindAction] = useState<keyof KeybindMap | null>(null);
+
+  // Inventory search & category filter state
+  const [invSearch, setInvSearch] = useState('');
+  const [invCategory, setInvCategory] = useState<'all' | 'weapons' | 'armor' | 'materials' | 'consumables'>('all');
+
+  // Crafting filter mode state
+  const [craftFilterMode, setCraftFilterMode] = useState<'all' | 'craftable'>('all');
+
+  // Listen for key remapping input
+  React.useEffect(() => {
+    if (!listeningKeybindAction) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === 'Escape') {
+        setListeningKeybindAction(null);
+        return;
+      }
+
+      const newKey = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const updated = {
+        ...activeKeybinds,
+        [listeningKeybindAction]: newKey
+      };
+      setActiveKeybinds(updated);
+      saveKeybinds(updated);
+      setListeningKeybindAction(null);
+      Sounds.slotClick();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [listeningKeybindAction, activeKeybinds]);
 
   if (!isOpen) return null;
 
@@ -178,9 +225,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   const totalAttackPower = baseWeaponDmg + (safeSkills.strength || 0) * 2;
   const totalKills = Object.values(player.kills || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
 
+  const calculatedMaxHp = player.maxHealth || (20 + (safeSkills.strength || 0) * 10);
+  const calculatedMaxMana = player.maxMana || (100 + (safeSkills.intelligence || 0) * 20);
+
   const partyMembersList: any[] = Array.isArray(party) 
     ? party 
-    : (party?.members || [{ id: 'self', name: player.nickname || 'Adventurer', hp: player.health, maxHp: 100, isLeader: true, playerClass }]);
+    : (party?.members || [{ id: 'self', name: player.nickname || 'Adventurer', hp: player.health, maxHp: calculatedMaxHp, isLeader: true, playerClass }]);
 
   // Tab configurations
   const TABS: { id: UnifiedMenuTab; label: string; icon: React.ReactNode; badge?: string | number }[] = [
@@ -222,6 +272,22 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
     const rarity = slot?.type ? getItemMetadata(slot.type).rarity : 'common';
     const rarityConfig = RARITY_STYLES[rarity];
 
+    const matchesFilter = (() => {
+      if (!slot?.type) return true;
+      const meta = getItemMetadata(slot.type);
+      const nameMatch = !invSearch || meta.name.toLowerCase().includes(invSearch.toLowerCase());
+      if (!nameMatch) return false;
+      if (invCategory === 'all') return true;
+      if (invCategory === 'weapons') return meta.category === 'Weapon' || meta.attack !== undefined;
+      if (invCategory === 'armor') return meta.category === 'Armor' || meta.defense !== undefined;
+      if (invCategory === 'materials') return meta.category === 'Resource' || meta.category === 'Tool';
+      if (invCategory === 'consumables') return meta.category === 'Consumable' || meta.category === 'Magical';
+      return true;
+    })();
+
+    const isDimmed = slot && !matchesFilter;
+    const isFilteredMatch = slot && matchesFilter && (Boolean(invSearch) || invCategory !== 'all');
+
     return (
       <button
         key={`${type}-${index}`}
@@ -262,7 +328,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
           isSelected 
             ? 'border-amber-400 bg-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.35)] ring-1 ring-amber-400' 
             : slot 
-            ? `${rarityConfig.border} bg-neutral-900/70 hover:border-amber-400/70 hover:bg-neutral-800/80 shadow-sm` 
+            ? `${rarityConfig.border} bg-neutral-900/70 hover:border-amber-400/70 hover:bg-neutral-800/80 shadow-sm ${isDimmed ? 'opacity-25 grayscale' : ''} ${isFilteredMatch ? 'ring-2 ring-amber-400/80 shadow-[0_0_10px_rgba(245,158,11,0.4)]' : ''}` 
             : 'border-neutral-800 bg-neutral-950/50 hover:border-neutral-700 hover:bg-neutral-900/40'
         } ${extraClasses}`}
       >
@@ -280,7 +346,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 select-none"
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-[75] p-4 select-none"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -435,12 +501,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                       <span className="flex items-center gap-1 text-rose-400 font-bold">
                         <Heart size={13} fill="currentColor" /> Health
                       </span>
-                      <span className="text-neutral-300">{Math.round(player.health)} / 20</span>
+                      <span className="text-neutral-300">{Math.round(player.health)} / {calculatedMaxHp}</span>
                     </div>
                     <div className="w-full h-2.5 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
                       <div 
                         className="h-full bg-gradient-to-r from-rose-600 to-rose-400 rounded-full transition-all duration-300" 
-                        style={{ width: `${Math.max(0, Math.min(100, (player.health / 20) * 100))}%` }} 
+                        style={{ width: `${Math.max(0, Math.min(100, (player.health / calculatedMaxHp) * 100))}%` }} 
                       />
                     </div>
                   </div>
@@ -467,12 +533,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                       <span className="flex items-center gap-1 text-cyan-400 font-bold">
                         <Sparkles size={13} /> Arcane Mana
                       </span>
-                      <span className="text-neutral-300">{Math.round(player.mana)} / 100</span>
+                      <span className="text-neutral-300">{Math.round(player.mana)} / {calculatedMaxMana}</span>
                     </div>
                     <div className="w-full h-2.5 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
                       <div 
                         className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all duration-300" 
-                        style={{ width: `${Math.max(0, Math.min(100, (player.mana / 100) * 100))}%` }} 
+                        style={{ width: `${Math.max(0, Math.min(100, (player.mana / calculatedMaxMana) * 100))}%` }} 
                       />
                     </div>
                   </div>
@@ -639,6 +705,55 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                 </div>
               </div>
 
+              {/* Search & Category Filter Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-neutral-900/60 p-3 rounded-xl border border-amber-500/20">
+                {/* Category Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {[
+                    { id: 'all', label: 'All Items' },
+                    { id: 'weapons', label: 'Weapons' },
+                    { id: 'armor', label: 'Armor' },
+                    { id: 'materials', label: 'Materials' },
+                    { id: 'consumables', label: 'Consumables' },
+                  ].map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => {
+                        Sounds.slotClick();
+                        setInvCategory(cat.id as any);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                        invCategory === cat.id
+                          ? 'bg-amber-500 text-neutral-950 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                          : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700 hover:text-white'
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search Box */}
+                <div className="relative w-full sm:w-56 shrink-0">
+                  <Search size={14} className="absolute left-2.5 top-2.5 text-neutral-500" />
+                  <input
+                    type="text"
+                    placeholder="Search backpack..."
+                    value={invSearch}
+                    onChange={(e) => setInvSearch(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500"
+                  />
+                  {invSearch && (
+                    <button
+                      onClick={() => setInvSearch('')}
+                      className="absolute right-2 top-2 text-neutral-400 hover:text-white"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Backpack Grid (27 slots) */}
               <div className="flex flex-col gap-2">
                 <span className="text-xs uppercase font-bold tracking-wider text-amber-400">
@@ -751,67 +866,140 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
 
               {/* Right: Recipe Book Guide */}
               <div className="md:col-span-6 bg-neutral-900/60 rounded-xl border border-amber-500/20 p-5 flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
-                    <BookOpen size={16} /> Recipe Catalog
-                  </h4>
-                  <div className="relative w-40">
-                    <Search size={14} className="absolute left-2.5 top-2.5 text-neutral-500" />
-                    <input 
-                      type="text"
-                      placeholder="Search recipes..."
-                      value={recipeFilter}
-                      onChange={(e) => setRecipeFilter(e.target.value)}
-                      className="w-full pl-8 pr-2 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-                </div>
+                {(() => {
+                  // Compute player's held materials
+                  const playerItemCounts: Record<number, number> = {};
+                  [...hotbar, ...backpack].forEach(slot => {
+                    if (slot && slot.type) {
+                      playerItemCounts[slot.type] = (playerItemCounts[slot.type] || 0) + (slot.count || 1);
+                    }
+                  });
 
-                {/* Recipe List */}
-                <div className="flex-1 overflow-y-auto max-h-[380px] custom-scrollbar flex flex-col gap-2 pr-1">
-                  {RECIPES.filter(r => {
-                    const name = BlockNames[r.result]?.toLowerCase() || '';
-                    return name.includes(recipeFilter.toLowerCase());
-                  }).map((r, idx) => {
-                    const resultName = BlockNames[r.result] || 'Item';
-                    const rarity = getItemMetadata(r.result).rarity;
-                    const rConfig = RARITY_STYLES[rarity];
+                  const checkCanCraft = (pattern: (BlockType | null)[]) => {
+                    const needed: Record<number, number> = {};
+                    pattern.forEach(p => {
+                      if (p) needed[p] = (needed[p] || 0) + 1;
+                    });
+                    return Object.entries(needed).every(([type, need]) => (playerItemCounts[Number(type)] || 0) >= need);
+                  };
 
-                    return (
-                      <div 
-                        key={`recipe-${idx}`}
-                        className="bg-neutral-950/70 p-3 rounded-xl border border-neutral-800/80 flex items-center justify-between gap-3 hover:border-amber-500/30 transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-lg border ${rConfig.border} bg-neutral-900 flex items-center justify-center p-1`}>
-                            {renderBlockIcon(r.result)}
-                          </div>
-                          <div>
-                            <h5 className={`text-xs font-bold ${rConfig.text}`}>
-                              {resultName} {r.count > 1 && `(x${r.count})`}
-                            </h5>
-                            <span className="text-[10px] text-neutral-500">
-                              3x3 Shaped Recipe
-                            </span>
+                  const totalCraftable = RECIPES.filter(r => checkCanCraft(r.pattern)).length;
+
+                  return (
+                    <>
+                      <div className="flex flex-col gap-2.5">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                            <BookOpen size={16} /> Recipe Catalog
+                          </h4>
+                          <div className="relative w-40">
+                            <Search size={14} className="absolute left-2.5 top-2.5 text-neutral-500" />
+                            <input 
+                              type="text"
+                              placeholder="Search recipes..."
+                              value={recipeFilter}
+                              onChange={(e) => setRecipeFilter(e.target.value)}
+                              className="w-full pl-8 pr-2 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-amber-500"
+                            />
                           </div>
                         </div>
 
-                        {/* Mini 3x3 pattern display */}
-                        <div className="grid grid-cols-3 gap-0.5 bg-neutral-900 p-1 rounded border border-neutral-800">
-                          {r.pattern.map((p, pIdx) => (
-                            <div 
-                              key={pIdx} 
-                              className="w-3.5 h-3.5 rounded-[1px] flex items-center justify-center"
-                              style={{ backgroundColor: p ? (BlockColors[p] || '#888') : 'rgba(255,255,255,0.05)' }}
-                              title={p ? BlockNames[p] : 'Empty'}
-                            />
-                          ))}
+                        {/* Discovery Filter Mode */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              Sounds.slotClick();
+                              setCraftFilterMode('all');
+                            }}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                              craftFilterMode === 'all'
+                                ? 'bg-neutral-700 text-white'
+                                : 'bg-neutral-900 text-neutral-400 hover:text-white'
+                            }`}
+                          >
+                            All Recipes ({RECIPES.length})
+                          </button>
+                          <button
+                            onClick={() => {
+                              Sounds.slotClick();
+                              setCraftFilterMode('craftable');
+                            }}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                              craftFilterMode === 'craftable'
+                                ? 'bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+                                : 'bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/60'
+                            }`}
+                          >
+                            <Sparkles size={12} className="text-emerald-400" />
+                            <span>Craftable Now ({totalCraftable})</span>
+                          </button>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
 
+                      {/* Recipe List */}
+                      <div className="flex-1 overflow-y-auto max-h-[380px] custom-scrollbar flex flex-col gap-2 pr-1">
+                        {RECIPES.filter(r => {
+                          const name = BlockNames[r.result]?.toLowerCase() || '';
+                          const matchesName = name.includes(recipeFilter.toLowerCase());
+                          if (!matchesName) return false;
+                          if (craftFilterMode === 'craftable') {
+                            return checkCanCraft(r.pattern);
+                          }
+                          return true;
+                        }).map((r, idx) => {
+                          const resultName = BlockNames[r.result] || 'Item';
+                          const rarity = getItemMetadata(r.result).rarity;
+                          const rConfig = RARITY_STYLES[rarity];
+                          const canCraft = checkCanCraft(r.pattern);
+
+                          return (
+                            <div 
+                              key={`recipe-${idx}`}
+                              className={`p-3 rounded-xl border flex items-center justify-between gap-3 transition-colors ${
+                                canCraft
+                                  ? 'bg-neutral-950/90 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                                  : 'bg-neutral-950/70 border-neutral-800/80 hover:border-amber-500/30'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-lg border ${rConfig.border} bg-neutral-900 flex items-center justify-center p-1`}>
+                                  {renderBlockIcon(r.result)}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h5 className={`text-xs font-bold ${rConfig.text}`}>
+                                      {resultName} {r.count > 1 && `(x${r.count})`}
+                                    </h5>
+                                    {canCraft && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/50 text-emerald-300 flex items-center gap-1 shadow-sm">
+                                        <Check size={9} /> Craftable Now
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-neutral-500">
+                                    3x3 Shaped Recipe
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Mini 3x3 pattern display */}
+                              <div className="grid grid-cols-3 gap-0.5 bg-neutral-900 p-1 rounded border border-neutral-800">
+                                {r.pattern.map((p, pIdx) => (
+                                  <div 
+                                    key={pIdx} 
+                                    className="w-3.5 h-3.5 rounded-[1px] flex items-center justify-center"
+                                    style={{ backgroundColor: p ? (BlockColors[p] || '#888') : 'rgba(255,255,255,0.05)' }}
+                                    title={p ? BlockNames[p] : 'Empty'}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -1265,33 +1453,45 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
           {activeTab === 'settings' && (
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
               
-              {/* Left: Audio & Experience */}
+              {/* Left: Audio Channels & Session Controls */}
               <div className="md:col-span-6 bg-neutral-900/60 rounded-xl border border-amber-500/20 p-5 flex flex-col gap-4">
-                <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
-                  <Volume2 size={16} /> Audio & Ambience
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                    <Volume2 size={16} /> Configurable Audio Channels
+                  </h4>
+                  <span className="text-[10px] text-neutral-400">Independent Volume Levels</span>
+                </div>
 
                 {/* Master Volume */}
                 <div className="flex flex-col gap-2 bg-neutral-950/70 p-3 rounded-xl border border-neutral-800">
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-neutral-300 font-bold">Master Volume</span>
-                    <span className="text-amber-400 font-mono">{Math.round(isMuted ? 0 : volume * 100)}%</span>
+                    <span className="text-neutral-200 font-bold">Master Volume</span>
+                    <span className="text-amber-400 font-mono font-bold">{Math.round(isMuted ? 0 : audioVols.master * 100)}%</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => setIsMuted(!isMuted)}
+                      onClick={() => {
+                        const newMute = !isMuted;
+                        setIsMuted(newMute);
+                        if (!newMute && audioVols.master === 0) {
+                          AudioChannels.setMasterVolume(0.5);
+                          setAudioVols(prev => ({ ...prev, master: 0.5 }));
+                        }
+                      }}
                       className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
                     >
-                      {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                      {isMuted || audioVols.master === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
                     </button>
                     <input 
                       type="range"
                       min="0"
                       max="1"
                       step="0.05"
-                      value={isMuted ? 0 : volume}
+                      value={isMuted ? 0 : audioVols.master}
                       onChange={(e) => {
                         const v = parseFloat(e.target.value);
+                        AudioChannels.setMasterVolume(v);
+                        setAudioVols(prev => ({ ...prev, master: v }));
                         setVolume(v);
                         if (v > 0) setIsMuted(false);
                       }}
@@ -1300,9 +1500,83 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                   </div>
                 </div>
 
+                {/* Music & Atmosphere Volume */}
+                <div className="flex flex-col gap-2 bg-neutral-950/70 p-3 rounded-xl border border-neutral-800">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-neutral-300">Music & Ambience</span>
+                    <span className="text-cyan-400 font-mono font-bold">{Math.round(audioVols.music * 100)}%</span>
+                  </div>
+                  <input 
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={audioVols.music}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      AudioChannels.setMusicVolume(v);
+                      setAudioVols(prev => ({ ...prev, music: v }));
+                    }}
+                    className="w-full accent-cyan-500 h-1.5 bg-neutral-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                {/* SFX & Combat Volume */}
+                <div className="flex flex-col gap-2 bg-neutral-950/70 p-3 rounded-xl border border-neutral-800">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-neutral-300">SFX & Combat Impact</span>
+                    <span className="text-rose-400 font-mono font-bold">{Math.round(audioVols.sfx * 100)}%</span>
+                  </div>
+                  <input 
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={audioVols.sfx}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      AudioChannels.setSfxVolume(v);
+                      setAudioVols(prev => ({ ...prev, sfx: v }));
+                    }}
+                    className="w-full accent-rose-500 h-1.5 bg-neutral-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                {/* UI Cues Volume */}
+                <div className="flex flex-col gap-2 bg-neutral-950/70 p-3 rounded-xl border border-neutral-800">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-neutral-300">UI Cues & Menu Clicks</span>
+                    <span className="text-emerald-400 font-mono font-bold">{Math.round(audioVols.ui * 100)}%</span>
+                  </div>
+                  <input 
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={audioVols.ui}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      AudioChannels.setUiVolume(v);
+                      setAudioVols(prev => ({ ...prev, ui: v }));
+                    }}
+                    className="w-full accent-emerald-500 h-1.5 bg-neutral-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
                 {/* Exit Game */}
-                <div className="mt-4 pt-4 border-t border-white/5 flex flex-col gap-2">
+                <div className="mt-2 pt-4 border-t border-white/5 flex flex-col gap-2">
                   <h5 className="text-xs font-bold text-neutral-300">Session Controls</h5>
+                  {onOpenInstructions && (
+                    <button
+                      onClick={() => {
+                        Sounds.slotClick();
+                        onOpenInstructions();
+                      }}
+                      className="w-full py-2.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2 border border-amber-500/30 active:scale-95"
+                    >
+                      <HelpCircle size={15} /> View Controls & Game Guide
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       Sounds.slotClick();
@@ -1315,35 +1589,60 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
                 </div>
               </div>
 
-              {/* Right: Keybind Reference */}
+              {/* Right: Custom Keybind Remapping */}
               <div className="md:col-span-6 bg-neutral-900/60 rounded-xl border border-amber-500/20 p-5 flex flex-col gap-3">
-                <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
-                  <Settings size={16} /> Controls & Keybinds
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                    <Keyboard size={16} /> Custom Keybind Remapping
+                  </h4>
+                  <button
+                    onClick={() => {
+                      const reset = resetKeybinds();
+                      setActiveKeybinds(reset);
+                      Sounds.slotClick();
+                    }}
+                    className="text-[11px] text-neutral-400 hover:text-amber-300 transition-colors"
+                  >
+                    Reset Defaults
+                  </button>
+                </div>
 
-                <div className="flex flex-col gap-1.5 text-xs">
-                  {[
-                    { action: 'Move Left / Right', key: 'A / D' },
-                    { action: 'Jump', key: 'W / Space' },
-                    { action: 'Drop Through Platform', key: 'S' },
-                    { action: 'Hold Sprint', key: 'Shift' },
-                    { action: 'Attack / Break Block', key: 'Left Click' },
-                    { action: 'Place Block / Interact', key: 'Right Click' },
-                    { action: 'Consolidated Menu', key: 'Tab / E' },
-                    { action: 'Quick Quest Log', key: 'Q' },
-                    { action: 'Cycle Hotbar', key: '1 - 9, 0' },
-                    { action: 'Toss Item', key: 'Drop Zone or Q' },
-                  ].map((kb, idx) => (
-                    <div 
-                      key={idx}
-                      className="flex justify-between items-center py-1.5 px-2.5 rounded-lg bg-neutral-950/60 border border-neutral-800/80"
-                    >
-                      <span className="text-neutral-300">{kb.action}</span>
-                      <kbd className="px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-amber-300 font-mono text-[11px] font-bold">
-                        {kb.key}
-                      </kbd>
-                    </div>
-                  ))}
+                <p className="text-xs text-neutral-400">
+                  Click any keybind to reassign. Press any key on your keyboard, or press <kbd className="text-[10px] bg-neutral-800 px-1 py-0.5 rounded text-neutral-300">Esc</kbd> to cancel.
+                </p>
+
+                <div className="flex-1 overflow-y-auto max-h-[380px] custom-scrollbar flex flex-col gap-1.5 pr-1 text-xs">
+                  {(Object.keys(KEYBIND_LABELS) as (keyof KeybindMap)[]).map((actionKey) => {
+                    const label = KEYBIND_LABELS[actionKey];
+                    const currentBind = activeKeybinds[actionKey] || DEFAULT_KEYBINDS[actionKey] || '';
+                    const isListening = listeningKeybindAction === actionKey;
+
+                    return (
+                      <div 
+                        key={actionKey}
+                        className={`flex justify-between items-center py-2 px-3 rounded-lg border transition-all ${
+                          isListening
+                            ? 'bg-amber-500/20 border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.3)] ring-1 ring-amber-500'
+                            : 'bg-neutral-950/60 border-neutral-800/80 hover:border-neutral-700'
+                        }`}
+                      >
+                        <span className="text-neutral-300 font-medium">{label}</span>
+                        <button
+                          onClick={() => {
+                            Sounds.slotClick();
+                            setListeningKeybindAction(isListening ? null : actionKey);
+                          }}
+                          className={`px-2.5 py-1 rounded font-mono text-[11px] font-bold border transition-all ${
+                            isListening
+                              ? 'bg-amber-400 text-neutral-950 border-amber-300 animate-pulse'
+                              : 'bg-neutral-800 hover:bg-neutral-700 text-amber-300 border-neutral-700 hover:border-amber-400/50'
+                          }`}
+                        >
+                          {isListening ? 'Press key...' : currentBind.toUpperCase()}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1403,10 +1702,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               {/* Party Member Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {partyMembersList.map((member: any) => {
-                  const hp = member.hp ?? 100;
-                  const maxHp = member.maxHp ?? 100;
+                  const isSelf = member.id === 'self' || member.id === player.nickname || member.name === player.nickname || member.name === 'You';
+                  const hp = isSelf ? Math.round(player.health) : (member.hp ?? 100);
+                  const maxHp = isSelf ? calculatedMaxHp : (member.maxHp ?? 100);
                   const hpPercent = Math.max(0, Math.min(100, Math.floor((hp / maxHp) * 100)));
-                  const isSelf = member.id === 'self' || member.id === player.nickname;
 
                   return (
                     <div

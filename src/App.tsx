@@ -32,6 +32,9 @@ import { BuffDebuffTray, ActiveEffect } from './components/BuffDebuffTray';
 import { PartyLootRollModal, LootRollItem } from './components/PartyLootRollModal';
 import { PlayerInspectModal, InspectedPlayer } from './components/PlayerInspectModal';
 import { EnchantmentPrefix, GemType } from './lib/enchanting';
+import { CharacterShowcasePreview } from './components/CharacterShowcasePreview';
+import { CastBarIndicator, ActiveCast } from './components/CastBarIndicator';
+import { InstructionsModal } from './components/InstructionsModal';
 
 // Class abilities live in src/lib/abilities.tsx (shared by the skill tree, the
 // action bars and GameCanvas's cast pipeline).
@@ -316,6 +319,20 @@ export default function App() {
   // Per-character write-revision last known to this tab (stale-write guard).
   const characterRevisions = useRef<Record<string, number>>({});
 
+  // Combat Fade & Cast Bar States
+  const [lastCombatTime, setLastCombatTime] = useState<number>(0);
+  const [isCombatActive, setIsCombatActive] = useState<boolean>(false);
+  const [activeCast, setActiveCast] = useState<ActiveCast | null>(null);
+
+  // Monitor combat cooldown for dynamic HUD opacity
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const active = Date.now() - lastCombatTime < 4500;
+      setIsCombatActive(active);
+    }, 200);
+    return () => clearInterval(interval);
+  }, [lastCombatTime]);
+
   function selectProfile(p: any) {
     setActiveProfileId(p.id);
     const uid = auth.currentUser?.uid;
@@ -389,7 +406,9 @@ export default function App() {
     { id: 'gray', color: '#9E9E9E', name: 'Gray' }
   ];
 
-  const [showInstructions, setShowInstructions] = useState<boolean>(true);
+  const [showInstructions, setShowInstructions] = useState<boolean>(() => {
+    return localStorage.getItem('hasSeenInstructions') !== 'true';
+  });
 
 
   // Detect Quest completions
@@ -1065,11 +1084,26 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (appState !== 'playing') return;
       
+      // If instructions are open, quick dismissal via Enter, Space, or Escape
+      if (showInstructions) {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+          e.preventDefault();
+          setShowInstructions(false);
+          return;
+        }
+      }
+
       if (isChatOpen) {
         if (e.key === 'Escape') {
           setIsChatOpen(false);
         }
         return; // Disable other game keys while chatting
+      }
+
+      // Reopen Help/Controls guide anytime
+      if (!isChatOpen && (e.key.toLowerCase() === 'h' || e.key === '?')) {
+        setShowInstructions(true);
+        return;
       }
 
       if (e.key === 'Enter') {
@@ -2105,16 +2139,14 @@ let targetArray = type === 'hotbar' ? [...hotbar]
              {/* Character Creator Modal */}
              <div className="w-full max-w-5xl h-[80vh] bg-neutral-900 border border-white/10 rounded-2xl flex overflow-hidden shadow-2xl relative">
                 
-                {/* Left side preview */}
-                <div className="w-full md:w-1/2 relative bg-neutral-900 border-r border-white/5">
-                   <div className="absolute inset-0 bg-neutral-900 flex items-center justify-center overflow-hidden">
-                       <img src={getSpriteUrl(creatorRace, playerClass, [])} className="h-[120%] object-contain scale-110 drop-shadow-[0_0_30px_rgba(255,255,255,0.1)]" style={{ imageRendering: 'pixelated' }} />
-                   </div>
-                   <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
-                   <div className="absolute bottom-8 left-8 right-8">
-                      <div className="w-20 h-20 rounded-2xl border-4 border-white mb-4 shadow-xl" style={{ backgroundColor: characterSkin }}></div>
-                      <h2 className="text-3xl font-black text-white capitalize">{creatorRace} {playerClass}</h2>
-                   </div>
+                {/* Left side preview: Animated Character Showcase & Archetype Overview */}
+                <div className="w-full md:w-1/2 relative bg-neutral-900 border-r border-white/5 flex flex-col">
+                   <CharacterShowcasePreview
+                     playerClass={playerClass}
+                     race={creatorRace}
+                     skinColor={characterSkin}
+                     nickname={nickname}
+                   />
                 </div>
 
                 {/* Right side form */}
@@ -2341,6 +2373,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
 
   
   const handleArmorDamage = () => {
+    setLastCombatTime(Date.now());
     // Decrease durability of currently active armor
     const hType = getHelmet();
     const cType = getChestplate();
@@ -2419,7 +2452,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           userId={currentUser?.uid}
           profileId={activeProfileId || undefined}
           isInventoryOpen={inventoryOpen || showInstructions || furnaceOpen || chestOpen || merchantOpen}
-          onHealthChange={setHealth}
+          onHealthChange={(newH) => {
+            setHealth(newH);
+            setLastCombatTime(Date.now());
+          }}
           stamina={stamina}
           maxStamina={maxStamina}
           onStaminaChange={setStamina}
@@ -2782,40 +2818,57 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           }}
         />
         
-        {/* UI Overlay - Top Left */}
-        <div className="absolute top-4 left-4 bg-black/50 text-white px-4 py-2 rounded-lg pointer-events-none text-sm border border-white/10">
-          Playing on server: <span className="font-bold text-blue-400">{serverName}</span>
+        {/* Active Cast Bar & Impact Timer */}
+        <CastBarIndicator 
+          cast={activeCast} 
+          onCastComplete={() => {
+            setActiveCast(null);
+          }} 
+        />
+
+        {/* UI Overlay - Top Left (Combat Fade applied) */}
+        <div className={`absolute top-4 left-4 bg-black/60 backdrop-blur-md text-white px-4 py-2 rounded-xl pointer-events-none text-xs border border-amber-500/20 shadow-xl transition-opacity duration-500 ${isCombatActive ? 'opacity-20' : 'opacity-100'}`}>
+          Playing on realm: <span className="font-bold text-amber-400">{serverName}</span>
+          {isCombatActive && (
+            <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-500/50 text-rose-300 font-mono text-[10px] animate-pulse">
+              IN COMBAT
+            </span>
+          )}
         </div>
 
-        {/* Collapsible Draggable HUD Quest Tracker */}
-        <HUDQuestTracker
-          quests={quests}
-          onOpenMenu={() => {
-            setUnifiedMenuTab('quests');
-            setInventoryOpen(true);
-          }}
-          position={hudLayout.questTracker}
-          onPositionChange={(pos) => handleUpdateHUDLayout({ questTracker: { ...hudLayout.questTracker, ...pos, isCustom: true } })}
-          isEditMode={isHUDEditMode}
-          visible={hudLayout.questTracker.visible !== false}
-          onHide={() => handleToggleElementVisibility('questTracker')}
-        />
+        {/* Collapsible Draggable HUD Quest Tracker (Combat Fade) */}
+        <div className={`transition-opacity duration-500 ${isCombatActive ? 'opacity-25 hover:opacity-100' : 'opacity-100'}`}>
+          <HUDQuestTracker
+            quests={quests}
+            onOpenMenu={() => {
+              setUnifiedMenuTab('quests');
+              setInventoryOpen(true);
+            }}
+            position={hudLayout.questTracker}
+            onPositionChange={(pos) => handleUpdateHUDLayout({ questTracker: { ...hudLayout.questTracker, ...pos, isCustom: true } })}
+            isEditMode={isHUDEditMode}
+            visible={hudLayout.questTracker.visible !== false}
+            onHide={() => handleToggleElementVisibility('questTracker')}
+          />
+        </div>
 
-        {/* Dynamic Biome Mini-Radar & Depth Gauge */}
-        <DynamicRadar
-          playerPos={playerCoords}
-          partyMembers={party?.members ? party.members.map(m => ({ id: m.id, name: m.name, x: m.x ?? (playerCoords.x + 8), y: m.y ?? (playerCoords.y - 4) })) : []}
-          questTargets={quests.filter(q => !q.completed).map(q => ({ id: q.id, name: q.title || 'Quest', x: playerCoords.x + 25, y: playerCoords.y + 10 }))}
-          depth={playerDepth}
-          position={hudLayout.radar}
-          onPositionChange={(pos) => handleUpdateHUDLayout({ radar: { ...hudLayout.radar, ...pos, isCustom: true } })}
-          isEditMode={isHUDEditMode}
-          visible={hudLayout.radar.visible !== false}
-          onHide={() => handleToggleElementVisibility('radar')}
-          onSendPing={(type) => {
-            addNotification('system', 'Party Ping', 'Party Beacon', `${nickname || 'Hero'} beaconed a ${type} ping on coordinates [${Math.floor(playerCoords.x)}, ${Math.floor(playerCoords.y)}].`);
-          }}
-        />
+        {/* Dynamic Biome Mini-Radar & Depth Gauge (Combat Fade) */}
+        <div className={`transition-opacity duration-500 ${isCombatActive ? 'opacity-30 hover:opacity-100' : 'opacity-100'}`}>
+          <DynamicRadar
+            playerPos={playerCoords}
+            partyMembers={party?.members ? party.members.map(m => ({ id: m.id, name: m.name, x: m.x ?? (playerCoords.x + 8), y: m.y ?? (playerCoords.y - 4) })) : []}
+            questTargets={quests.filter(q => !q.completed).map(q => ({ id: q.id, name: q.title || 'Quest', x: playerCoords.x + 25, y: playerCoords.y + 10 }))}
+            depth={playerDepth}
+            position={hudLayout.radar}
+            onPositionChange={(pos) => handleUpdateHUDLayout({ radar: { ...hudLayout.radar, ...pos, isCustom: true } })}
+            isEditMode={isHUDEditMode}
+            visible={hudLayout.radar.visible !== false}
+            onHide={() => handleToggleElementVisibility('radar')}
+            onSendPing={(type) => {
+              addNotification('system', 'Party Ping', 'Party Beacon', `${nickname || 'Hero'} beaconed a ${type} ping on coordinates [${Math.floor(playerCoords.x)}, ${Math.floor(playerCoords.y)}].`);
+            }}
+          />
+        </div>
 
         {/* Status Effects / Buffs & Debuffs Tray */}
         {(hudLayout.buffTray?.visible !== false || isHUDEditMode) && (
@@ -2830,6 +2883,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           party={party}
           nearbyPlayers={nearbyPlayers}
           currentUserId={socketRef.current?.id || ''}
+          currentUserName={nickname || 'Hero'}
+          currentHealth={health}
+          maxHealth={20 + (skills.strength || 0) * 10}
+          currentMana={mana}
+          maxMana={100 + (skills.intelligence || 0) * 20}
           playerPos={playerCoords}
           position={hudLayout.partyOverlay}
           onPositionChange={(pos) => handleUpdateHUDLayout({ partyOverlay: { ...hudLayout.partyOverlay, ...pos, isCustom: true } })}
@@ -2989,7 +3047,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         />
 
         {/* Action Bar Loadout Presets */}
-        <div className={`absolute bottom-[78px] left-1/2 transform -translate-x-1/2 ${inventoryOpen ? 'z-[60]' : 'z-20'}`}>
+        <div className={`absolute bottom-[78px] left-1/2 transform -translate-x-1/2 z-20 ${inventoryOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
           <ActionBarPresets
             activePreset={activeLoadoutPreset}
             onSelectPreset={handleSelectLoadoutPreset}
@@ -3112,7 +3170,9 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             level: level,
             xp: xp,
             health: health,
+            maxHealth: 20 + (skills.strength || 0) * 10,
             mana: mana,
+            maxMana: 100 + (skills.intelligence || 0) * 20,
             stamina: stamina,
             maxStamina: maxStamina,
             kills: kills || {},
@@ -3162,6 +3222,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           playerClass={playerClass}
           selectedSlotIndex={selectedSlotIndex}
           onSelectHotbarSlot={setSelectedSlotIndex}
+          onOpenInstructions={() => {
+            setInventoryOpen(false);
+            setShowInstructions(true);
+          }}
         />
 
         {/* NPC Dialogue Overlay */}
@@ -3780,7 +3844,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         {/* Floating Cursor Item */}
         {(inventoryOpen || furnaceOpen || chestOpen) && cursorItem && cursorItem.type !== BlockType.Air && (
           <div 
-            className="fixed pointer-events-none z-50 w-8 h-8 opacity-90 scale-110"
+            className="fixed pointer-events-none z-[90] w-8 h-8 opacity-90 scale-110"
             style={{ 
               left: mousePos.x - 16, 
               top: mousePos.y - 16 
@@ -3793,7 +3857,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         {/* Custom Item Tooltip */}
         {hoveredTitle && (!cursorItem || cursorItem.type === BlockType.Air) && (
           <div 
-            className="fixed pointer-events-none z-[60] bg-black/90 text-white text-xs px-2 py-1 rounded border border-white/20 whitespace-nowrap drop-shadow-xl"
+            className="fixed pointer-events-none z-[85] bg-black/90 text-white text-xs px-2 py-1 rounded border border-white/20 whitespace-nowrap drop-shadow-xl"
             style={{
               left: mousePos.x + 12,
               top: mousePos.y + 12
@@ -3843,47 +3907,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           />
         )}
         
-        {/* Instructions Modal */}
-        {showInstructions && (
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-xl flex items-center justify-center z-[100]">
-            <div className="bg-[#141417] p-8 md:p-12 rounded-[2.5rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-2xl w-full text-white transform transition-all">
-              <div className="text-center mb-10">
-                 <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400 mb-3 tracking-tight">Welcome to AI Sandbox</h2>
-                 <p className="text-neutral-400">Master your controls to survive and thrive.</p>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
-                 <div className="bg-[#0A0A0B]/80 p-6 rounded-3xl border border-white/5">
-                    <h3 className="text-sm uppercase tracking-widest text-neutral-500 font-bold mb-4">Movement & Combat</h3>
-                    <ul className="space-y-4">
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">WASD</span> <span className="text-sm text-neutral-300">Move & Jump</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">SHIFT</span> <span className="text-sm text-neutral-300">Sprint (Consumes Stamina)</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg></span> <span className="text-sm text-neutral-300">Left Click to Mine/Attack</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" /></svg></span> <span className="text-sm text-neutral-300">Right Click to Place/Interact</span></li>
-                    </ul>
-                 </div>
-                 
-                 <div className="bg-[#0A0A0B]/80 p-6 rounded-3xl border border-white/5">
-                    <h3 className="text-sm uppercase tracking-widest text-neutral-500 font-bold mb-4">Inventory & UI</h3>
-                    <ul className="space-y-4">
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">TAB</span> <span className="text-sm text-neutral-300">Unified Menu (Quests / Skills / Inv)</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">Q</span> <span className="text-sm text-neutral-300">Drop Item (Ctrl+Q for full stack)</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">J / L</span> <span className="text-sm text-neutral-300">Quest Log</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">1-9</span> <span className="text-sm text-neutral-300">Select Hotbar Slot</span></li>
-                      <li className="flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/5">↵</span> <span className="text-sm text-neutral-300">Open Global Chat</span></li>
-                    </ul>
-                 </div>
-              </div>
-              
-              <button 
-                onClick={() => setShowInstructions(false)}
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.3)] active:scale-[0.98] flex items-center justify-center gap-2"
-              >
-                Enter the World <ArrowRight size={20} />
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Instructions / Controls Game Guide Modal */}
+        <InstructionsModal
+          isOpen={showInstructions}
+          onClose={() => setShowInstructions(false)}
+        />
 
       </div>
     </div>

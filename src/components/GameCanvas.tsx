@@ -68,6 +68,7 @@ interface GameProps {
   onWorldPing?: (x: number, y: number, type: 'danger' | 'alert' | 'loot') => void;
   socketRef?: React.MutableRefObject<Socket | null>;
   onNearbyPlayersChange?: (players: { id: string, name: string, level?: number, playerClass?: string }[]) => void;
+  onPartyUpdate?: (party: any) => void;
 }
 
 interface Particle {
@@ -82,7 +83,7 @@ interface Particle {
 }
 
 
-export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked }: GameProps) {
+export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastReportedStaminaRef = useRef<number>(100);
@@ -246,7 +247,7 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       socketRef.current = socket;
     }
 
-    socket.on('connect', () => {
+    const emitJoin = () => {
       const p = gameState.current.player;
       socket.emit('join_room', { 
         roomId, 
@@ -259,15 +260,33 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
         x: p.x !== 0 ? p.x : undefined,
         y: p.y !== 0 ? p.y : undefined
       });
-    });
+    };
+
+    if (socket.connected) {
+      emitJoin();
+    }
+    socket.on('connect', emitJoin);
+    socket.on('reconnect', emitJoin);
 
     socket.on('auth_error', (data: { reason: string }) => {
-      console.error('Server rejected identity:', data.reason);
-      alert(`Authentication failed (${data.reason}). Please sign in again.`);
+      console.warn('Server rejected identity:', data.reason);
+      // Fallback to guest join rather than stopping game
+      socket.emit('join_room', {
+        roomId,
+        nickname: propsRef.current.nickname,
+        race: propsRef.current.race,
+        playerClass: propsRef.current.playerClass,
+        skin: propsRef.current.characterSkin
+      });
     });
 
     socket.on('connect_error', (err: Error) => {
       console.warn('Socket connection rejected:', err.message);
+      if (err.message && err.message.toLowerCase().includes('auth')) {
+        // Retry connection as guest if token was invalid
+        (socket as any).auth = { token: null };
+        socket.connect();
+      }
     });
 
     socket.on('kicked', (data: { reason: string }) => {
@@ -294,18 +313,28 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
         (gameState.current as any).protectedBlocks = data.protectedBlocks;
       }
       
-      // Initialize my spawn pos reliably from the server's record
+      // Initialize my spawn pos reliably from the server's record or safe world spawn
       const me = data.players[data.id];
-      if (me) {
+      const w = dimensions.width || canvasRef.current?.width || window.innerWidth || 800;
+      const h = dimensions.height || canvasRef.current?.height || window.innerHeight || 600;
+
+      if (me && typeof me.x === 'number' && typeof me.y === 'number' && (me.x !== 0 || me.y !== 0)) {
         gameState.current.player.x = me.x;
         gameState.current.player.y = me.y;
         gameState.current.player.vx = 0;
         gameState.current.player.vy = 0;
-        const canvas = canvasRef.current;
-        if (canvas) {
-          gameState.current.cameraX = me.x - canvas.width / 2;
-          gameState.current.cameraY = me.y - canvas.height / 2;
-        }
+        gameState.current.player.invulnerableTimer = 60; // 1s spawn grace
+        gameState.current.cameraX = Math.max(0, Math.min(me.x - w / 2, WORLD_WIDTH * TILE_SIZE - w));
+        gameState.current.cameraY = Math.max(0, Math.min(me.y - h / 2, WORLD_HEIGHT * TILE_SIZE - h));
+      } else if (data.world && data.world.length > 0) {
+        const safeSpawn = getSafeSpawnPoint(data.world);
+        gameState.current.player.x = safeSpawn.x;
+        gameState.current.player.y = safeSpawn.y;
+        gameState.current.player.vx = 0;
+        gameState.current.player.vy = 0;
+        gameState.current.player.invulnerableTimer = 60;
+        gameState.current.cameraX = Math.max(0, Math.min(safeSpawn.x - w / 2, WORLD_WIDTH * TILE_SIZE - w));
+        gameState.current.cameraY = Math.max(0, Math.min(safeSpawn.y - h / 2, WORLD_HEIGHT * TILE_SIZE - h));
       }
 
       // Populate other players
@@ -439,17 +468,24 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     socket.on('teleport', (data: {x: number, y: number}) => {
        gameState.current.player.x = data.x;
        gameState.current.player.y = data.y;
+       gameState.current.player.vx = 0;
        gameState.current.player.vy = 0;
+       gameState.current.player.invulnerableTimer = 60;
+       const w = dimensions.width || canvasRef.current?.width || 800;
+       const h = dimensions.height || canvasRef.current?.height || 600;
+       gameState.current.cameraX = Math.max(0, Math.min(data.x - w / 2, WORLD_WIDTH * TILE_SIZE - w));
+       gameState.current.cameraY = Math.max(0, Math.min(data.y - h / 2, WORLD_HEIGHT * TILE_SIZE - h));
     });
 
     socket.on('world_updated', (data: { tx: number, ty: number, blockType: number }) => {
        const { tx, ty, blockType } = data;
+       if (!gameState.current.world || !gameState.current.world[tx]) return;
        const currentBlock = gameState.current.world[tx][ty];
        gameState.current.world[tx][ty] = blockType;
        gameState.current.lastLightTime = 0; // force light map recalculation
        
        // Spawn breaking particles if the block was removed
-       if (blockType === BlockType.Air && currentBlock !== BlockType.Air) {
+       if (blockType === BlockType.Air && currentBlock !== undefined && currentBlock !== BlockType.Air) {
           const blockColor = BlockColors[currentBlock];
           for (let i = 0; i < 8; i++) {
             gameState.current.particles.push({
@@ -604,19 +640,28 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     };
   }, [roomId, profileId]);
 
-  // Window resize handler
+  // Window and container resize observer
   useEffect(() => {
-    const handleResize = () => {
-      if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight
-        });
-      }
+    const updateSize = () => {
+      const container = containerRef.current;
+      const w = container && container.clientWidth > 0 ? container.clientWidth : (window.innerWidth || 800);
+      const h = container && container.clientHeight > 0 ? container.clientHeight : (window.innerHeight || 600);
+      setDimensions(prev => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
     };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    updateSize();
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+      ro = new ResizeObserver(() => updateSize());
+      ro.observe(containerRef.current);
+    }
+
+    window.addEventListener('resize', updateSize);
+    return () => {
+      window.removeEventListener('resize', updateSize);
+      if (ro) ro.disconnect();
+    };
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
@@ -991,20 +1036,43 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
          propsRef.current.onHealthChange(player.health);
       }
       
+      // Fallback: If world is ready but player position is still uninitialized (0, 0), resolve safe spawn
+      if (world.length > 0 && player.x === 0 && player.y === 0) {
+        const safeSpawn = getSafeSpawnPoint(world);
+        player.x = safeSpawn.x;
+        player.y = safeSpawn.y;
+        player.vx = 0;
+        player.vy = 0;
+        state.cameraX = safeSpawn.x - dimensions.width / 2;
+        state.cameraY = safeSpawn.y - dimensions.height / 2;
+      }
+
       // Camera follow
       // Center the player on screen
       const targetCameraX = player.x + player.width / 2 - dimensions.width / 2;
       const targetCameraY = player.y + player.height / 2 - dimensions.height / 2;
       
-      // Smooth camera interpolation
-      state.cameraX += (targetCameraX - state.cameraX) * 0.1;
-      gameState.current.cameraX = state.cameraX;
-      state.cameraY += (targetCameraY - state.cameraY) * 0.1;
-      gameState.current.cameraY = state.cameraY;
+      const camDist = Math.hypot(targetCameraX - state.cameraX, targetCameraY - state.cameraY);
+      if (camDist > 800 || isNaN(state.cameraX) || isNaN(state.cameraY) || isNaN(targetCameraX) || isNaN(targetCameraY)) {
+        state.cameraX = !isNaN(targetCameraX) ? targetCameraX : 0;
+        state.cameraY = !isNaN(targetCameraY) ? targetCameraY : 0;
+      } else {
+        // Smooth camera interpolation
+        state.cameraX += (targetCameraX - state.cameraX) * 0.15;
+        state.cameraY += (targetCameraY - state.cameraY) * 0.15;
+      }
+      
+      // Protect against NaN
+      if (isNaN(state.cameraX)) state.cameraX = 0;
+      if (isNaN(state.cameraY)) state.cameraY = 0;
 
-      // Clamp camera to world bounds (optional, but good)
-      state.cameraX = Math.max(0, Math.min(state.cameraX, WORLD_WIDTH * TILE_SIZE - dimensions.width));
-      state.cameraY = Math.max(0, Math.min(state.cameraY, WORLD_HEIGHT * TILE_SIZE - dimensions.height));
+      // Clamp camera to world bounds
+      const maxCamX = Math.max(0, WORLD_WIDTH * TILE_SIZE - dimensions.width);
+      const maxCamY = Math.max(0, WORLD_HEIGHT * TILE_SIZE - dimensions.height);
+      state.cameraX = Math.max(0, Math.min(state.cameraX, maxCamX));
+      state.cameraY = Math.max(0, Math.min(state.cameraY, maxCamY));
+      gameState.current.cameraX = state.cameraX;
+      gameState.current.cameraY = state.cameraY;
 
       // Handle MMO Cooldowns
       if (state.globalCooldown > 0) state.globalCooldown -= dt;
@@ -1077,40 +1145,89 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       
       const MAX_REACH = TILE_SIZE * 6; // 6 blocks reach
 
+      // Helper for planting a tree when TreeSeed is used
+      const tryPlantTree = (clickTx: number, clickTy: number): boolean => {
+        if (!world || world.length === 0) return false;
+        const isSoil = (b: number | undefined) => b === BlockType.Grass || b === BlockType.Dirt || b === BlockType.Farmland;
+        let groundX = clickTx;
+        let groundY = clickTy;
+        const clickedBlock = world[clickTx]?.[clickTy];
+        
+        // If clicked in air right above soil, treat that soil as ground
+        if (clickedBlock === BlockType.Air && isSoil(world[clickTx]?.[clickTy + 1])) {
+          groundY = clickTy + 1;
+        } else if (!isSoil(clickedBlock)) {
+          return false;
+        }
+
+        if (groundX < 2 || groundX >= WORLD_WIDTH - 2 || groundY < 7 || groundY >= WORLD_HEIGHT) {
+          return false;
+        }
+
+        // Check vertical clearance for trunk
+        for (let dy = 1; dy <= 3; dy++) {
+          const b = world[groundX]?.[groundY - dy];
+          if (b !== BlockType.Air && b !== BlockType.Leaves && b !== undefined) return false;
+        }
+
+        const treeBlocks: { tx: number, ty: number, block: BlockType }[] = [
+          // Trunk
+          { tx: groundX, ty: groundY - 1, block: BlockType.Wood },
+          { tx: groundX, ty: groundY - 2, block: BlockType.Wood },
+          { tx: groundX, ty: groundY - 3, block: BlockType.Wood },
+          // Leaves canopy - lower tier
+          { tx: groundX - 1, ty: groundY - 4, block: BlockType.Leaves },
+          { tx: groundX, ty: groundY - 4, block: BlockType.Leaves },
+          { tx: groundX + 1, ty: groundY - 4, block: BlockType.Leaves },
+          // Leaves canopy - middle tier
+          { tx: groundX - 1, ty: groundY - 5, block: BlockType.Leaves },
+          { tx: groundX, ty: groundY - 5, block: BlockType.Leaves },
+          { tx: groundX + 1, ty: groundY - 5, block: BlockType.Leaves },
+          // Leaves canopy - top crown
+          { tx: groundX, ty: groundY - 6, block: BlockType.Leaves },
+        ];
+
+        for (const tb of treeBlocks) {
+          if (world[tb.tx]) {
+            world[tb.tx][tb.ty] = tb.block;
+            if (state.socket) {
+              state.socket.emit('block_update', { tx: tb.tx, ty: tb.ty, blockType: tb.block });
+            }
+          }
+        }
+
+        state.lastLightTime = 0;
+        Sounds.mineBlock?.();
+        if (propsRef.current.onInteract) {
+          propsRef.current.onInteract(BlockType.TreeSeed, groundX, groundY);
+        }
+        if (propsRef.current.onFloatingText) {
+          propsRef.current.onFloatingText(groundX * TILE_SIZE + 16, (groundY - 3) * TILE_SIZE, '🌱 Tree Planted!', '#4ade80');
+        }
+        state.interactionCooldown = 250;
+        return true;
+      };
+
       if (!propsRef.current.isInventoryOpen && state.rightMouseDown && inBounds && state.interactionCooldown <= 0) {
         if (dist <= MAX_REACH) {
           const currentBlock = world[targetTx][targetTy];
           const selected = propsRef.current.selectedBlock;
           
-          if ((selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe) && (currentBlock === BlockType.Grass || currentBlock === BlockType.Dirt)) {
+          if (selected === BlockType.TreeSeed) {
+             tryPlantTree(targetTx, targetTy);
+          } else if ((selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe) && (currentBlock === BlockType.Grass || currentBlock === BlockType.Dirt)) {
              world[targetTx][targetTy] = BlockType.Farmland;
              if (state.socket) state.socket.emit('block_update', { tx: targetTx, ty: targetTy, blockType: BlockType.Farmland });
-          } else if (selected === BlockType.TreeSeed && (currentBlock === BlockType.Grass || currentBlock === BlockType.Dirt) && world[targetTx][targetTy - 1] === BlockType.Air) {
-             world[targetTx][targetTy - 1] = BlockType.Wood;
-             world[targetTx][targetTy - 2] = BlockType.Wood;
-             world[targetTx][targetTy - 3] = BlockType.Wood;
-             world[targetTx - 1][targetTy - 4] = BlockType.Leaves;
-             world[targetTx][targetTy - 4] = BlockType.Leaves;
-             world[targetTx + 1][targetTy - 4] = BlockType.Leaves;
-             world[targetTx][targetTy - 5] = BlockType.Leaves;
-             if (state.socket) {
-                 state.socket.emit('block_update', { tx: targetTx, ty: targetTy - 1, blockType: BlockType.Wood });
-                 state.socket.emit('block_update', { tx: targetTx, ty: targetTy - 2, blockType: BlockType.Wood });
-                 state.socket.emit('block_update', { tx: targetTx, ty: targetTy - 3, blockType: BlockType.Wood });
-                 state.socket.emit('block_update', { tx: targetTx - 1, ty: targetTy - 4, blockType: BlockType.Leaves });
-                 state.socket.emit('block_update', { tx: targetTx, ty: targetTy - 4, blockType: BlockType.Leaves });
-                 state.socket.emit('block_update', { tx: targetTx + 1, ty: targetTy - 4, blockType: BlockType.Leaves });
-                 state.socket.emit('block_update', { tx: targetTx, ty: targetTy - 5, blockType: BlockType.Leaves });
-             }
-             if (propsRef.current.onInteract) propsRef.current.onInteract(BlockType.TreeSeed, targetTx, targetTy);
+             state.interactionCooldown = 200;
           } else if (selected === BlockType.CarrotSeed && currentBlock === BlockType.Farmland && world[targetTx][targetTy - 1] === BlockType.Air) {
              world[targetTx][targetTy - 1] = BlockType.CarrotCrop1;
              if (state.socket) state.socket.emit('block_update', { tx: targetTx, ty: targetTy - 1, blockType: BlockType.CarrotCrop1 });
-             if (propsRef.current.onInteract) propsRef.current.onInteract(BlockType.CarrotSeed, targetTx, targetTy); // Will be used to remove seed from inventory
+             if (propsRef.current.onInteract) propsRef.current.onInteract(BlockType.CarrotSeed, targetTx, targetTy);
+             state.interactionCooldown = 250;
           } else if (currentBlock !== BlockType.Air && propsRef.current.onInteract) {
             propsRef.current.onInteract(currentBlock, targetTx, targetTy);
+            state.interactionCooldown = 300;
           }
-          state.interactionCooldown = 300;
         }
       }
 
@@ -1330,6 +1447,9 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           
           // Block Placing (Ensure selectedBlock is not null)
           const sel = propsRef.current.selectedBlock;
+          if (sel === BlockType.TreeSeed) {
+            if (tryPlantTree(targetTx, targetTy)) return;
+          }
           const isPlaceable = sel !== null && sel !== BlockType.Air && sel !== BlockType.Fists && (sel < 100 || (sel >= 414 && sel <= 417));
           if (currentBlock === BlockType.Air && isPlaceable && state.interactionCooldown <= 0) {
              // Prevent placing block inside player
@@ -1392,30 +1512,46 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           const isPickaxe = selected === BlockType.WoodPickaxe || selected === BlockType.StonePickaxe || selected === BlockType.IronPickaxe;
           const isAxe = selected === BlockType.WoodAxe || selected === BlockType.StoneAxe || selected === BlockType.IronAxe;
           const isHoe = selected === BlockType.WoodHoe || selected === BlockType.StoneHoe || selected === BlockType.IronHoe;
+          const isSword = selected === BlockType.WoodSword || selected === BlockType.StoneSword || selected === BlockType.IronSword;
           
           const hardness = BlockHardness[currentBlock] || 1;
           const isWoodType = currentBlock === BlockType.Wood || currentBlock === BlockType.Leaves || currentBlock === BlockType.Door || currentBlock === BlockType.Planks || currentBlock === BlockType.Chest || currentBlock === BlockType.Platform;
           const isStoneType = hardness >= 2 && !isWoodType;
-          const isDirtType = currentBlock === BlockType.Dirt || currentBlock === BlockType.Grass || currentBlock === BlockType.Sand;
+          const isDirtType = currentBlock === BlockType.Dirt || currentBlock === BlockType.Grass || currentBlock === BlockType.Sand || currentBlock === BlockType.Farmland;
           
-          if (isPickaxe) {
-              if (isStoneType || isDirtType) { // pickaxes can mine dirt too
+          if (isWoodType) {
+              canMine = true;
+              if (isAxe) {
+                  toolMultiplier = (selected === BlockType.IronAxe) ? 14 : (selected === BlockType.StoneAxe) ? 8 : 4;
+              } else if (isSword) {
+                  toolMultiplier = (currentBlock === BlockType.Leaves) ? 10 : 3;
+              } else if (isPickaxe) {
+                  toolMultiplier = 3;
+              } else {
+                  toolMultiplier = (currentBlock === BlockType.Leaves) ? 3 : 1.5;
+              }
+          } else if (isDirtType) {
+              canMine = true;
+              if (isHoe) {
+                  toolMultiplier = 6;
+              } else if (isPickaxe || isAxe) {
+                  toolMultiplier = 4;
+              } else {
+                  toolMultiplier = 1.5;
+              }
+          } else if (isStoneType) {
+              if (isPickaxe) {
                   canMine = true;
                   toolMultiplier = (selected === BlockType.IronPickaxe) ? 12 : (selected === BlockType.StonePickaxe) ? 6 : 3;
+              } else if (isFist || !selected) {
+                  if (hardness <= 3) {
+                      canMine = true;
+                      toolMultiplier = 0.8;
+                  }
               }
-          } else if (isAxe) {
-              if (isWoodType || isDirtType) {
-                  canMine = true;
-                  toolMultiplier = (selected === BlockType.IronAxe) ? 12 : (selected === BlockType.StoneAxe) ? 6 : 3;
-              }
-          } else if (isHoe && isDirtType) {
+          } else {
               canMine = true;
-              toolMultiplier = 6;
-          } else if (isFist) {
-              if (!isStoneType || isWoodType) { // Fist cannot mine stone/ores, but can mine wood
-                  canMine = true;
-                  toolMultiplier = 1;
-              }
+              toolMultiplier = 3;
           }
           
           if (!canMine) {
@@ -1435,6 +1571,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
               
               if (state.miningProgress >= timeRequired) {
                 // Break it
+                Sounds.mineBlock?.();
                 const blockColor = BlockColors[currentBlock];
                 for (let i = 0; i < 8; i++) {
                   state.particles.push({
@@ -1468,16 +1605,22 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                } else if (currentBlock === BlockType.CarrotCrop1 || currentBlock === BlockType.CarrotCrop2) {
                    // No drop
                } else if (currentBlock === BlockType.Leaves) {
-                   if (Math.random() < 0.1) state.socket.emit('spawn_item', { type: BlockType.Apple, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
-                   if (Math.random() < 0.2) state.socket.emit('spawn_item', { type: BlockType.TreeSeed, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+                   if (Math.random() < 0.25) state.socket.emit('spawn_item', { type: BlockType.Apple, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+                   if (Math.random() < 0.40) state.socket.emit('spawn_item', { type: BlockType.TreeSeed, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+                   if (propsRef.current.onGiveXp) propsRef.current.onGiveXp('woodcutting', 5);
                } else {
                    // Spawn the block item
                    state.socket.emit('spawn_item', { type: dropType, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+                   if (currentBlock === BlockType.Wood) {
+                     if (Math.random() < 0.25) state.socket.emit('spawn_item', { type: BlockType.TreeSeed, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+                     if (propsRef.current.onGiveXp) propsRef.current.onGiveXp('woodcutting', 15);
+                   }
                }
 
                // Additional bonus drops
-               if (currentBlock === BlockType.Grass && Math.random() < 0.2) {
-                   state.socket.emit('spawn_item', { type: BlockType.CarrotSeed, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+               if (currentBlock === BlockType.Grass) {
+                   if (Math.random() < 0.20) state.socket.emit('spawn_item', { type: BlockType.CarrotSeed, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
+                   if (Math.random() < 0.15) state.socket.emit('spawn_item', { type: BlockType.TreeSeed, x: targetTx * TILE_SIZE, y: targetTy * TILE_SIZE });
                }
             }
             // Do NOT call onBlockMined directly here. 
@@ -1654,13 +1797,13 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       // Draw world (visible tiles only)
 
 
-      if (world.length > 0 && state.lightMap) {
+      if (world.length > 0) {
         // First draw the cave background shading based on lightmap (even for air blocks)
         for (let x = startCol; x <= endCol; x++) {
           for (let y = startRow; y <= endRow; y++) {
              const idx = x + y * WORLD_WIDTH;
-             const lightLevel = state.lightMap[idx] || 0;
-             const darkness = 1 - (lightLevel / 15);
+             const lightLevel = state.lightMap ? (state.lightMap[idx] || 0) : 15;
+             const darkness = Math.max(0, Math.min(1, 1 - (lightLevel / 15)));
              
              const block = world[x][y];
              
@@ -2537,15 +2680,24 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         
         // Draw mining progress
         if (state.miningProgress > 0 && state.miningTarget && state.miningTarget.x === targetTx && state.miningTarget.y === targetTy) {
-           const currentBlock = world[targetTx][targetTy];
-           const hardness = BlockHardness[currentBlock] || 1;
-           const timeRequired = hardness * 300;
-           const progressRatio = Math.min(1, state.miningProgress / timeRequired);
-           
-           ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-           ctx.fillRect(targetTx * TILE_SIZE, targetTy * TILE_SIZE + TILE_SIZE - 4, TILE_SIZE, 4);
-           ctx.fillStyle = '#4CAF50';
-           ctx.fillRect(targetTx * TILE_SIZE, targetTy * TILE_SIZE + TILE_SIZE - 4, TILE_SIZE * progressRatio, 4);
+           const currentBlock = world[targetTx]?.[targetTy];
+           if (currentBlock !== undefined && currentBlock !== BlockType.Air) {
+             const hardness = BlockHardness[currentBlock] || 1;
+             let timeReq = hardness * 300;
+             if (currentBlock === BlockType.Wood || currentBlock === BlockType.Leaves) {
+               const wcLevel = propsRef.current.skills?.woodcutting || 1;
+               timeReq = timeReq / (1 + (wcLevel * 0.1));
+             } else {
+               const miningLevel = propsRef.current.skills?.mining || 1;
+               timeReq = timeReq / (1 + (miningLevel * 0.1));
+             }
+             const progressRatio = Math.min(1, state.miningProgress / Math.max(1, timeReq));
+             
+             ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+             ctx.fillRect(targetTx * TILE_SIZE, targetTy * TILE_SIZE + TILE_SIZE - 5, TILE_SIZE, 5);
+             ctx.fillStyle = '#22c55e';
+             ctx.fillRect(targetTx * TILE_SIZE, targetTy * TILE_SIZE + TILE_SIZE - 5, TILE_SIZE * progressRatio, 5);
+           }
         }
       } else if (inBounds) {
         ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
@@ -2736,7 +2888,13 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         height={dimensions.height}
         className="block"
       />
-
+      {(!connected || !gameState.current.world || gameState.current.world.length === 0) && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-neutral-950/85 backdrop-blur-sm select-none">
+          <div className="w-10 h-10 border-3 border-amber-500/20 border-t-amber-400 rounded-full animate-spin mb-3" />
+          <p className="text-sm font-semibold tracking-wider uppercase text-neutral-200">Entering Realm</p>
+          <p className="text-xs text-neutral-400 mt-1">Connecting to world server & synchronizing terrain...</p>
+        </div>
+      )}
     </div>
   );
 }
