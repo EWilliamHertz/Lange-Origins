@@ -122,3 +122,68 @@ export function createEmptyChunkWorld(): World {
   }
   return world;
 }
+
+/**
+ * Reference to one packed chunk inside a batch blob.
+ * `size` is the byte length of this chunk's deflate stream within the blob.
+ */
+export interface PackedChunkRef {
+  cx: number;
+  cy: number;
+  size: number;
+}
+
+/**
+ * A batch of compressed chunks serialized as ONE binary blob plus a JSON
+ * manifest. socket.io (parser >= 4.2.7) rejects packets carrying more than
+ * 10 binary attachments, so batches of chunks must never be sent as a
+ * separate attachment per chunk — they are concatenated into a single
+ * Uint8Array instead, and the manifest records where each chunk starts.
+ */
+export interface PackedChunkBatch {
+  manifest: PackedChunkRef[];
+  blob: Uint8Array;
+}
+
+/**
+ * Concatenates many compressed chunks into a single Uint8Array so the whole
+ * batch fits in one socket.io binary attachment.
+ */
+export function packChunkBatch(chunks: Array<{ cx: number; cy: number; data: Uint8Array }>): PackedChunkBatch {
+  const manifest: PackedChunkRef[] = [];
+  let total = 0;
+  for (const c of chunks) {
+    const size = c?.data?.byteLength ?? 0;
+    manifest.push({ cx: c?.cx ?? 0, cy: c?.cy ?? 0, size });
+    total += size;
+  }
+  const blob = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    if (!c?.data?.byteLength) continue;
+    blob.set(c.data, offset);
+    offset += c.data.byteLength;
+  }
+  return { manifest, blob };
+}
+
+/**
+ * Splits a packed batch back into individual compressed chunks
+ * ({ cx, cy, data }) ready for decompressChunk()/applyChunkToWorld().
+ */
+export function unpackChunkBatch(
+  manifest: PackedChunkRef[] | undefined | null,
+  blob: Uint8Array | ArrayBuffer | undefined | null
+): Array<{ cx: number; cy: number; data: Uint8Array }> {
+  const out: Array<{ cx: number; cy: number; data: Uint8Array }> = [];
+  if (!Array.isArray(manifest) || manifest.length === 0 || !blob) return out;
+  const bytes = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
+  let offset = 0;
+  for (const ref of manifest) {
+    if (!ref || !Number.isFinite(ref.size) || ref.size < 0) continue;
+    const data = bytes.subarray(offset, offset + ref.size);
+    offset += ref.size;
+    out.push({ cx: ref.cx, cy: ref.cy, data });
+  }
+  return out;
+}

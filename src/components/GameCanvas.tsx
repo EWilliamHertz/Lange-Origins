@@ -14,7 +14,9 @@ import {
   parseChunkKey,
   decompressChunk,
   applyChunkToWorld,
-  createEmptyChunkWorld
+  createEmptyChunkWorld,
+  unpackChunkBatch,
+  PackedChunkRef
 } from '../lib/chunk';
 import { PlayerState, updatePhysics } from '../lib/physics';
 import { computeLighting, LightMap } from '../lib/lighting';
@@ -202,6 +204,25 @@ interface Particle {
   size: number;
 }
 
+/**
+ * Wire shape of a chunk payload. Chunks arrive as a single packed binary
+ * attachment (manifest + blob) because socket.io parsers cap packets at 10
+ * binary attachments — the old per-chunk attachment arrays were rejected by
+ * the client, disconnecting it mid-join. The legacy `chunks` array is still
+ * accepted for compatibility with older servers.
+ */
+interface ChunkPayloadData {
+  chunkManifest?: PackedChunkRef[];
+  chunkBlob?: Uint8Array | ArrayBuffer;
+  chunks?: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }>;
+}
+
+/** Resolves either the packed-batch shape or the legacy array into a uniform chunk list. */
+function resolveIncomingChunks(data: ChunkPayloadData): Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }> {
+  const packed = unpackChunkBatch(data.chunkManifest, data.chunkBlob);
+  if (packed.length > 0) return packed;
+  return Array.isArray(data.chunks) ? data.chunks : [];
+}
 
 export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked, maxHpBonus, speedMultiplier, staminaDrainMultiplier, onEatFood, activeItem, activeEquipment }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -421,12 +442,13 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       window.location.reload();
     });
 
-    socket.on('world_wiped', (data: { world?: World, chunks?: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }> }) => {
+    socket.on('world_wiped', (data: ChunkPayloadData & { world?: World }) => {
       loadedChunks.current.clear();
       pendingChunks.current.clear();
-      if (data.chunks && Array.isArray(data.chunks) && data.chunks.length > 0) {
+      const incoming = resolveIncomingChunks(data);
+      if (incoming.length > 0) {
         gameState.current.world = createEmptyChunkWorld();
-        for (const chunk of data.chunks) {
+        for (const chunk of incoming) {
           try {
             const decompressed = decompressChunk(chunk.data);
             applyChunkToWorld(gameState.current.world, chunk.cx, chunk.cy, decompressed);
@@ -443,9 +465,8 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       gameState.current.lastLightTime = 0; // Force relight
     });
 
-    socket.on('init_world', (data: {
+    socket.on('init_world', (data: ChunkPayloadData & {
       world?: World;
-      chunks?: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }>;
       chunkSize?: number;
       worldWidth?: number;
       worldHeight?: number;
@@ -458,9 +479,10 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       loadedChunks.current.clear();
       pendingChunks.current.clear();
 
-      if (data.chunks && Array.isArray(data.chunks) && data.chunks.length > 0) {
+      const incomingChunks = resolveIncomingChunks(data);
+      if (incomingChunks.length > 0) {
         gameState.current.world = createEmptyChunkWorld();
-        for (const chunk of data.chunks) {
+        for (const chunk of incomingChunks) {
           try {
             const decompressed = decompressChunk(chunk.data);
             applyChunkToWorld(gameState.current.world, chunk.cx, chunk.cy, decompressed);
@@ -539,10 +561,12 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       setConnected(true);
     });
 
-    socket.on('chunks_data', (data: { chunks: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }> }) => {
-      if (!gameState.current.world || !Array.isArray(data?.chunks)) return;
+    socket.on('chunks_data', (data: ChunkPayloadData) => {
+      if (!gameState.current.world) return;
+      const incoming = resolveIncomingChunks(data);
+      if (incoming.length === 0) return;
       let appliedCount = 0;
-      for (const chunk of data.chunks) {
+      for (const chunk of incoming) {
         try {
           const decompressed = decompressChunk(chunk.data);
           applyChunkToWorld(gameState.current.world, chunk.cx, chunk.cy, decompressed);
