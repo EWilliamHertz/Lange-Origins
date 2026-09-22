@@ -20,7 +20,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Alpha (Main World)',
     category: 'Standard',
     description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
-    players: 8,
+    players: 0,
     maxPlayers: 20,
     ping: 42,
     biomeTag: 'Verdant Woodlands',
@@ -31,7 +31,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Beta (Wilderness)',
     category: 'Wilderness',
     description: 'Expansive wild frontier with dense forests, volcanic crags, and deep crystal caverns.',
-    players: 14,
+    players: 0,
     maxPlayers: 20,
     ping: 38,
     biomeTag: 'Obsidian Caverns',
@@ -42,7 +42,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     name: 'Realm Gamma (Frontier)',
     category: 'Frontier',
     description: 'A serene expanse with snow-capped mountain peaks and undisturbed subterranean ruins.',
-    players: 5,
+    players: 0,
     maxPlayers: 20,
     ping: 54,
     biomeTag: 'Glacial Peaks',
@@ -85,7 +85,7 @@ export const ServerBrowserModal: React.FC<ServerBrowserModalProps> = ({
           setLiveServers(prev =>
             prev.map(srv => ({
               ...srv,
-              players: dynamicMap.has(srv.id) ? dynamicMap.get(srv.id)! : srv.players
+              players: dynamicMap.has(srv.id) ? dynamicMap.get(srv.id)! : 0
             }))
           );
         }

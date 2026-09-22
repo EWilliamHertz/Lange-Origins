@@ -139,150 +139,188 @@ export const Sounds = {
   setVolume: AudioController.setVolume,
   
   startLofiMusic: () => {
-    if (lofiInterval) return;
-    if (ctx.state === 'suspended') ctx.resume();
-    
-    lofiGain = ctx.createGain();
-    lofiGain.gain.value = 0.2; // Background volume
-    lofiGain.connect(musicGain || masterGain);
-    
-    // Chill Lofi Hiphop procedural generator
-    const tempo = 80; // BPM
-    const beatTime = 60 / tempo; 
-    let step = 0;
-    
-    // Chords (Cmaj7, Amin7, Fmaj7, G7) in Hz
-    const progression = [
-       [130.81, 164.81, 196.00, 246.94], // Cmaj7
-       [110.00, 130.81, 164.81, 196.00], // Amin7
-       [87.31,  110.00, 130.81, 164.81], // Fmaj7
-       [98.00,  123.47, 146.83, 174.61], // G7
-    ];
-    
-    // Tape noise / vinyl crackle overlay
-    const vinylSource = ctx.createBufferSource();
-    vinylSource.buffer = getNoiseBuffer();
-    vinylSource.loop = true;
-    const vinylFilter = ctx.createBiquadFilter();
-    vinylFilter.type = 'lowpass';
-    vinylFilter.frequency.value = 400;
-    const vinylVol = ctx.createGain();
-    vinylVol.gain.value = 0.02;
-    vinylSource.connect(vinylFilter);
-    vinylFilter.connect(vinylVol);
-    vinylVol.connect(lofiGain);
-    vinylSource.start();
+    if (!ctx) return;
+    try {
+      if (lofiInterval) return;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      
+      lofiGain = ctx.createGain();
+      lofiGain.gain.value = 0.2; // Background volume
+      const targetGain = musicGain || masterGain;
+      if (targetGain) {
+        lofiGain.connect(targetGain);
+      } else {
+        lofiGain.connect(ctx.destination);
+      }
+      
+      // Chill Lofi Hiphop procedural generator
+      const tempo = 80; // BPM
+      const beatTime = 60 / tempo; 
+      let step = 0;
+      
+      // Chords (Cmaj7, Amin7, Fmaj7, G7) in Hz
+      const progression = [
+         [130.81, 164.81, 196.00, 246.94], // Cmaj7
+         [110.00, 130.81, 164.81, 196.00], // Amin7
+         [87.31,  110.00, 130.81, 164.81], // Fmaj7
+         [98.00,  123.47, 146.83, 174.61], // G7
+      ];
+      
+      // Tape noise / vinyl crackle overlay
+      const nBuf = getNoiseBuffer();
+      if (nBuf) {
+        try {
+          const vinylSource = ctx.createBufferSource();
+          vinylSource.buffer = nBuf;
+          vinylSource.loop = true;
+          const vinylFilter = ctx.createBiquadFilter();
+          vinylFilter.type = 'lowpass';
+          vinylFilter.frequency.value = 400;
+          const vinylVol = ctx.createGain();
+          vinylVol.gain.value = 0.02;
+          vinylSource.connect(vinylFilter);
+          vinylFilter.connect(vinylVol);
+          if (lofiGain) vinylVol.connect(lofiGain);
+          vinylSource.start();
+          lofiChordNodes.push(vinylSource as any);
+        } catch (e) {}
+      }
 
-    function playKick() {
-       const osc = ctx.createOscillator();
-       const gain = ctx.createGain();
-       osc.frequency.setValueAtTime(150, ctx.currentTime);
-       osc.frequency.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-       gain.gain.setValueAtTime(0.8, ctx.currentTime);
-       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-       osc.connect(gain);
-       gain.connect(lofiGain!);
-       osc.start(ctx.currentTime);
-       osc.stop(ctx.currentTime + 0.5);
-    }
-    
-    function playSnare() {
-       const noise = ctx.createBufferSource();
-       noise.buffer = getNoiseBuffer();
-       const filter = ctx.createBiquadFilter();
-       filter.type = 'highpass';
-       filter.frequency.value = 1000;
-       const gain = ctx.createGain();
-       gain.gain.setValueAtTime(0.3, ctx.currentTime);
-       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
-       noise.connect(filter);
-       filter.connect(gain);
-       gain.connect(lofiGain!);
-       noise.start(ctx.currentTime);
-       noise.stop(ctx.currentTime + 0.2);
-    }
-    
-    function playHihat() {
-       const noise = ctx.createBufferSource();
-       noise.buffer = getNoiseBuffer();
-       const filter = ctx.createBiquadFilter();
-       filter.type = 'highpass';
-       filter.frequency.value = 5000;
-       const gain = ctx.createGain();
-       gain.gain.setValueAtTime(0.1, ctx.currentTime);
-       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
-       noise.connect(filter);
-       filter.connect(gain);
-       gain.connect(lofiGain!);
-       noise.start(ctx.currentTime);
-       noise.stop(ctx.currentTime + 0.05);
-    }
-    
-    function playChord(chord: number[]) {
-        lofiChordNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch(e){} });
-        lofiChordNodes = [];
-        
-        chord.forEach(freq => {
-            const osc = ctx.createOscillator();
-            osc.type = 'sine'; // very chill, smooth
-            const gain = ctx.createGain();
-            
-            osc.frequency.setValueAtTime(freq, ctx.currentTime);
-            // Slight detune for that lofi wow/flutter
-            const detuneLFO = ctx.createOscillator();
-            detuneLFO.frequency.value = 0.5;
-            const detuneGain = ctx.createGain();
-            detuneGain.gain.value = 10;
-            detuneLFO.connect(detuneGain);
-            detuneGain.connect(osc.detune);
-            detuneLFO.start();
-            
-            gain.gain.setValueAtTime(0, ctx.currentTime);
-            gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.5); // slow attack
-            gain.gain.setTargetAtTime(0, ctx.currentTime + beatTime * 3, 0.5); // slow release
-            
-            const filter = ctx.createBiquadFilter();
-            filter.type = 'lowpass';
-            filter.frequency.value = 800; // dull sound
-            
-            osc.connect(filter);
-            filter.connect(gain);
-            gain.connect(lofiGain!);
-            
-            osc.start();
-            lofiChordNodes.push(osc);
-            lofiChordNodes.push(detuneLFO);
-        });
-    }
+      function playKick() {
+         if (!ctx || !lofiGain) return;
+         try {
+           const osc = ctx.createOscillator();
+           const gain = ctx.createGain();
+           osc.frequency.setValueAtTime(150, ctx.currentTime);
+           osc.frequency.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+           gain.gain.setValueAtTime(0.8, ctx.currentTime);
+           gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+           osc.connect(gain);
+           gain.connect(lofiGain);
+           osc.start(ctx.currentTime);
+           osc.stop(ctx.currentTime + 0.5);
+         } catch (e) {}
+      }
+      
+      function playSnare() {
+         if (!ctx || !lofiGain) return;
+         const noiseBuffer = getNoiseBuffer();
+         if (!noiseBuffer) return;
+         try {
+           const noise = ctx.createBufferSource();
+           noise.buffer = noiseBuffer;
+           const filter = ctx.createBiquadFilter();
+           filter.type = 'highpass';
+           filter.frequency.value = 1000;
+           const gain = ctx.createGain();
+           gain.gain.setValueAtTime(0.3, ctx.currentTime);
+           gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+           noise.connect(filter);
+           filter.connect(gain);
+           gain.connect(lofiGain);
+           noise.start(ctx.currentTime);
+           noise.stop(ctx.currentTime + 0.2);
+         } catch (e) {}
+      }
+      
+      function playHihat() {
+         if (!ctx || !lofiGain) return;
+         const noiseBuffer = getNoiseBuffer();
+         if (!noiseBuffer) return;
+         try {
+           const noise = ctx.createBufferSource();
+           noise.buffer = noiseBuffer;
+           const filter = ctx.createBiquadFilter();
+           filter.type = 'highpass';
+           filter.frequency.value = 5000;
+           const gain = ctx.createGain();
+           gain.gain.setValueAtTime(0.1, ctx.currentTime);
+           gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+           noise.connect(filter);
+           filter.connect(gain);
+           gain.connect(lofiGain);
+           noise.start(ctx.currentTime);
+           noise.stop(ctx.currentTime + 0.05);
+         } catch (e) {}
+      }
+      
+      function playChord(chord: number[]) {
+          if (!ctx || !lofiGain) return;
+          lofiChordNodes.forEach(n => { try { n.stop?.(); n.disconnect?.(); } catch(e){} });
+          lofiChordNodes = [];
+          
+          chord.forEach(freq => {
+              if (!ctx || !lofiGain) return;
+              try {
+                const osc = ctx.createOscillator();
+                osc.type = 'sine'; // very chill, smooth
+                const gain = ctx.createGain();
+                
+                osc.frequency.setValueAtTime(freq, ctx.currentTime);
+                // Slight detune for that lofi wow/flutter
+                const detuneLFO = ctx.createOscillator();
+                detuneLFO.frequency.value = 0.5;
+                const detuneGain = ctx.createGain();
+                detuneGain.gain.value = 10;
+                detuneLFO.connect(detuneGain);
+                detuneGain.connect(osc.detune);
+                detuneLFO.start();
+                
+                gain.gain.setValueAtTime(0, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.5); // slow attack
+                gain.gain.setTargetAtTime(0, ctx.currentTime + beatTime * 3, 0.5); // slow release
+                
+                const filter = ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 800; // dull sound
+                
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(lofiGain);
+                
+                osc.start();
+                lofiChordNodes.push(osc);
+                lofiChordNodes.push(detuneLFO);
+              } catch (e) {}
+          });
+      }
 
-    lofiInterval = setInterval(() => {
-        // 16 step sequencer
-        const s = step % 16;
-        
-        // Drums
-        if (s === 0 || s === 10) playKick();
-        if (s === 4 || s === 12) playSnare();
-        if (s % 2 === 0) playHihat(); // 8th note hihats
-        
-        // Slightly unquantized feel (swing)
-        
-        // Chords (change every 2 bars / 32 steps)
-        if (s === 0) {
-            const chordIdx = Math.floor((step / 16) % 4);
-            playChord(progression[chordIdx]);
-        }
-        
-        step++;
-    }, (beatTime * 1000) / 4); // 16th notes
+      lofiInterval = setInterval(() => {
+          try {
+            // 16 step sequencer
+            const s = step % 16;
+            
+            // Drums
+            if (s === 0 || s === 10) playKick();
+            if (s === 4 || s === 12) playSnare();
+            if (s % 2 === 0) playHihat(); // 8th note hihats
+            
+            // Chords (change every 2 bars / 32 steps)
+            if (s === 0) {
+                const chordIdx = Math.floor((step / 16) % 4);
+                playChord(progression[chordIdx]);
+            }
+            
+            step++;
+          } catch (e) {}
+      }, (beatTime * 1000) / 4); // 16th notes
+    } catch (err) {
+      console.warn('Lofi music playback failed to initialize:', err);
+    }
   },
   
   stopLofiMusic: () => {
-      if (lofiInterval) {
-          clearInterval(lofiInterval);
-          lofiInterval = null;
-      }
-      lofiChordNodes.forEach(n => { try { n.stop(); n.disconnect(); } catch(e){} });
-      lofiChordNodes = [];
+      try {
+        if (lofiInterval) {
+            clearInterval(lofiInterval);
+            lofiInterval = null;
+        }
+        lofiChordNodes.forEach(n => { try { n.stop?.(); n.disconnect?.(); } catch(e){} });
+        lofiChordNodes = [];
+      } catch (e) {}
+
       if (lofiGain) {
           lofiGain.disconnect();
           lofiGain = null;
@@ -521,5 +559,59 @@ export const Sounds = {
   shield: () => {
     playTone(320, 'triangle', 0.15, 0.2);
     setTimeout(() => playTone(640, 'sine', 0.2, 0.15), 40);
+  },
+  eat: () => {
+    playTone(320, 'sine', 0.08, 0.2, 'sfx');
+    setTimeout(() => playTone(480, 'triangle', 0.07, 0.25, 'sfx'), 70);
+    setTimeout(() => playTone(260, 'sine', 0.12, 0.18, 'sfx'), 140);
+  },
+  sizzle: () => {
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+    if (ctx && masterGain) {
+      const buffer = getNoiseBuffer();
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 2400;
+      filter.Q.value = 1.2;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.2, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+      src.connect(filter);
+      filter.connect(g);
+      g.connect(masterGain);
+      src.start();
+      src.stop(ctx.currentTime + 0.6);
+    }
+  },
+  wolfHowl: () => {
+    playTone(220, 'sine', 0.3, 0.2, 'sfx');
+    setTimeout(() => playTone(330, 'sine', 0.4, 0.25, 'sfx'), 150);
+    setTimeout(() => playTone(440, 'sine', 0.5, 0.28, 'sfx'), 350);
+    setTimeout(() => playTone(392, 'sine', 0.4, 0.18, 'sfx'), 650);
+  },
+  railClick: () => {
+    playTone(720, 'triangle', 0.03, 0.12, 'sfx');
+    setTimeout(() => playTone(840, 'triangle', 0.03, 0.15, 'sfx'), 45);
+  },
+  death: () => {
+    playTone(220, 'sawtooth', 0.3, 0.3, 'sfx');
+    setTimeout(() => playTone(165, 'sawtooth', 0.4, 0.25, 'sfx'), 150);
+    setTimeout(() => playTone(110, 'sawtooth', 0.6, 0.2, 'sfx'), 350);
+  },
+  hit: () => {
+    playTone(180, 'triangle', 0.08, 0.3, 'sfx');
+    setTimeout(() => playTone(120, 'square', 0.06, 0.25, 'sfx'), 40);
+  },
+  waterSplashed: () => {
+    playTone(340, 'sine', 0.12, 0.22, 'sfx');
+    setTimeout(() => playTone(280, 'sine', 0.15, 0.2, 'sfx'), 60);
+    setTimeout(() => playTone(440, 'triangle', 0.1, 0.15, 'sfx'), 120);
+  },
+  spellCast: () => {
+    playTone(520, 'sine', 0.15, 0.25, 'sfx');
+    setTimeout(() => playTone(780, 'sine', 0.2, 0.22, 'sfx'), 80);
+    setTimeout(() => playTone(1040, 'sine', 0.25, 0.2, 'sfx'), 160);
   },
 };

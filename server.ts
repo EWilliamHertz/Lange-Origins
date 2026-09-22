@@ -5,6 +5,8 @@ import { createServer as createViteServer } from 'vite';
 import { Server as SocketIOServer } from 'socket.io';
 import http from 'http';
 import { generateWorld, getSafeSpawnPoint, World } from './src/lib/world';
+import { extractChunkFromWorld, compressChunk, CHUNK_SIZE, CHUNK_COLS, CHUNK_ROWS } from './src/lib/chunk';
+import { WORLD_WIDTH, WORLD_HEIGHT, BlockType } from './src/lib/constants';
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
@@ -102,8 +104,19 @@ async function startServer() {
         console.error("Failed to delete room chests in firestore:", e);
       }
       
+      activeRooms[roomId].chunkCache?.clear();
       io.to(roomId).emit('chat_message', { sender: 'System', text: 'The world has been reset by an admin!' });
-      io.to(roomId).emit('world_wiped', { world: activeRooms[roomId].world });
+      const safe = getSafeSpawnPoint(activeRooms[roomId].world);
+      const safeCx = Math.floor(safe.x / (CHUNK_SIZE * 32));
+      const safeCy = Math.floor(safe.y / (CHUNK_SIZE * 32));
+      const resetChunks: Array<{ cx: number; cy: number; data: Uint8Array }> = [];
+      for (let cx = Math.max(0, safeCx - 4); cx <= Math.min(CHUNK_COLS - 1, safeCx + 4); cx++) {
+        for (let cy = Math.max(0, safeCy - 3); cy <= Math.min(CHUNK_ROWS - 1, safeCy + 3); cy++) {
+          const cData = getRoomChunk(activeRooms[roomId], cx, cy);
+          if (cData) resetChunks.push({ cx, cy, data: cData });
+        }
+      }
+      io.to(roomId).emit('world_wiped', { chunks: resetChunks, world: activeRooms[roomId].world });
       res.json({ success: true });
     } else {
       res.status(404).json({ error: 'Room not found or not active.' });
@@ -111,14 +124,15 @@ async function startServer() {
   });
 
   app.get('/api/servers', (req, res) => {
-    const servers = [];
+    const presetIds = ['public-lobby', 'realm-2', 'realm-3', 'hardcore-1', 'pvp-arena'];
+    const serversMap = new Map<string, number>();
+    presetIds.forEach(id => serversMap.set(id, 0));
     for (const roomId in activeRooms) {
       const room = activeRooms[roomId];
-      const playerCount = Object.keys(room.players).length;
-      if (playerCount > 0 || roomId === 'public-lobby' || roomId.startsWith('Public')) {
-        servers.push({ id: roomId, players: playerCount });
-      }
+      const playerCount = Object.keys(room?.players || {}).length;
+      serversMap.set(roomId, playerCount);
     }
+    const servers = Array.from(serversMap.entries()).map(([id, players]) => ({ id, players }));
     res.json({ servers });
   });
 
@@ -181,8 +195,67 @@ async function startServer() {
 
   // --- Multiplayer Game State ---
   // Store worlds by room ID
-  
-function triggerExplosion(room: any, roomId: string, cx: number, cy: number, radius: number, damage: number) {
+
+  interface ServerRoom {
+    world: World;
+    players: Record<string, any>;
+    mobs: Record<string, any>;
+    items: Record<string, any>;
+    chests: Record<string, any[]>;
+    createdAt: number;
+    parties: Record<string, any>;
+    trades: Record<string, any>;
+    projectiles: Record<string, any>;
+    protectedBlocks: Record<string, { partyId: string; leaderId: string; ownerName: string }>;
+    modifiedBlocks: Record<string, number>;
+    dirty: boolean;
+    lastSavedAt: number;
+    timeOfDay: number;
+    chunkCache?: Map<string, Uint8Array>;
+    frozenWaterBlocks?: Map<string, number>;
+  }
+
+  function createInitialRoom(seed: string): ServerRoom {
+    return {
+      world: generateWorld(seed),
+      players: {},
+      mobs: {},
+      items: {},
+      chests: {},
+      createdAt: Date.now(),
+      parties: {},
+      trades: {},
+      projectiles: {},
+      protectedBlocks: {},
+      modifiedBlocks: {},
+      dirty: false,
+      lastSavedAt: Date.now(),
+      timeOfDay: 0,
+      chunkCache: new Map(),
+      frozenWaterBlocks: new Map()
+    };
+  }
+
+  function getRoomChunk(room: ServerRoom, cx: number, cy: number): Uint8Array | null {
+    if (cx < 0 || cx >= CHUNK_COLS || cy < 0 || cy >= CHUNK_ROWS) return null;
+    if (!room.chunkCache) room.chunkCache = new Map();
+    const key = `${cx}_${cy}`;
+    const cached = room.chunkCache.get(key);
+    if (cached) return cached;
+
+    const rawChunk = extractChunkFromWorld(room.world, cx, cy);
+    const compressed = compressChunk(rawChunk);
+    room.chunkCache.set(key, compressed);
+    return compressed;
+  }
+
+  function invalidateRoomChunk(room: ServerRoom, tx: number, ty: number): void {
+    const cx = Math.floor(tx / CHUNK_SIZE);
+    const cy = Math.floor(ty / CHUNK_SIZE);
+    room.chunkCache?.delete(`${cx}_${cy}`);
+  }
+
+  function triggerExplosion(room: any, roomId: string, cx: number, cy: number, radius: number, damage: number) {
     let worldUpdated = false;
     for (let dx = -radius; dx <= radius; dx++) {
         for (let dy = -radius; dy <= radius; dy++) {
@@ -193,6 +266,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
                     // 21 is AdminBrick
                     const blockType = room.world[tx][ty];
                     room.world[tx][ty] = 0; // Air
+                    invalidateRoomChunk(room, tx, ty);
                     worldUpdated = true;
                     // Send to client
                     io.to(roomId).emit('world_updated', { tx, ty, blockType: 0 });
@@ -243,40 +317,63 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
     }
 }
 
-  interface ServerRoom {
-    world: World;
-    players: Record<string, any>;
-    mobs: Record<string, any>;
-    items: Record<string, any>;
-    chests: Record<string, any[]>;
-    createdAt: number;
-    parties: Record<string, any>;
-    trades: Record<string, any>;
-    projectiles: Record<string, any>;
-    protectedBlocks: Record<string, { partyId: string; leaderId: string; ownerName: string }>;
-    modifiedBlocks: Record<string, number>;
-    dirty: boolean;
-    lastSavedAt: number;
-    timeOfDay: number;
+  function triggerFireMagic(room: ServerRoom, roomId: string, cx: number, cy: number, radius: number = 2) {
+    let burnedAny = false;
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx * dx + dy * dy <= radius * radius) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          if (room.world[tx] && room.world[tx][ty] !== undefined) {
+            const block = room.world[tx][ty];
+            // Burn foliage: Leaves (5) -> Air (0)
+            if (block === BlockType.Leaves) {
+              room.world[tx][ty] = BlockType.Air;
+              invalidateRoomChunk(room, tx, ty);
+              io.to(roomId).emit('world_updated', { tx, ty, blockType: BlockType.Air });
+              burnedAny = true;
+            }
+            // Scorch grass: Grass (2) -> Dirt (1)
+            else if (block === BlockType.Grass) {
+              room.world[tx][ty] = BlockType.Dirt;
+              invalidateRoomChunk(room, tx, ty);
+              io.to(roomId).emit('world_updated', { tx, ty, blockType: BlockType.Dirt });
+              burnedAny = true;
+            }
+          }
+        }
+      }
+    }
+    io.to(roomId).emit('spell_environment_effect', {
+      x: cx * 32 + 16,
+      y: cy * 32 + 16,
+      type: 'fire_burn'
+    });
   }
 
-  function createInitialRoom(seed: string): ServerRoom {
-    return {
-      world: generateWorld(seed),
-      players: {},
-      mobs: {},
-      items: {},
-      chests: {},
-      createdAt: Date.now(),
-      parties: {},
-      trades: {},
-      projectiles: {},
-      protectedBlocks: {},
-      modifiedBlocks: {},
-      dirty: false,
-      lastSavedAt: Date.now(),
-      timeOfDay: 0
-    };
+  function triggerIceMagic(room: ServerRoom, roomId: string, cx: number, cy: number, radius: number = 2) {
+    if (!room.frozenWaterBlocks) room.frozenWaterBlocks = new Map();
+    const thawTime = Date.now() + 12000; // 12 seconds thaw timer
+
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx * dx + dy * dy <= radius * radius) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          if (room.world[tx] && room.world[tx][ty] === BlockType.Water) {
+            room.world[tx][ty] = BlockType.Ice; // 204
+            invalidateRoomChunk(room, tx, ty);
+            io.to(roomId).emit('world_updated', { tx, ty, blockType: BlockType.Ice });
+            room.frozenWaterBlocks.set(`${tx}_${ty}`, thawTime);
+          }
+        }
+      }
+    }
+    io.to(roomId).emit('spell_environment_effect', {
+      x: cx * 32 + 16,
+      y: cy * 32 + 16,
+      type: 'ice_freeze'
+    });
   }
 
   const activeRooms: Record<string, ServerRoom> = {
@@ -380,7 +477,22 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       const room = activeRooms[roomId];
       let mobsUpdated = false;
       let itemsUpdated = false;
-      
+
+      // Environmental Magic: Thaw frozen water blocks
+      if (room.frozenWaterBlocks && room.frozenWaterBlocks.size > 0) {
+        const now = Date.now();
+        for (const [key, expireAt] of room.frozenWaterBlocks.entries()) {
+          if (now >= expireAt) {
+            room.frozenWaterBlocks.delete(key);
+            const [stx, sty] = key.split('_').map(Number);
+            if (room.world[stx] && room.world[stx][sty] === BlockType.Ice) {
+              room.world[stx][sty] = BlockType.Water;
+              invalidateRoomChunk(room, stx, sty);
+              io.to(roomId).emit('world_updated', { tx: stx, ty: sty, blockType: BlockType.Water });
+            }
+          }
+        }
+      }
       
       // Projectiles
       for (const pId in room.projectiles) {
@@ -395,11 +507,32 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
          
          const tx = Math.floor((p.x + (p.type === 'grenade' ? 8 : 4)) / 32);
          const ty = Math.floor((p.y + (p.type === 'grenade' ? 8 : 4)) / 32);
+
+         // Environmental magic interactions in flight
+         if (p.type === 'fireball') {
+           // Burn foliage along trajectory
+           if (room.world[tx]?.[ty] === BlockType.Leaves) {
+             triggerFireMagic(room, roomId, tx, ty, 1);
+           }
+         } else if (p.type === 'frostbolt') {
+           // Freeze water directly underneath or at current trajectory
+           if (room.world[tx]?.[ty] === BlockType.Water) {
+             triggerIceMagic(room, roomId, tx, ty, 2);
+             delete room.projectiles[pId];
+             continue;
+           } else if (room.world[tx]?.[ty + 1] === BlockType.Water) {
+             triggerIceMagic(room, roomId, tx, ty + 1, 1);
+           }
+         }
          
          // Collision with blocks
          if (room.world[tx] && room.world[tx][ty] && room.world[tx][ty] !== 0 && room.world[tx][ty] !== 31 && room.world[tx][ty] !== 32) {
              if (p.type === 'grenade' || p.type === 'rocket') {
                  triggerExplosion(room, roomId, tx, ty, 3, 20);
+             } else if (p.type === 'fireball') {
+                 triggerFireMagic(room, roomId, tx, ty, 2);
+             } else if (p.type === 'frostbolt') {
+                 triggerIceMagic(room, roomId, tx, ty, 2);
              }
              delete room.projectiles[pId];
              continue;
@@ -412,6 +545,16 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
              if (p.x >= m.x - 10 && p.x <= m.x + 32 && p.y >= m.y - 10 && p.y <= m.y + 32) {
                  if (p.type === 'grenade') {
                      triggerExplosion(room, roomId, tx, ty, 3, 20);
+                 } else if (p.type === 'fireball') {
+                     triggerFireMagic(room, roomId, tx, ty, 2);
+                     m.hp -= p.damage || 25;
+                     m.vy = -6;
+                     m.vx = p.vx > 0 ? 8 : -8;
+                 } else if (p.type === 'frostbolt') {
+                     triggerIceMagic(room, roomId, tx, ty, 2);
+                     m.hp -= p.damage || 20;
+                     m.vy = -3;
+                     m.vx = p.vx > 0 ? 3 : -3;
                  } else {
                      m.hp -= p.damage || 5;
                      m.vy = -5;
@@ -423,8 +566,10 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
          }
          
          if (hitMob || p.life <= 0) {
-             if (p.life <= 0 && p.type === 'grenade') {
-                 triggerExplosion(room, roomId, tx, ty, 3, 20);
+             if (p.life <= 0) {
+                 if (p.type === 'grenade') triggerExplosion(room, roomId, tx, ty, 3, 20);
+                 else if (p.type === 'fireball') triggerFireMagic(room, roomId, tx, ty, 2);
+                 else if (p.type === 'frostbolt') triggerIceMagic(room, roomId, tx, ty, 2);
              }
              delete room.projectiles[pId];
          }
@@ -472,6 +617,7 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
                       
                       if (block === 29) {
                           room.world[n.x][n.y] = 33;
+                          invalidateRoomChunk(room, n.x, n.y);
                           io.to(roomId).emit('world_updated', { tx: n.x, ty: n.y, blockType: 33 });
                       } else if (block === 34) {
                           // Ignite TNT
@@ -534,7 +680,14 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
               dropType = 402; // Gunpowder
               dropAmount = Math.floor(Math.random() * 2) + 1;
           } else if (mob.type === 'zombie') {
-              dropType = 1; // Dirt (placeholder for rotten flesh)
+              dropType = Math.random() > 0.4 ? 211 : 210; // 211 = RawMeat, 210 = WildSpice
+              dropAmount = 1;
+          } else if (mob.type === 'wolf' || mob.type === 'giant_wolf') {
+              dropType = 211; // 211 = RawMeat
+              dropAmount = Math.floor(Math.random() * 2) + 1;
+          } else if (mob.type === 'orc') {
+              dropType = 211; // 211 = RawMeat
+              dropAmount = 2;
           } else if (mob.type === 'golem_boss') {
               dropType = 405; // Boss Relic
               dropAmount = 1;
@@ -587,6 +740,14 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
             // Pet AI
             const owner = room.players[mob.ownerId];
             if (owner) {
+                if ((owner as any).mountedMobId === mobId) {
+                    mob.x = owner.x;
+                    mob.y = owner.y + 10;
+                    mob.vx = owner.vx || 0;
+                    mob.vy = owner.vy || 0;
+                    mob.facingRight = owner.facingRight;
+                    continue;
+                }
                 const distToOwner = Math.sqrt(Math.pow(mob.x - owner.x, 2) + Math.pow(mob.y - owner.y, 2));
                 
                 // Find nearest hostile mob
@@ -799,8 +960,9 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
            const elapsedMs = Date.now() - room.createdAt;
            const timeOfDay = (0.35 + elapsedMs * 0.000005) % 1.0;
            const isNight = timeOfDay < 0.1 || timeOfDay > 0.9;
-           const typesNight = ['skeleton', 'creeper', 'zombie'];
-           type = isNight ? typesNight[Math.floor(Math.random() * typesNight.length)] : 'slime';
+           const typesNight = ['skeleton', 'creeper', 'zombie', 'wolf'];
+           const typesDay = ['slime', 'wolf', 'giant_wolf'];
+           type = isNight ? typesNight[Math.floor(Math.random() * typesNight.length)] : typesDay[Math.floor(Math.random() * typesDay.length)];
         }
         
         const mobId = 'mob_' + Date.now() + Math.floor(Math.random()*1000);
@@ -810,8 +972,8 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
           x: spawnX * 32,
           y: (spawnY - (type === 'golem_boss' ? 4 : 2)) * 32,
           vx: 0, vy: 0, 
-          hp: type === 'golem_boss' ? 300 : 10, 
-          maxHp: type === 'golem_boss' ? 300 : 10,
+          hp: type === 'golem_boss' ? 300 : type === 'giant_wolf' ? 35 : type === 'wolf' ? 18 : 10, 
+          maxHp: type === 'golem_boss' ? 300 : type === 'giant_wolf' ? 35 : type === 'wolf' ? 18 : 10,
           facingRight: Math.random() > 0.5
         };
         mobsUpdated = true;
@@ -932,8 +1094,25 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
         skin: typeof data !== 'string' && (data as any).skin ? (data as any).skin : 'orange'
       };
 
-      // Send the entire current world and player list to the new user
+      // Chunk-Based World Loading: Stream compressed 32x32 chunks around player spawn
+      const spawnCx = Math.max(0, Math.min(CHUNK_COLS - 1, Math.floor(startX / (CHUNK_SIZE * 32))));
+      const spawnCy = Math.max(0, Math.min(CHUNK_ROWS - 1, Math.floor(startY / (CHUNK_SIZE * 32))));
+      const initialChunks: Array<{ cx: number; cy: number; data: Uint8Array }> = [];
+      for (let cx = Math.max(0, spawnCx - 5); cx <= Math.min(CHUNK_COLS - 1, spawnCx + 5); cx++) {
+        for (let cy = Math.max(0, spawnCy - 3); cy <= Math.min(CHUNK_ROWS - 1, spawnCy + 3); cy++) {
+          const chunkData = getRoomChunk(activeRooms[roomId], cx, cy);
+          if (chunkData) {
+            initialChunks.push({ cx, cy, data: chunkData });
+          }
+        }
+      }
+
+      // Send the compressed chunks and initial game state to the new user
       socket.emit('init_world', {
+        chunks: initialChunks,
+        chunkSize: CHUNK_SIZE,
+        worldWidth: WORLD_WIDTH,
+        worldHeight: WORLD_HEIGHT,
         world: activeRooms[roomId].world,
         players: activeRooms[roomId].players,
         mobs: activeRooms[roomId].mobs,
@@ -945,6 +1124,23 @@ function triggerExplosion(room: any, roomId: string, cx: number, cy: number, rad
       
       // Tell others in the room about the new player
       socket.to(roomId).emit('player_joined', activeRooms[roomId].players[socket.id]);
+    });
+
+    socket.on('request_chunks', (data: { chunks: Array<{ cx: number; cy: number }> }) => {
+      if (!currentRoom || !activeRooms[currentRoom] || !Array.isArray(data?.chunks)) return;
+      const room = activeRooms[currentRoom];
+      const chunksToSend: Array<{ cx: number; cy: number; data: Uint8Array }> = [];
+      for (const req of data.chunks.slice(0, 40)) {
+        if (typeof req?.cx === 'number' && typeof req?.cy === 'number') {
+          const chunkData = getRoomChunk(room, req.cx, req.cy);
+          if (chunkData) {
+            chunksToSend.push({ cx: req.cx, cy: req.cy, data: chunkData });
+          }
+        }
+      }
+      if (chunksToSend.length > 0) {
+        socket.emit('chunks_data', { chunks: chunksToSend });
+      }
     });
 
 socket.on('open_chest', async (data: { tx: number, ty: number }) => {
@@ -1236,6 +1432,7 @@ socket.on('sync_stats', (data: { skills?: { strength?: number; dexterity?: numbe
       }
 
       world[data.tx][data.ty] = data.blockType;
+      invalidateRoomChunk(room, data.tx, data.ty);
 
       // Update protected blocks tracking
       if (data.blockType === 0) {
@@ -1427,7 +1624,66 @@ socket.on('sync_stats', (data: { skills?: { strength?: number; dexterity?: numbe
       }
     });
 
-    socket.on('use_ability', (data: { ability: string, targetId?: string, targetType?: string, facingRight?: boolean }) => {
+    socket.on('tame_mob', (data: { mobId: string, itemType: number }) => {
+      if (currentRoom && activeRooms[currentRoom]) {
+        const room = activeRooms[currentRoom];
+        const player = room.players[socket.id];
+        const mob = room.mobs[data.mobId];
+        if (!player || !mob) return;
+
+        // Wolf can be tamed with Bone (403), RawMeat (211), or CookedMeat (212)
+        if (mob.type === 'wolf' || mob.type === 'giant_wolf') {
+          if (data.itemType === 403 || data.itemType === 211 || data.itemType === 212) {
+            mob.tameCount = (mob.tameCount || 0) + 1;
+            mob.hp = Math.min(mob.maxHp, mob.hp + 12);
+            
+            // Emit hearts effect
+            io.to(currentRoom).emit('mob_tame_progress', {
+              mobId: mob.id,
+              x: mob.x,
+              y: mob.y,
+              tameCount: mob.tameCount,
+              success: mob.tameCount >= 2
+            });
+
+            if (mob.tameCount >= 2 && !mob.ownerId) {
+              mob.ownerId = socket.id;
+              mob.ownerName = player.name || 'Champion';
+              mob.type = 'giant_wolf';
+              mob.maxHp = 50;
+              mob.hp = 50;
+              
+              io.to(currentRoom).emit('chat_message', {
+                sender: 'SYSTEM',
+                text: `${player.name || 'A player'} has tamed a majestic Giant Wolf Mount!`
+              });
+              io.to(currentRoom).emit('mobs_update', room.mobs);
+            }
+          }
+        }
+      }
+    });
+
+    socket.on('mount_mob', (data: { mobId?: string, isMounting: boolean, mountType?: 'wolf' | 'minecart' }) => {
+      if (currentRoom && activeRooms[currentRoom]) {
+        const room = activeRooms[currentRoom];
+        const player = room.players[socket.id];
+        if (!player) return;
+
+        (player as any).mounted = data.isMounting;
+        (player as any).mountedMobId = data.isMounting ? data.mobId : null;
+        (player as any).mountType = data.mountType || 'wolf';
+
+        socket.to(currentRoom).emit('player_mount_updated', {
+          playerId: socket.id,
+          mounted: data.isMounting,
+          mountedMobId: data.isMounting ? data.mobId : null,
+          mountType: data.mountType || 'wolf'
+        });
+      }
+    });
+
+    socket.on('use_ability', (data: { ability: string, targetId?: string, targetType?: string, facingRight?: boolean, mouseX?: number, mouseY?: number }) => {
       if (!currentRoom || !activeRooms[currentRoom]) return;
       const room = activeRooms[currentRoom];
       const player = room.players[socket.id];
@@ -1517,19 +1773,102 @@ socket.on('sync_stats', (data: { skills?: { strength?: number; dexterity?: numbe
               vx: 0, vy: 0, damage: 30,
               life: 1000 // lives for long
           };
-      } else if (data.ability === 'fireball' && data.targetId && data.targetType) {
-          const targetObj = data.targetType === 'mob' ? room.mobs[data.targetId] : room.players[data.targetId];
-          if (targetObj) {
-              const damage = 25;
-              targetObj.hp -= damage;
-              io.to(currentRoom).emit('damage_indicator', { id: Math.random().toString(), x: targetObj.x, y: targetObj.y, damage, isPlayer: false });
-              if (data.targetType === 'mob') {
-                  const m = targetObj as any;
-                  m.vy = -6;
-                  m.vx = (player.x < m.x) ? 8 : -8;
-                  m.lastHitBy = socket.id;
+      } else if (data.ability === 'fireball') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'slash' });
+          const id = 'fb_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+          let vx = data.facingRight ? 12 : -12;
+          let vy = -0.5;
+          if (data.targetId && data.targetType) {
+              const targetObj = data.targetType === 'mob' ? room.mobs[data.targetId] : room.players[data.targetId];
+              if (targetObj) {
+                  const dx = targetObj.x - player.x;
+                  const dy = targetObj.y - player.y;
+                  const dist = Math.hypot(dx, dy) || 1;
+                  vx = (dx / dist) * 12;
+                  vy = (dy / dist) * 12;
               }
+          } else if (data.mouseX !== undefined && data.mouseY !== undefined) {
+              const dx = data.mouseX - player.x;
+              const dy = data.mouseY - player.y;
+              const dist = Math.hypot(dx, dy) || 1;
+              vx = (dx / dist) * 12;
+              vy = (dy / dist) * 12;
           }
+          room.projectiles[id] = {
+              id,
+              type: 'fireball',
+              owner: socket.id,
+              x: player.x + (vx > 0 ? 16 : -16),
+              y: player.y - 4,
+              vx,
+              vy,
+              damage: 30 + Math.floor((player.skills?.intelligence || 0) * 2.0),
+              life: 120
+          };
+      } else if (data.ability === 'frostbolt') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'slash' });
+          const id = 'frost_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+          let vx = data.facingRight ? 11 : -11;
+          let vy = -0.3;
+          if (data.targetId && data.targetType) {
+              const targetObj = data.targetType === 'mob' ? room.mobs[data.targetId] : room.players[data.targetId];
+              if (targetObj) {
+                  const dx = targetObj.x - player.x;
+                  const dy = targetObj.y - player.y;
+                  const dist = Math.hypot(dx, dy) || 1;
+                  vx = (dx / dist) * 11;
+                  vy = (dy / dist) * 11;
+              }
+          } else if (data.mouseX !== undefined && data.mouseY !== undefined) {
+              const dx = data.mouseX - player.x;
+              const dy = data.mouseY - player.y;
+              const dist = Math.hypot(dx, dy) || 1;
+              vx = (dx / dist) * 11;
+              vy = (dy / dist) * 11;
+          }
+          room.projectiles[id] = {
+              id,
+              type: 'frostbolt',
+              owner: socket.id,
+              x: player.x + (vx > 0 ? 16 : -16),
+              y: player.y - 4,
+              vx,
+              vy,
+              damage: 22 + Math.floor((player.skills?.intelligence || 0) * 1.8),
+              life: 120
+          };
+      } else if (data.ability === 'arcane_blast') {
+          io.to(currentRoom).emit('player_anim', { id: socket.id, anim: 'slash' });
+          const id = 'arcane_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+          let vx = data.facingRight ? 13 : -13;
+          let vy = -0.2;
+          if (data.targetId && data.targetType) {
+              const targetObj = data.targetType === 'mob' ? room.mobs[data.targetId] : room.players[data.targetId];
+              if (targetObj) {
+                  const dx = targetObj.x - player.x;
+                  const dy = targetObj.y - player.y;
+                  const dist = Math.hypot(dx, dy) || 1;
+                  vx = (dx / dist) * 13;
+                  vy = (dy / dist) * 13;
+              }
+          } else if (data.mouseX !== undefined && data.mouseY !== undefined) {
+              const dx = data.mouseX - player.x;
+              const dy = data.mouseY - player.y;
+              const dist = Math.hypot(dx, dy) || 1;
+              vx = (dx / dist) * 13;
+              vy = (dy / dist) * 13;
+          }
+          room.projectiles[id] = {
+              id,
+              type: 'arcane_blast',
+              owner: socket.id,
+              x: player.x + (vx > 0 ? 16 : -16),
+              y: player.y - 4,
+              vx,
+              vy,
+              damage: 38 + Math.floor((player.skills?.intelligence || 0) * 2.2),
+              life: 140
+          };
       }
     });
 

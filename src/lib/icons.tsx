@@ -3,7 +3,8 @@ import React from 'react';
 import { Settings2, ArrowRightCircle, Rocket, Crosshair, Cpu, Bomb, LocateFixed, CircleDot,
   Store, Pickaxe, Sword, Box, Flame, Sprout, Droplets, Diamond, Gem, Hexagon,
   TreePine, Trees, PocketKnife, Wrench, Activity, DoorClosed, Construction,
-  Layers, SquareDashed, LayoutGrid, Hand, Shield, Anchor } from 'lucide-react';
+  Layers, SquareDashed, LayoutGrid, Hand, Shield, Anchor, Utensils, Sparkles,
+  Soup, TrainTrack, ShoppingCart, Drumstick } from 'lucide-react';
 
 export function getBlockIcon(blockType: BlockType, className: string = "w-full h-full") {
   switch (blockType) {
@@ -127,6 +128,28 @@ export function getBlockIcon(blockType: BlockType, className: string = "w-full h
       return <Shield className={className} style={{ color: '#E53935' }} />;
     case BlockType.Fists:
       return <Hand className={className} />;
+    case BlockType.Campfire:
+      return <Flame className={className} style={{ color: '#FF7043' }} />;
+    case BlockType.WildSpice:
+      return <Sparkles className={className} style={{ color: '#84CC16' }} />;
+    case BlockType.RawMeat:
+      return <Drumstick className={className} style={{ color: '#EF4444' }} />;
+    case BlockType.CookedMeat:
+      return <Drumstick className={className} style={{ color: '#F97316' }} />;
+    case BlockType.HeartyStew:
+      return <Soup className={className} style={{ color: '#F43F5E' }} />;
+    case BlockType.ArcaneBroth:
+      return <Sparkles className={className} style={{ color: '#A855F7' }} />;
+    case BlockType.HuntersRoast:
+      return <Utensils className={className} style={{ color: '#10B981' }} />;
+    case BlockType.IronhideGoulash:
+      return <Shield className={className} style={{ color: '#D97706' }} />;
+    case BlockType.MinecartTrack:
+      return <TrainTrack className={className} style={{ color: '#94A3B8' }} />;
+    case BlockType.Minecart:
+      return <ShoppingCart className={className} style={{ color: '#64748B' }} />;
+    case BlockType.WolfSaddle:
+      return <Shield className={className} style={{ color: '#B45309' }} />;
     default:
       // Fallback is just returning a square with the block color, but as an icon.
       // We will handle default in the main render method.

@@ -38,6 +38,8 @@ export enum BlockType {
   Chest = 27,
   Platform = 28,
   Door = 29,
+  Campfire = 38,
+  MinecartTrack = 39,
   WoodPickaxe = 100,
   StonePickaxe = 101,
   WoodSword = 102,
@@ -65,6 +67,15 @@ export enum BlockType {
   Ice = 204,
   Cactus = 205,
   TreeSeed = 206,
+  WildSpice = 210,
+  RawMeat = 211,
+  CookedMeat = 212,
+  HeartyStew = 213,
+  ArcaneBroth = 214,
+  HuntersRoast = 215,
+  IronhideGoulash = 216,
+  Minecart = 220,
+  WolfSaddle = 221,
   IronHelmet = 400,
   IronChestplate = 401,
   GoldHelmet = 407,
@@ -203,7 +214,18 @@ export const BlockColors: Record<BlockType, string> = {
   [BlockType.DungeonKey]: '#FFD700',
   [BlockType.GoldenDungeonChest]: '#FFA000',
   [BlockType.DungeonBlueprint]: '#80D8FF',
-  [BlockType.XpOrb]: '#00FF00'
+  [BlockType.XpOrb]: '#00FF00',
+  [BlockType.Campfire]: '#FF6F00',
+  [BlockType.MinecartTrack]: '#78909C',
+  [BlockType.WildSpice]: '#FFB74D',
+  [BlockType.RawMeat]: '#D32F2F',
+  [BlockType.CookedMeat]: '#8D6E63',
+  [BlockType.HeartyStew]: '#FF7043',
+  [BlockType.ArcaneBroth]: '#AB47BC',
+  [BlockType.HuntersRoast]: '#E64A19',
+  [BlockType.IronhideGoulash]: '#5D4037',
+  [BlockType.Minecart]: '#607D8B',
+  [BlockType.WolfSaddle]: '#A1887F'
 };
 
 export const SolidBlocks = new Set([
@@ -313,11 +335,23 @@ export const BlockHardness: Record<BlockType, number> = {
   [BlockType.DungeonKey]: 0,
   [BlockType.GoldenDungeonChest]: 4,
   [BlockType.DungeonBlueprint]: 0,
-  [BlockType.XpOrb]: 0
+  [BlockType.XpOrb]: 0,
+  [BlockType.Campfire]: 1,
+  [BlockType.MinecartTrack]: 0.5,
+  [BlockType.WildSpice]: 0,
+  [BlockType.RawMeat]: 0,
+  [BlockType.CookedMeat]: 0,
+  [BlockType.HeartyStew]: 0,
+  [BlockType.ArcaneBroth]: 0,
+  [BlockType.HuntersRoast]: 0,
+  [BlockType.IronhideGoulash]: 0,
+  [BlockType.Minecart]: 1,
+  [BlockType.WolfSaddle]: 0
 };
 
 export const PlatformBlocks = new Set([
-  BlockType.Platform
+  BlockType.Platform,
+  BlockType.MinecartTrack
 ]);
 
 export const BlockNames: Record<BlockType, string> = {
@@ -419,5 +453,16 @@ export const BlockNames: Record<BlockType, string> = {
   [BlockType.DungeonKey]: 'Dungeon Key',
   [BlockType.GoldenDungeonChest]: 'Golden Dungeon Chest',
   [BlockType.DungeonBlueprint]: 'Dungeon Blueprint',
-  [BlockType.XpOrb]: 'XP Orb'
+  [BlockType.XpOrb]: 'XP Orb',
+  [BlockType.Campfire]: 'Campfire',
+  [BlockType.MinecartTrack]: 'Minecart Track',
+  [BlockType.WildSpice]: 'Wild Spice',
+  [BlockType.RawMeat]: 'Raw Meat',
+  [BlockType.CookedMeat]: 'Cooked Meat',
+  [BlockType.HeartyStew]: 'Hearty Stew',
+  [BlockType.ArcaneBroth]: 'Arcane Broth',
+  [BlockType.HuntersRoast]: "Hunter's Roast",
+  [BlockType.IronhideGoulash]: 'Ironhide Goulash',
+  [BlockType.Minecart]: 'Minecart',
+  [BlockType.WolfSaddle]: 'Wolf Saddle'
 };

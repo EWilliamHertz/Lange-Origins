@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
-import { Sparkles, Hammer, Shield, Swords, Gem, Flame, Trash2, ArrowRight, Check, AlertCircle } from 'lucide-react';
+import { Sparkles, Hammer, Shield, Swords, Gem, Flame, Trash2, ArrowRight, Check, AlertCircle, Skull, AlertTriangle, Zap } from 'lucide-react';
 import { BlockType, BlockNames } from '../lib/constants';
 import { getItemMetadata } from './ItemTooltip';
 import type { InventorySlotData } from '../lib/characterSchema';
 import {
   EnchantmentPrefix,
   GemType,
+  CursedAffix,
   PREFIXES,
   GEMS,
+  CURSED_AFFIXES,
   canEnchant,
   getEnchantCost,
+  getCursedAffixCost,
+  getGemResonance,
   getDismantleYield
 } from '../lib/enchanting';
 import { Sounds } from '../lib/audio';
@@ -31,6 +35,12 @@ interface EnchantingStationViewProps {
     socketIndex: 1 | 2,
     gemType: GemType
   ) => void;
+  onApplyCurse?: (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    curse: CursedAffix,
+    cost: { gold: number; materials: { type: BlockType; count: number }[] }
+  ) => void;
   onDismantle: (
     slotSource: 'hotbar' | 'backpack',
     slotIndex: number,
@@ -44,13 +54,15 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
   renderBlockIcon,
   onApplyEnchant,
   onApplyGem,
+  onApplyCurse,
   onDismantle
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'enchant' | 'gems' | 'dismantle'>('enchant');
+  const [activeSubTab, setActiveSubTab] = useState<'enchant' | 'gems' | 'curses' | 'dismantle'>('enchant');
   const [selectedSlotRef, setSelectedSlotRef] = useState<{ source: 'hotbar' | 'backpack'; index: number } | null>(null);
   const [selectedPrefix, setSelectedPrefix] = useState<EnchantmentPrefix>('Flametouched');
   const [selectedSocketIndex, setSelectedSocketIndex] = useState<1 | 2>(1);
   const [selectedGem, setSelectedGem] = useState<GemType>('ruby');
+  const [selectedCurse, setSelectedCurse] = useState<CursedAffix>('Bloodbound');
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
   // Retrieve current selected item
@@ -83,6 +95,24 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
     playerGold >= enchantCost.gold &&
     enchantCost.materials.every(m => countMaterialInInv(m.type) >= m.count);
 
+  // Compute Cost for Cursing
+  const curseCost = getCursedAffixCost(selectedCurse);
+  const canAffordCurse =
+    playerGold >= curseCost.gold &&
+    curseCost.materials.every(m => countMaterialInInv(m.type) >= m.count);
+
+  // Sockets & Resonance Calculations for Selected Item
+  const existingSockets = {
+    slot1: selectedItem?.sockets?.slot1 || selectedItem?.gem1 || null,
+    slot2: selectedItem?.sockets?.slot2 || selectedItem?.gem2 || null,
+  };
+  const activeResonance = getGemResonance(existingSockets);
+  const projectedSockets = {
+    ...existingSockets,
+    [selectedSocketIndex === 1 ? 'slot1' : 'slot2']: selectedGem,
+  };
+  const projectedResonance = getGemResonance(projectedSockets);
+
   const handleEnchant = () => {
     if (!selectedSlotRef || !selectedItem || !canAffordEnchant || currentLevel >= 10) return;
     Sounds.levelUp();
@@ -99,6 +129,14 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
     onApplyGem(selectedSlotRef.source, selectedSlotRef.index, selectedSocketIndex, selectedGem);
     setSuccessNotice(`Embedded ${gemMeta.name} into Socket ${selectedSocketIndex}!`);
     setTimeout(() => setSuccessNotice(null), 3000);
+  };
+
+  const handleApplyCurseAction = () => {
+    if (!selectedSlotRef || !selectedItem || !canAffordCurse || !onApplyCurse) return;
+    Sounds.death();
+    onApplyCurse(selectedSlotRef.source, selectedSlotRef.index, selectedCurse, curseCost);
+    setSuccessNotice(`Bound ${CURSED_AFFIXES[selectedCurse].title} to equipment!`);
+    setTimeout(() => setSuccessNotice(null), 3500);
   };
 
   const dismantleYields = selectedItem ? getDismantleYield(selectedItem.type, selectedItem.durability) : [];
@@ -138,7 +176,19 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
             }`}
           >
             <Gem size={15} />
-            <span>Gem Socketing</span>
+            <span>Gem Sockets & Resonance</span>
+          </button>
+
+          <button
+            onClick={() => { setActiveSubTab('curses'); Sounds.death(); }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeSubTab === 'curses'
+                ? 'bg-rose-950/70 text-rose-300 border border-rose-500/60 shadow-[0_0_15px_rgba(225,29,72,0.3)]'
+                : 'text-neutral-400 hover:text-rose-300 hover:bg-rose-950/20 border border-transparent'
+            }`}
+          >
+            <Skull size={15} className="text-rose-400" />
+            <span>Cursed Affixes (High Risk)</span>
           </button>
 
           <button
@@ -182,6 +232,7 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
               <Hammer size={14} />
               {activeSubTab === 'enchant' && 'Mystic Enchanting Anvil'}
               {activeSubTab === 'gems' && 'Jeweler Socket Workbench'}
+              {activeSubTab === 'curses' && 'Forbidden Curse Infusion Altar'}
               {activeSubTab === 'dismantle' && 'Salvage & Smelting Furnace'}
             </h4>
             {selectedItem && (
@@ -329,6 +380,37 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
                 })}
               </div>
 
+              {/* Gem Resonance Preview */}
+              {selectedItem && (
+                <div className="p-3 bg-gradient-to-r from-purple-950/40 via-indigo-950/30 to-black/50 rounded-xl border border-indigo-500/30 flex flex-col gap-1.5 mt-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-indigo-300 flex items-center gap-1">
+                      <Sparkles size={11} className="text-amber-400" />
+                      {activeResonance ? '✦ Active Resonance Set Bonus ✦' : (projectedResonance ? '✦ Projected Resonance Preview ✦' : 'Resonance Synergy')}
+                    </span>
+                    {(activeResonance || projectedResonance) && (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        {(activeResonance || projectedResonance)?.name}
+                      </span>
+                    )}
+                  </div>
+                  {(activeResonance || projectedResonance) ? (
+                    <div className="flex flex-col gap-1 text-[11px]">
+                      <p className="text-white font-medium">
+                        {(activeResonance || projectedResonance)?.description}
+                      </p>
+                      <span className="text-[10px] text-sky-300">
+                        <strong>Aura: </strong>{(activeResonance || projectedResonance)?.auraBonusText}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-neutral-400 italic">
+                      Slot 2 complementary cut gems into this item to unlock hidden elemental resonance, custom weapon slashes, and orbiting auras!
+                    </span>
+                  )}
+                </div>
+              )}
+
               {selectedItem && (
                 <button
                   onClick={handleSocketGem}
@@ -338,6 +420,87 @@ export const EnchantingStationView: React.FC<EnchantingStationViewProps> = ({
                   <Gem size={15} />
                   <span>Embed {GEMS[selectedGem].name}</span>
                 </button>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: CURSED AFFIXES ALTAR */}
+          {activeSubTab === 'curses' && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase text-rose-400 flex items-center gap-1.5">
+                  <Skull size={13} /> Ancient Forbidden Rite
+                </span>
+                <span className="text-[10px] text-rose-300/80 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-500/30">
+                  High Risk, High Reward
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {Object.values(CURSED_AFFIXES).map(curse => (
+                  <button
+                    key={curse.id}
+                    onClick={() => { setSelectedCurse(curse.id); Sounds.slotClick(); }}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-1.5 transition-all ${
+                      selectedCurse === curse.id
+                        ? 'bg-rose-950/70 border-rose-500 shadow-[0_0_15px_rgba(225,29,72,0.35)] ring-1 ring-rose-500/60'
+                        : 'bg-neutral-900/60 border-white/10 hover:border-rose-500/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-rose-300 flex items-center gap-1.5">
+                        <Skull size={12} className="text-rose-500" />
+                        {curse.title}
+                      </span>
+                      <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/40 text-neutral-400 border border-white/10">
+                        {curse.applicableTo}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-neutral-300 leading-tight">
+                      {curse.description}
+                    </p>
+                    <div className="flex flex-wrap gap-2 text-[10px] font-mono pt-1">
+                      <span className="text-emerald-400 bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
+                        ✦ {curse.positiveEffect}
+                      </span>
+                      <span className="text-rose-400 bg-red-950/50 px-1.5 py-0.5 rounded border border-red-500/30 font-bold flex items-center gap-1">
+                        <AlertTriangle size={10} />
+                        {curse.negativeEffect}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Curse Binding Requirements */}
+              {selectedItem && (
+                <div className="p-3 bg-red-950/30 rounded-xl border border-red-500/40 flex flex-col gap-2 mt-1">
+                  <span className="text-[10px] uppercase font-bold text-rose-300">
+                    Sacrificial Catalyst Required
+                  </span>
+                  <div className="flex items-center gap-3 text-xs font-mono">
+                    <span className={playerGold >= curseCost.gold ? 'text-amber-400' : 'text-rose-400'}>
+                      Gold: {curseCost.gold} (You: {playerGold})
+                    </span>
+                    {curseCost.materials.map(m => {
+                      const have = countMaterialInInv(m.type);
+                      return (
+                        <span key={m.type} className={have >= m.count ? 'text-purple-300' : 'text-rose-400'}>
+                          {BlockNames[m.type]}: {m.count} (You: {have})
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    onClick={handleApplyCurseAction}
+                    disabled={!isEnchantable || !canAffordCurse}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-red-700 via-rose-700 to-red-800 hover:from-red-600 hover:to-rose-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all mt-1"
+                  >
+                    <Skull size={15} className="text-rose-300" />
+                    <span>Bind {CURSED_AFFIXES[selectedCurse].name} to Gear</span>
+                  </button>
+                </div>
               )}
             </div>
           )}

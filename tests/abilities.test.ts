@@ -143,19 +143,19 @@ describe('keybinds', () => {
 
 describe('cast gating', () => {
   it('blocks casts during the global cooldown, the ability cooldown, without a target or mana', () => {
-    const fireball = getAbility('fireball')!; // costs 10, needs a target
+    const snipe = getAbility('snipe')!; // costs 20, needs a target
     const slash = getAbility('slash')!; // free, no target needed
     const ready = { globalCooldownMs: 0, abilityCooldownMs: 0, hasTarget: true, mana: 100 };
 
-    expect(canCastAbility(fireball, ready)).toEqual({ ok: true });
-    expect(canCastAbility(fireball, { ...ready, globalCooldownMs: 1 })).toEqual({ ok: false, reason: 'gcd' });
-    expect(canCastAbility(fireball, { ...ready, abilityCooldownMs: 250 })).toEqual({ ok: false, reason: 'cooldown' });
-    expect(canCastAbility(fireball, { ...ready, hasTarget: false })).toEqual({ ok: false, reason: 'no_target' });
-    expect(canCastAbility(fireball, { ...ready, mana: 9 })).toEqual({ ok: false, reason: 'no_mana' });
+    expect(canCastAbility(snipe, ready)).toEqual({ ok: true });
+    expect(canCastAbility(snipe, { ...ready, globalCooldownMs: 1 })).toEqual({ ok: false, reason: 'gcd' });
+    expect(canCastAbility(snipe, { ...ready, abilityCooldownMs: 250 })).toEqual({ ok: false, reason: 'cooldown' });
+    expect(canCastAbility(snipe, { ...ready, hasTarget: false })).toEqual({ ok: false, reason: 'no_target' });
+    expect(canCastAbility(snipe, { ...ready, mana: 9 })).toEqual({ ok: false, reason: 'no_mana' });
     // Free, untargeted abilities only care about cooldowns.
     expect(canCastAbility(slash, { ...ready, hasTarget: false, mana: 0 })).toEqual({ ok: true });
     // Infinite mana is how the client disables costs before magic is unlocked.
-    expect(canCastAbility(fireball, { ...ready, mana: Number.POSITIVE_INFINITY })).toEqual({ ok: true });
+    expect(canCastAbility(snipe, { ...ready, mana: Number.POSITIVE_INFINITY })).toEqual({ ok: true });
     expect(GLOBAL_COOLDOWN_MS).toBeGreaterThan(0);
   });
 

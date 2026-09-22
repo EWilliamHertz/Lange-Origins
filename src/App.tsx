@@ -31,7 +31,7 @@ import { DynamicRadar } from './components/DynamicRadar';
 import { BuffDebuffTray, ActiveEffect } from './components/BuffDebuffTray';
 import { PartyLootRollModal, LootRollItem } from './components/PartyLootRollModal';
 import { PlayerInspectModal, InspectedPlayer } from './components/PlayerInspectModal';
-import { EnchantmentPrefix, GemType } from './lib/enchanting';
+import { EnchantmentPrefix, GemType, CursedAffix, CURSED_AFFIXES, getGemResonance } from './lib/enchanting';
 import { CharacterShowcasePreview } from './components/CharacterShowcasePreview';
 import { CastBarIndicator, ActiveCast } from './components/CastBarIndicator';
 import { InstructionsModal } from './components/InstructionsModal';
@@ -155,6 +155,7 @@ export default function App() {
     null,
     null, null, null, null, null, null, null, null, null
   ]);
+  const [selectedSlotIndex, setSelectedSlotIndex] = useState(0);
   const [leftActionBar, setLeftActionBar] = useState<InventorySlot[]>([
     null, null, null, null, null, null, null, null, null, null
   ]);
@@ -199,17 +200,22 @@ export default function App() {
 
   
 
-  // Mana Regeneration
+  // Mana Regeneration (Abyssal Pact curse completely freezes mana regen)
   useEffect(() => {
     if (appState !== 'playing') return;
     const isMagicUnlocked = quests.find(q => q.id === 'q5')?.completed;
     if (!isMagicUnlocked) return;
     
     const interval = setInterval(() => {
+       const hasAbyssalPact = 
+         equipment.some(e => e?.curse === 'AbyssalPact') ||
+         hotbar[selectedSlotIndex]?.curse === 'AbyssalPact';
+       if (hasAbyssalPact) return; // Abyssal Pact completely disables passive mana regeneration!
+
        setMana(prev => Math.min(100 + ((skills.intelligence || 0) * 20), prev + 2));
     }, 1000);
     return () => clearInterval(interval);
-  }, [appState, quests, skills.intelligence]);
+  }, [appState, quests, skills.intelligence, equipment, hotbar, selectedSlotIndex]);
   
   useEffect(() => {
     if (appState === 'playing' && hotbar.length > 0) {
@@ -447,7 +453,6 @@ export default function App() {
     setCraftingResult(checkRecipe(mappedGrid));
   }, [craftingGrid]);
   
-  const [selectedSlotIndex, setSelectedSlotIndex] = useState(0);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [showEquipment, setShowEquipment] = useState(false);
   const [duelingOpponents, setDuelingOpponents] = useState<string[]>([]);
@@ -1647,6 +1652,57 @@ export default function App() {
     addNotification('system', 'System', 'System', `Socketed ${gemType.toUpperCase()} gem!`);
   };
 
+  const handleApplyCurse = (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    curse: CursedAffix,
+    cost: { gold: number; materials: { type: BlockType; count: number }[] }
+  ) => {
+    const setter = slotSource === 'hotbar' ? setHotbar : setBackpack;
+    setter(prev => {
+      const copy = [...prev];
+      const target = copy[slotIndex];
+      if (!target) return prev;
+      copy[slotIndex] = {
+        ...target,
+        curse
+      };
+      return copy;
+    });
+
+    if (cost.gold > 0) {
+      setGold(g => Math.max(0, g - cost.gold));
+    }
+
+    // Deduct materials from backpack/hotbar
+    for (const mat of cost.materials) {
+      let remaining = mat.count;
+      setBackpack(bp => {
+        return bp.map(s => {
+          if (!s || remaining <= 0 || s.type !== mat.type) return s;
+          const take = Math.min(s.count || 1, remaining);
+          remaining -= take;
+          const newCount = (s.count || 1) - take;
+          return newCount <= 0 ? null : { ...s, count: newCount };
+        });
+      });
+      if (remaining > 0) {
+        setHotbar(hb => {
+          return hb.map(s => {
+            if (!s || remaining <= 0 || s.type !== mat.type) return s;
+            const take = Math.min(s.count || 1, remaining);
+            remaining -= take;
+            const newCount = (s.count || 1) - take;
+            return newCount <= 0 ? null : { ...s, count: newCount };
+          });
+        });
+      }
+    }
+
+    Sounds.death();
+    addNotification('system', 'System', 'System', `Bound dark cursed affix: ${CURSED_AFFIXES[curse]?.title || curse}!`);
+  };
+
   const handleDismantle = (
     slotSource: 'hotbar' | 'backpack',
     slotIndex: number,
@@ -1686,9 +1742,9 @@ export default function App() {
     addNotification('system', 'System', 'System', 'Gear dismantled into magical crafting essence.');
   };
 
-  const handleSlotClick = (type: 'hotbar' | 'leftActionBar' | 'rightActionBar' | 'backpack' | 'equipment' | 'crafting' | 'craftingResult' | 'furnaceInput' | 'furnaceFuel' | 'furnaceOutput' | 'chest' | 'merchantPayment' | 'merchantOutput', index: number, isRightClick: boolean = false) => {
-
-    if (!inventoryOpen) {
+  const handleSlotClick = (type: 'hotbar' | 'leftActionBar' | 'rightActionBar' | 'backpack' | 'equipment' | 'crafting' | 'craftingResult' | 'furnaceInput' | 'furnaceFuel' | 'furnaceOutput' | 'chest' | 'merchantPayment' | 'merchantOutput', index: number, isRightClick: boolean = false, isShiftClick: boolean = false) => {
+    const isAnyMenuOpen = inventoryOpen || chestOpen || furnaceOpen || merchantOpen;
+    if (!isAnyMenuOpen) {
         let arr = [];
         if (type === 'hotbar') arr = hotbar;
         if (type === 'leftActionBar') arr = leftActionBar;
@@ -1701,6 +1757,295 @@ export default function App() {
              Sounds.slotClick();
         }
         return;
+    }
+
+    // Shift-Click quick transfer shortcuts between backpack, hotbar, chests, and equipment
+    if (isShiftClick) {
+      if (cursorItem) return;
+
+      const transferToContainer = (target: (InventorySlot | null)[], sourceSlot: InventorySlot): { updated: (InventorySlot | null)[], remaining: InventorySlot | null } => {
+        if (!sourceSlot || isAbilitySlot(sourceSlot) || sourceSlot.type === BlockType.Air || (sourceSlot.count || 0) <= 0) {
+          return { updated: target, remaining: sourceSlot };
+        }
+        const next = [...target];
+        let remainingCount = sourceSlot.count;
+        const isEquip = sourceSlot.type === BlockType.IronHelmet || sourceSlot.type === BlockType.GoldHelmet || sourceSlot.type === BlockType.DiamondHelmet ||
+                        sourceSlot.type === BlockType.IronChestplate || sourceSlot.type === BlockType.GoldChestplate || sourceSlot.type === BlockType.DiamondChestplate;
+
+        // 1. Merge into matching slots if stackable
+        if (!isEquip) {
+          for (let i = 0; i < next.length && remainingCount > 0; i++) {
+            const s = next[i];
+            if (s && !isAbilitySlot(s) && s.type === sourceSlot.type && s.count < 64) {
+              const space = 64 - s.count;
+              const add = Math.min(space, remainingCount);
+              next[i] = { ...s, count: s.count + add };
+              remainingCount -= add;
+            }
+          }
+        }
+
+        // 2. Fill first empty slots
+        if (remainingCount > 0) {
+          for (let i = 0; i < next.length && remainingCount > 0; i++) {
+            const s = next[i];
+            if (!s || s.type === BlockType.Air || (s.count || 0) <= 0) {
+              const add = Math.min(64, remainingCount);
+              next[i] = { ...sourceSlot, count: add };
+              remainingCount -= add;
+            }
+          }
+        }
+
+        return {
+          updated: next,
+          remaining: remainingCount > 0 ? { ...sourceSlot, count: remainingCount } : null
+        };
+      };
+
+      // Case 1: Shift-click inside Chest -> Transfer to player inventory (Hotbar, then Backpack)
+      if (type === 'chest') {
+        const item = chestInventory[index];
+        if (!item || isAbilitySlot(item)) return;
+        
+        let curItem: InventorySlot | null = item;
+        const hotbarRes = transferToContainer(hotbar, curItem);
+        setHotbar(hotbarRes.updated);
+        curItem = hotbarRes.remaining;
+
+        if (curItem) {
+          const backpackRes = transferToContainer(backpack, curItem);
+          setBackpack(backpackRes.updated);
+          curItem = backpackRes.remaining;
+        }
+
+        const newChest = [...chestInventory];
+        newChest[index] = curItem;
+        setChestInventory(newChest);
+        if (socketRef.current && activeChestCoords) {
+          socketRef.current.emit('update_chest', { tx: activeChestCoords.tx, ty: activeChestCoords.ty, inventory: newChest });
+        }
+        Sounds.slotClick();
+        return;
+      }
+
+      // Case 2: Chest is open, shift-clicking from Backpack or Hotbar -> Transfer to Chest
+      if (chestOpen && (type === 'backpack' || type === 'hotbar')) {
+        const srcArr = type === 'backpack' ? backpack : hotbar;
+        const item = srcArr[index];
+        if (!item || isAbilitySlot(item)) return;
+
+        const chestRes = transferToContainer(chestInventory, item);
+        setChestInventory(chestRes.updated);
+        
+        const newSrc = [...srcArr];
+        newSrc[index] = chestRes.remaining;
+        if (type === 'backpack') setBackpack(newSrc);
+        else setHotbar(newSrc);
+
+        if (socketRef.current && activeChestCoords) {
+          socketRef.current.emit('update_chest', { tx: activeChestCoords.tx, ty: activeChestCoords.ty, inventory: chestRes.updated });
+        }
+        Sounds.slotClick();
+        return;
+      }
+
+      // Case 3: Furnace is open
+      if (furnaceOpen) {
+        if (type === 'furnaceOutput' || type === 'furnaceInput' || type === 'furnaceFuel') {
+          let item = type === 'furnaceOutput' ? furnaceOutput : type === 'furnaceInput' ? furnaceInput : furnaceFuel;
+          if (!item) return;
+          const hRes = transferToContainer(hotbar, item);
+          setHotbar(hRes.updated);
+          let rem = hRes.remaining;
+          if (rem) {
+            const bRes = transferToContainer(backpack, rem);
+            setBackpack(bRes.updated);
+            rem = bRes.remaining;
+          }
+          if (type === 'furnaceOutput') setFurnaceOutput(rem);
+          else if (type === 'furnaceInput') setFurnaceInput(rem);
+          else setFurnaceFuel(rem);
+          Sounds.slotClick();
+          return;
+        }
+
+        if (type === 'backpack' || type === 'hotbar') {
+          const srcArr = type === 'backpack' ? backpack : hotbar;
+          const item = srcArr[index];
+          if (!item || isAbilitySlot(item)) return;
+
+          const isFuel = item.type === BlockType.Coal || item.type === BlockType.Wood || item.type === BlockType.Planks;
+          const isSmeltable = item.type === BlockType.IronOre || item.type === BlockType.GoldOre || item.type === BlockType.Sand || item.type === BlockType.Stone;
+
+          if (isFuel && (!furnaceFuel || (furnaceFuel.type === item.type && furnaceFuel.count < 64))) {
+            const curFuelCount = furnaceFuel ? furnaceFuel.count : 0;
+            const add = Math.min(64 - curFuelCount, item.count);
+            setFurnaceFuel({ type: item.type, count: curFuelCount + add });
+            const remCount = item.count - add;
+            const nextSrc = [...srcArr];
+            nextSrc[index] = remCount > 0 ? { ...item, count: remCount } : null;
+            if (type === 'backpack') setBackpack(nextSrc); else setHotbar(nextSrc);
+            Sounds.slotClick();
+            return;
+          }
+
+          if (isSmeltable && (!furnaceInput || (furnaceInput.type === item.type && furnaceInput.count < 64))) {
+            const curInputCount = furnaceInput ? furnaceInput.count : 0;
+            const add = Math.min(64 - curInputCount, item.count);
+            setFurnaceInput({ type: item.type, count: curInputCount + add });
+            const remCount = item.count - add;
+            const nextSrc = [...srcArr];
+            nextSrc[index] = remCount > 0 ? { ...item, count: remCount } : null;
+            if (type === 'backpack') setBackpack(nextSrc); else setHotbar(nextSrc);
+            Sounds.slotClick();
+            return;
+          }
+        }
+      }
+
+      // Case 4: Equipment slot shift-clicked -> unequip into hotbar then backpack
+      if (type === 'equipment') {
+        const item = equipment[index];
+        if (!item) return;
+        const hRes = transferToContainer(hotbar, item);
+        setHotbar(hRes.updated);
+        let rem = hRes.remaining;
+        if (rem) {
+          const bRes = transferToContainer(backpack, rem);
+          setBackpack(bRes.updated);
+          rem = bRes.remaining;
+        }
+        const nextEq = [...equipment];
+        nextEq[index] = rem;
+        setEquipment(nextEq);
+        Sounds.equipGear();
+        return;
+      }
+
+      // Case 5: Normal inventory management (Backpack <-> Hotbar & auto-equip gear)
+      if (type === 'backpack') {
+        const item = backpack[index];
+        if (!item || isAbilitySlot(item)) return;
+
+        const isHelmet = item.type === BlockType.IronHelmet || item.type === BlockType.GoldHelmet || item.type === BlockType.DiamondHelmet;
+        if (isHelmet && !equipment[0]) {
+          const nextEq = [...equipment];
+          nextEq[0] = { ...item, count: 1 };
+          setEquipment(nextEq);
+          const nextB = [...backpack];
+          const rem = item.count - 1;
+          nextB[index] = rem > 0 ? { ...item, count: rem } : null;
+          setBackpack(nextB);
+          Sounds.equipGear();
+          return;
+        }
+
+        const isChestplate = item.type === BlockType.IronChestplate || item.type === BlockType.GoldChestplate || item.type === BlockType.DiamondChestplate;
+        if (isChestplate && !equipment[1]) {
+          const nextEq = [...equipment];
+          nextEq[1] = { ...item, count: 1 };
+          setEquipment(nextEq);
+          const nextB = [...backpack];
+          const rem = item.count - 1;
+          nextB[index] = rem > 0 ? { ...item, count: rem } : null;
+          setBackpack(nextB);
+          Sounds.equipGear();
+          return;
+        }
+
+        const res = transferToContainer(hotbar, item);
+        setHotbar(res.updated);
+        const nextB = [...backpack];
+        nextB[index] = res.remaining;
+        setBackpack(nextB);
+        Sounds.slotClick();
+        return;
+      }
+
+      if (type === 'hotbar') {
+        const item = hotbar[index];
+        if (!item || isAbilitySlot(item)) return;
+
+        const isHelmet = item.type === BlockType.IronHelmet || item.type === BlockType.GoldHelmet || item.type === BlockType.DiamondHelmet;
+        if (isHelmet && !equipment[0]) {
+          const nextEq = [...equipment];
+          nextEq[0] = { ...item, count: 1 };
+          setEquipment(nextEq);
+          const nextH = [...hotbar];
+          const rem = item.count - 1;
+          nextH[index] = rem > 0 ? { ...item, count: rem } : null;
+          setHotbar(nextH);
+          Sounds.equipGear();
+          return;
+        }
+
+        const isChestplate = item.type === BlockType.IronChestplate || item.type === BlockType.GoldChestplate || item.type === BlockType.DiamondChestplate;
+        if (isChestplate && !equipment[1]) {
+          const nextEq = [...equipment];
+          nextEq[1] = { ...item, count: 1 };
+          setEquipment(nextEq);
+          const nextH = [...hotbar];
+          const rem = item.count - 1;
+          nextH[index] = rem > 0 ? { ...item, count: rem } : null;
+          setHotbar(nextH);
+          Sounds.equipGear();
+          return;
+        }
+
+        const res = transferToContainer(backpack, item);
+        setBackpack(res.updated);
+        const nextH = [...hotbar];
+        nextH[index] = res.remaining;
+        setHotbar(nextH);
+        Sounds.slotClick();
+        return;
+      }
+
+      // Case 6: Crafting Result shift-click -> craft maximum possible into inventory!
+      if (type === 'craftingResult') {
+        if (!craftingResult) return;
+        let craftCount = 0;
+        let curGrid = [...craftingGrid];
+        let curHotbar = [...hotbar];
+        let curBackpack = [...backpack];
+
+        while (true) {
+          let canCraft = true;
+          for (let i = 0; i < 9; i++) {
+            if (curGrid[i] && curGrid[i]!.count <= 0) canCraft = false;
+          }
+          if (!canCraft) break;
+
+          const toAdd: InventorySlot = { type: craftingResult.result, count: craftingResult.count };
+          const hRes = transferToContainer(curHotbar, toAdd);
+          curHotbar = hRes.updated;
+          if (hRes.remaining) {
+            const bRes = transferToContainer(curBackpack, hRes.remaining);
+            curBackpack = bRes.updated;
+            if (bRes.remaining) {
+              break;
+            }
+          }
+
+          for (let i = 0; i < 9; i++) {
+            if (curGrid[i]) {
+              const c = curGrid[i]!.count - 1;
+              curGrid[i] = c > 0 ? { ...curGrid[i]!, count: c } : null;
+            }
+          }
+          craftCount++;
+          if (craftCount >= 64) break;
+        }
+
+        if (craftCount > 0) {
+          setHotbar(curHotbar);
+          setBackpack(curBackpack);
+          setCraftingGrid(curGrid);
+          Sounds.craftSuccess();
+        }
+        return;
+      }
     }
 
     // An ability picked up on the cursor may only be put down on an action bar;
@@ -2431,6 +2776,38 @@ let targetArray = type === 'hotbar' ? [...hotbar]
   const chestplateType = getChestplate();
   const currentActiveProfile = profiles.find(p => p.id === activeProfileId);
 
+  // Cursed Affixes & Gem Resonance calculations
+  const activeHeldItem = hotbar[selectedSlotIndex];
+  const activeCurseWeapon = activeHeldItem?.curse;
+  const activeCurseArmor = equipment[1]?.curse;
+  const activeCurseHelmet = equipment[0]?.curse;
+
+  // Cursed Affixes: Glass Soul reduces max health by 35%
+  const hasGlassSoul = activeCurseWeapon === 'GlassSoul' || activeCurseArmor === 'GlassSoul' || activeCurseHelmet === 'GlassSoul';
+  // Netherweight reduces movement speed by 25%
+  const hasNetherweight = activeCurseArmor === 'Netherweight' || activeCurseHelmet === 'Netherweight';
+  // Bloodbound increases stamina drain on swings
+  const hasBloodbound = activeCurseWeapon === 'Bloodbound';
+
+  // Gem Resonance set bonuses
+  const weaponResonance = getGemResonance(activeHeldItem?.sockets || (activeHeldItem ? { slot1: activeHeldItem.gem1, slot2: activeHeldItem.gem2 } : null));
+  const chestResonance = getGemResonance(equipment[1]?.sockets || (equipment[1] ? { slot1: equipment[1].gem1, slot2: equipment[1].gem2 } : null));
+  const helmResonance = getGemResonance(equipment[0]?.sockets || (equipment[0] ? { slot1: equipment[0].gem1, slot2: equipment[0].gem2 } : null));
+
+  const totalHpBonus = (weaponResonance?.maxHpBonus || 0) + (chestResonance?.maxHpBonus || 0) + (helmResonance?.maxHpBonus || 0);
+  const totalSpeedBonus = (weaponResonance?.speedBonus || 0) + (chestResonance?.speedBonus || 0) + (helmResonance?.speedBonus || 0);
+
+  const baseCalculatedMaxHp = 20 + (skills.strength || 0) * 10;
+  const effectiveMaxHp = Math.max(10, Math.round((baseCalculatedMaxHp + totalHpBonus) * (hasGlassSoul ? 0.65 : 1.0)));
+  const calculatedSpeedMultiplier = (hasNetherweight ? 0.75 : 1.0) * (1.0 + totalSpeedBonus);
+  const calculatedStaminaDrainMult = hasBloodbound ? 1.4 : 1.0;
+
+  useEffect(() => {
+    if (health > effectiveMaxHp) {
+      setHealth(effectiveMaxHp);
+    }
+  }, [effectiveMaxHp, health]);
+
   return (
     <div className="w-full h-screen bg-neutral-900 flex flex-col overflow-hidden font-sans select-none touch-none" style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}>
       
@@ -2440,6 +2817,11 @@ let targetArray = type === 'hotbar' ? [...hotbar]
         <GameCanvas
           helmet={helmetType}
           chestplate={chestplateType}
+          activeItem={activeHeldItem || undefined}
+          activeEquipment={equipment}
+          speedMultiplier={calculatedSpeedMultiplier}
+          staminaDrainMultiplier={calculatedStaminaDrainMult}
+          maxHpBonus={effectiveMaxHp - baseCalculatedMaxHp}
           characterSkin={currentActiveProfile?.skin || characterSkin || 'orange'}
           race={currentActiveProfile?.race || creatorRace || 'human'}
           playerClass={currentActiveProfile?.playerClass || playerClass || 'warrior'}
@@ -2885,7 +3267,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           currentUserId={socketRef.current?.id || ''}
           currentUserName={nickname || 'Hero'}
           currentHealth={health}
-          maxHealth={20 + (skills.strength || 0) * 10}
+          maxHealth={effectiveMaxHp}
           currentMana={mana}
           maxMana={100 + (skills.intelligence || 0) * 20}
           playerPos={playerCoords}
@@ -3075,10 +3457,10 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   onDrop={(e) => handleDrop(e, 'hotbar', index)}
                   onMouseEnter={() => { if (hoveredSlotRef) hoveredSlotRef.current = { type: 'hotbar', index }; }}
                   onMouseLeave={() => { if (hoveredSlotRef) hoveredSlotRef.current = null; }}
-                  onClick={() => {
-                    handleSlotClick('hotbar', index);
+                  onClick={(e) => {
+                    handleSlotClick('hotbar', index, false, e.shiftKey);
                   }}
-                  onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('hotbar', index, true); }}
+                  onContextMenu={(e) => { e.preventDefault(); if (inventoryOpen) handleSlotClick('hotbar', index, true, e.shiftKey); }}
                   className={`w-12 h-12 p-1.5 rounded-lg relative transition-all duration-200 ${
                     isSelected 
                       ? 'ring-2 ring-amber-400 scale-110 bg-gradient-to-t from-white/20 to-transparent shadow-[0_0_15px_rgba(251,191,36,0.5)] z-10' 
@@ -3152,6 +3534,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
           }}
           onApplyEnchant={handleApplyEnchant}
           onApplyGem={handleApplyGem}
+          onApplyCurse={handleApplyCurse}
           onDismantle={handleDismantle}
           onSlotHover={(_slot, _e, type, index) => {
             if (type && index !== undefined) {
@@ -3170,7 +3553,7 @@ let targetArray = type === 'hotbar' ? [...hotbar]
             level: level,
             xp: xp,
             health: health,
-            maxHealth: 20 + (skills.strength || 0) * 10,
+            maxHealth: effectiveMaxHp,
             mana: mana,
             maxMana: 100 + (skills.intelligence || 0) * 20,
             stamina: stamina,
@@ -3340,8 +3723,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   {chestInventory.map((slot, i) => (
                     <button
                       key={i}
-                      onClick={() => handleSlotClick('chest', i)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('chest', i, true); }}
+                      onClick={(e) => handleSlotClick('chest', i, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('chest', i, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
@@ -3358,8 +3741,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   {backpack.map((slot, i) => (
                     <button
                       key={i}
-                      onClick={() => handleSlotClick('backpack', i)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
+                      onClick={(e) => handleSlotClick('backpack', i, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
@@ -3376,8 +3759,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   {hotbar.map((slot, i) => (
                     <button
                       key={i}
-                      onClick={() => handleSlotClick('hotbar', i)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
+                      onClick={(e) => handleSlotClick('hotbar', i, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
@@ -3756,8 +4139,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   <div className="flex flex-col items-center">
                     <span className="text-[10px] text-neutral-400 mb-1 font-bold uppercase tracking-wider">Ore Input</span>
                     <button
-                      onClick={() => handleSlotClick('furnaceInput', 0)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceInput', 0, true); }}
+                      onClick={(e) => handleSlotClick('furnaceInput', 0, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceInput', 0, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-14 h-14 rounded-xl bg-neutral-950/80 border border-neutral-700 hover:border-amber-400/70 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                     >
@@ -3768,8 +4151,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   <div className="flex flex-col items-center">
                     <span className="text-[10px] text-neutral-400 mb-1 font-bold uppercase tracking-wider">Fuel (Coal)</span>
                     <button
-                      onClick={() => handleSlotClick('furnaceFuel', 0)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceFuel', 0, true); }}
+                      onClick={(e) => handleSlotClick('furnaceFuel', 0, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceFuel', 0, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-14 h-14 rounded-xl bg-neutral-950/80 border border-neutral-700 hover:border-amber-400/70 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                     >
@@ -3788,8 +4171,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                 <div className="flex flex-col items-center">
                   <span className="text-[10px] text-amber-400 mb-1 font-bold uppercase tracking-wider">Smelted Output</span>
                   <button
-                    onClick={() => handleSlotClick('furnaceOutput', 0)}
-                    onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceOutput', 0, true); }}
+                    onClick={(e) => handleSlotClick('furnaceOutput', 0, false, e.shiftKey)}
+                    onContextMenu={(e) => { e.preventDefault(); handleSlotClick('furnaceOutput', 0, true, e.shiftKey); }}
                     onMouseEnter={() => Sounds.slotHover()}
                     className="w-16 h-16 rounded-xl bg-neutral-950/80 border border-amber-500/40 hover:border-amber-400/80 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95 shadow-inner"
                   >
@@ -3805,8 +4188,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   {backpack.map((slot, i) => (
                     <button
                       key={i}
-                      onClick={() => handleSlotClick('backpack', i)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true); }}
+                      onClick={(e) => handleSlotClick('backpack', i, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('backpack', i, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >
@@ -3823,8 +4206,8 @@ let targetArray = type === 'hotbar' ? [...hotbar]
                   {hotbar.map((slot, i) => (
                     <button
                       key={i}
-                      onClick={() => handleSlotClick('hotbar', i)}
-                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true); }}
+                      onClick={(e) => handleSlotClick('hotbar', i, false, e.shiftKey)}
+                      onContextMenu={(e) => { e.preventDefault(); handleSlotClick('hotbar', i, true, e.shiftKey); }}
                       onMouseEnter={() => Sounds.slotHover()}
                       className="w-12 h-12 rounded-lg bg-neutral-950/70 border border-neutral-800 hover:border-amber-400/60 hover:bg-neutral-800/60 transition-all flex items-center justify-center relative active:scale-95"
                     >

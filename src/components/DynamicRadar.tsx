@@ -126,33 +126,45 @@ export const DynamicRadar: React.FC<DynamicRadarProps> = ({
 
   // Collect entities to plot
   const entities: RadarEntity[] = [];
+  const seenEntityKeys = new Set<string>();
 
-  partyMembers.forEach(m => {
-    entities.push({
-      id: `party-${m.id}`,
-      name: m.name,
-      x: m.x,
-      y: m.y,
-      type: 'party',
-      color: '#38bdf8'
-    });
+  partyMembers.forEach((m, idx) => {
+    const rawId = m.id || `member-${idx}`;
+    const entId = `party-${rawId}`;
+    if (!seenEntityKeys.has(entId)) {
+      seenEntityKeys.add(entId);
+      entities.push({
+        id: entId,
+        name: m.name,
+        x: m.x,
+        y: m.y,
+        type: 'party',
+        color: '#38bdf8'
+      });
+    }
   });
 
   if (questTarget) {
-    entities.push({
-      id: 'quest-target',
-      name: questTarget.title,
-      x: questTarget.x,
-      y: questTarget.y,
-      type: 'quest',
-      color: '#fbbf24'
-    });
+    const entId = 'quest-target';
+    if (!seenEntityKeys.has(entId)) {
+      seenEntityKeys.add(entId);
+      entities.push({
+        id: entId,
+        name: questTarget.title,
+        x: questTarget.x,
+        y: questTarget.y,
+        type: 'quest',
+        color: '#fbbf24'
+      });
+    }
   }
 
   questTargets.forEach(qt => {
-    if (!entities.some(e => e.id === `quest-${qt.id}`)) {
+    const entId = `quest-${qt.id}`;
+    if (!seenEntityKeys.has(entId)) {
+      seenEntityKeys.add(entId);
       entities.push({
-        id: `quest-${qt.id}`,
+        id: entId,
         name: qt.name,
         x: qt.x,
         y: qt.y,

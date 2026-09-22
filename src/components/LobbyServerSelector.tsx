@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Globe, Users, Wifi, ChevronRight, Sparkles, Compass } from 'lucide-react';
 import { PRESET_SERVERS, ServerRealm, ServerBrowserModal } from './ServerBrowserModal';
 
@@ -14,14 +14,46 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
   onDirectJoin
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
+  const [serverList, setServerList] = useState<ServerRealm[]>(PRESET_SERVERS);
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchCounts = () => {
+      fetch('/api/servers')
+        .then(res => res.json())
+        .then(data => {
+          if (!mounted) return;
+          if (data && Array.isArray(data.servers)) {
+            const countMap = new Map<string, number>();
+            data.servers.forEach((s: { id: string; players: number }) => {
+              countMap.set(s.id, s.players);
+            });
+            setServerList(prev =>
+              prev.map(srv => ({
+                ...srv,
+                players: countMap.get(srv.id) || 0
+              }))
+            );
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const activeServer =
-    PRESET_SERVERS.find(s => s.id === selectedServerId) || {
+    serverList.find(s => s.id === selectedServerId) || {
       id: selectedServerId || 'public-lobby',
       name: selectedServerId ? `Custom Realm (${selectedServerId})` : 'Realm Alpha (Main World)',
       category: 'Standard' as const,
       description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
-      players: 8,
+      players: 0,
       maxPlayers: 20,
       ping: 42,
       biomeTag: 'Verdant Woodlands'
@@ -88,7 +120,7 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
             Quick Switch Realm
           </span>
           <div className="grid grid-cols-1 gap-1.5">
-            {PRESET_SERVERS.slice(0, 3).map(server => (
+            {serverList.slice(0, 3).map(server => (
               <button
                 key={server.id}
                 onClick={() => onSelectServer(server.id)}

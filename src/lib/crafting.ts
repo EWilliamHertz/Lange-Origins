@@ -251,6 +251,60 @@ export const RECIPES: Recipe[] = [
     ],
     result: BlockType.MagicStaff,
     count: 1
+  },
+  {
+    pattern: [
+      null, BlockType.Wood, null,
+      BlockType.Wood, BlockType.Coal, BlockType.Wood,
+      BlockType.Stone, BlockType.Stone, BlockType.Stone
+    ],
+    result: BlockType.Campfire,
+    count: 1
+  },
+  {
+    pattern: [
+      null, null, null,
+      BlockType.Wood, BlockType.Coal, BlockType.Wood,
+      null, null, null
+    ],
+    result: BlockType.Campfire,
+    count: 1
+  },
+  {
+    pattern: [
+      BlockType.IronIngot, null, BlockType.IronIngot,
+      BlockType.IronIngot, BlockType.Wood, BlockType.IronIngot,
+      BlockType.IronIngot, null, BlockType.IronIngot
+    ],
+    result: BlockType.MinecartTrack,
+    count: 16
+  },
+  {
+    pattern: [
+      BlockType.IronIngot, null, BlockType.IronIngot,
+      null, BlockType.Wood, null,
+      null, null, null
+    ],
+    result: BlockType.MinecartTrack,
+    count: 8
+  },
+  {
+    pattern: [
+      BlockType.IronIngot, null, BlockType.IronIngot,
+      BlockType.IronIngot, BlockType.IronIngot, BlockType.IronIngot,
+      null, null, null
+    ],
+    result: BlockType.Minecart,
+    count: 1
+  },
+  {
+    pattern: [
+      BlockType.RawMeat, BlockType.Bone, BlockType.RawMeat,
+      BlockType.IronIngot, BlockType.Bone, BlockType.IronIngot,
+      null, null, null
+    ],
+    result: BlockType.WolfSaddle,
+    count: 1
   }
 ];
 
@@ -322,6 +376,106 @@ RECIPES.push(
       BlockType.Diamond, BlockType.Diamond, BlockType.Diamond
     ],
     result: BlockType.DiamondChestplate,
+    count: 1
+  },
+  // Campfire
+  {
+    pattern: [
+      null, BlockType.Coal, null,
+      BlockType.Wood, BlockType.Wood, BlockType.Wood,
+      BlockType.Stone, BlockType.Stone, BlockType.Stone
+    ],
+    result: BlockType.Campfire,
+    count: 1
+  },
+  // Minecart Tracks (16x rails)
+  {
+    pattern: [
+      BlockType.IronIngot, null, BlockType.IronIngot,
+      BlockType.IronIngot, BlockType.Planks, BlockType.IronIngot,
+      BlockType.IronIngot, null, BlockType.IronIngot
+    ],
+    result: BlockType.MinecartTrack,
+    count: 16
+  },
+  // Minecart
+  {
+    pattern: [
+      BlockType.IronIngot, null, BlockType.IronIngot,
+      BlockType.IronIngot, BlockType.IronIngot, BlockType.IronIngot,
+      null, null, null
+    ],
+    result: BlockType.Minecart,
+    count: 1
+  },
+  // Wolf Saddle
+  {
+    pattern: [
+      BlockType.Bone, BlockType.Wire, BlockType.Bone,
+      BlockType.Planks, BlockType.Planks, BlockType.Planks,
+      null, BlockType.IronIngot, null
+    ],
+    result: BlockType.WolfSaddle,
+    count: 1
+  },
+  // Wild Spice
+  {
+    pattern: [
+      BlockType.Leaves, BlockType.Torch, null,
+      null, null, null,
+      null, null, null
+    ],
+    result: BlockType.WildSpice,
+    count: 3
+  },
+  // Cooked Meat
+  {
+    pattern: [
+      BlockType.RawMeat, BlockType.Coal, null,
+      null, null, null,
+      null, null, null
+    ],
+    result: BlockType.CookedMeat,
+    count: 1
+  },
+  // Hearty Stew (+40 Max HP for 5m)
+  {
+    pattern: [
+      BlockType.Carrot, BlockType.RawMeat, BlockType.WildSpice,
+      null, BlockType.Planks, null,
+      null, null, null
+    ],
+    result: BlockType.HeartyStew,
+    count: 1
+  },
+  // Arcane Broth (2x Mana Regen for 5m)
+  {
+    pattern: [
+      BlockType.Apple, BlockType.RawMeat, BlockType.WildSpice,
+      null, BlockType.Planks, null,
+      null, null, null
+    ],
+    result: BlockType.ArcaneBroth,
+    count: 1
+  },
+  // Hunter's Roast (+35% Speed for 5m)
+  {
+    pattern: [
+      BlockType.RawMeat, BlockType.Carrot, BlockType.Apple,
+      null, BlockType.Planks, null,
+      null, null, null
+    ],
+    result: BlockType.HuntersRoast,
+    count: 1
+  },
+  // Ironhide Goulash (+30% Defense for 5m)
+  {
+    pattern: [
+      BlockType.RawMeat, BlockType.Bone, BlockType.WildSpice,
+      null, BlockType.Planks, null,
+      null, null, null
+    ],
+    result: BlockType.IronhideGoulash,
     count: 1
   }
 );

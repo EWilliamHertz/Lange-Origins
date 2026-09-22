@@ -4,9 +4,12 @@ export type EnchantmentPrefix = 'Flametouched' | 'Vampiric' | 'Fleetfoot' | 'Vor
 export type EnchantmentSuffix = 'of the Colossus' | 'of the Archmage' | 'of the Berserker' | 'of Greed';
 export type GemType = 'ruby' | 'sapphire' | 'emerald' | 'topaz';
 
+export type CursedAffix = 'Bloodbound' | 'AbyssalPact' | 'GlassSoul' | 'RecklessFury' | 'Netherweight';
+
 export interface EnchantmentData {
   prefix?: EnchantmentPrefix;
   suffix?: EnchantmentSuffix;
+  curse?: CursedAffix;
   level: number; // +1 to +10
   bonusDamage?: number;
   bonusDefense?: number;
@@ -14,6 +17,7 @@ export interface EnchantmentData {
   lifesteal?: number;
   burnDot?: number;
   glowColor?: string;
+  isCursed?: boolean;
 }
 
 export interface SocketedGems {
@@ -87,6 +91,290 @@ export const PREFIXES: Record<EnchantmentPrefix, PrefixMetadata> = {
     baseDefense: 6
   }
 };
+
+export interface CursedAffixMetadata {
+  id: CursedAffix;
+  name: string;
+  title: string;
+  description: string;
+  positiveEffect: string;
+  negativeEffect: string;
+  applicableTo: 'weapon' | 'armor' | 'both';
+  color: string;
+  damageMultiplier?: number;
+  staminaDrainPerSwing?: number;
+  defenseBonus?: number;
+  disableManaRegen?: boolean;
+  critBonus?: number;
+  maxHealthMultiplier?: number;
+  recoilSelfDamage?: number;
+  speedMultiplier?: number;
+}
+
+export const CURSED_AFFIXES: Record<CursedAffix, CursedAffixMetadata> = {
+  Bloodbound: {
+    id: 'Bloodbound',
+    name: 'Bloodbound',
+    title: 'Curse of the Bloodbound',
+    description: 'Deals 2.0x DOUBLE damage on all strikes, but drains 15 Stamina with every weapon swing.',
+    positiveEffect: '200% Weapon Damage (Double Damage)',
+    negativeEffect: 'Drains 15 Stamina on Every Attack Swing',
+    applicableTo: 'weapon',
+    color: '#e11d48',
+    damageMultiplier: 2.0,
+    staminaDrainPerSwing: 15
+  },
+  AbyssalPact: {
+    id: 'AbyssalPact',
+    name: 'Abyssal Pact',
+    title: 'Pact of the Abyssal Void',
+    description: 'Provides immense protective warding (+25 Armor & +40% Damage Absorption), but completely freezes passive mana regeneration.',
+    positiveEffect: '+25 Defense & Massive Damage Absorption',
+    negativeEffect: 'Completely Disables Passive Mana Regeneration',
+    applicableTo: 'armor',
+    color: '#9333ea',
+    defenseBonus: 25,
+    disableManaRegen: true
+  },
+  GlassSoul: {
+    id: 'GlassSoul',
+    name: 'Glass Soul',
+    title: 'Curse of the Fragile Mirror',
+    description: 'Increases Critical Strike Chance by +40% and Spell Power by +25, but permanently reduces Maximum Health by 35%.',
+    positiveEffect: '+40% Critical Strike Chance & +25 Spell Power',
+    negativeEffect: '-35% Maximum Health Penalty',
+    applicableTo: 'both',
+    color: '#06b6d4',
+    critBonus: 0.40,
+    maxHealthMultiplier: 0.65
+  },
+  RecklessFury: {
+    id: 'RecklessFury',
+    name: 'Reckless Fury',
+    title: 'Curse of Reckless Fury',
+    description: 'Increases Attack Speed by +50% and adds +12 Flat Damage, but suffers 4 recoil self-damage on every strike.',
+    positiveEffect: '+50% Attack Speed & +12 Bonus Damage',
+    negativeEffect: 'Deals 4 Recoil Self-Damage on Every Strike',
+    applicableTo: 'weapon',
+    color: '#ea580c',
+    recoilSelfDamage: 4
+  },
+  Netherweight: {
+    id: 'Netherweight',
+    name: 'Netherweight',
+    title: 'Curse of Netherweight',
+    description: 'Grants +30 Armor and complete Knockback Immunity, but reduces movement and sprint speed by 25%.',
+    positiveEffect: '+30 Armor & Complete Knockback Immunity',
+    negativeEffect: '-25% Movement & Sprint Velocity',
+    applicableTo: 'armor',
+    color: '#64748b',
+    defenseBonus: 30,
+    speedMultiplier: 0.75
+  }
+};
+
+export type GemResonanceId = 
+  | 'frostfire' 
+  | 'phoenix' 
+  | 'molten' 
+  | 'tidal' 
+  | 'storm' 
+  | 'gaia' 
+  | 'infernal' 
+  | 'glacial' 
+  | 'lifebloom' 
+  | 'dynamo';
+
+export interface GemResonance {
+  id: GemResonanceId;
+  name: string;
+  tagline: string;
+  description: string;
+  slashColor: string;
+  slashSecondaryColor: string;
+  auraColor: string;
+  auraType: 'frostfire' | 'phoenix' | 'molten' | 'tidal' | 'storm' | 'gaia' | 'infernal' | 'glacial' | 'lifebloom' | 'dynamo';
+  gems: [GemType, GemType];
+  damageBonusPercent?: number;
+  elementalEffect?: 'frost_burn' | 'chain_lightning' | 'phoenix_mend' | 'molten_burst' | 'tidal_siphon' | 'gaia_barrier';
+  auraBonusText: string;
+  speedBonus?: number;
+  miningSpeedBonus?: number;
+  maxHpBonus?: number;
+  maxManaBonus?: number;
+}
+
+export function getGemResonance(sockets?: SocketedGems | null): GemResonance | null {
+  if (!sockets?.slot1 || !sockets?.slot2) return null;
+  const pair = [sockets.slot1, sockets.slot2].sort().join('_');
+
+  switch (pair) {
+    case 'ruby_sapphire':
+      return {
+        id: 'frostfire',
+        name: 'Frostfire Twilight',
+        tagline: 'Elemental Convergence',
+        description: '+18% Elemental Damage; attacks ignite foes while inflicting frost slow.',
+        slashColor: '#ff3b30',
+        slashSecondaryColor: '#38bdf8',
+        auraColor: 'rgba(56, 189, 248, 0.4)',
+        auraType: 'frostfire',
+        gems: ['ruby', 'sapphire'],
+        damageBonusPercent: 0.18,
+        elementalEffect: 'frost_burn',
+        auraBonusText: 'Radiates twin orbiting fire embers & ice crystals that empower spell attacks.'
+      };
+    case 'emerald_ruby':
+      return {
+        id: 'phoenix',
+        name: 'Phoenix Vitality',
+        tagline: 'Eternal Rebirth',
+        description: '+25 Max Health; strikes have a chance to burst into radiant phoenix healing flames.',
+        slashColor: '#fbbf24',
+        slashSecondaryColor: '#ef4444',
+        auraColor: 'rgba(251, 191, 36, 0.4)',
+        auraType: 'phoenix',
+        gems: ['ruby', 'emerald'],
+        maxHpBonus: 25,
+        elementalEffect: 'phoenix_mend',
+        auraBonusText: 'Sunburst halo that pulses healing warmth when below 40% health.'
+      };
+    case 'ruby_topaz':
+      return {
+        id: 'molten',
+        name: 'Molten Core',
+        tagline: 'Volcanic Fury',
+        description: '+35% Mining Speed & +12 Explosive Melee Impact damage on hit.',
+        slashColor: '#f97316',
+        slashSecondaryColor: '#eab308',
+        auraColor: 'rgba(249, 115, 22, 0.4)',
+        auraType: 'molten',
+        gems: ['ruby', 'topaz'],
+        miningSpeedBonus: 0.35,
+        elementalEffect: 'molten_burst',
+        auraBonusText: 'Fiery magma tremor aura creating explosive cracks on striking blocks or foes.'
+      };
+    case 'emerald_sapphire':
+      return {
+        id: 'tidal',
+        name: 'Tidal Serenity',
+        tagline: 'Abyssal Spring',
+        description: '+35 Max Mana; melee and magical strikes siphon +4 Mana back to the caster.',
+        slashColor: '#06b6d4',
+        slashSecondaryColor: '#3b82f6',
+        auraColor: 'rgba(6, 182, 212, 0.4)',
+        auraType: 'tidal',
+        gems: ['sapphire', 'emerald'],
+        maxManaBonus: 35,
+        elementalEffect: 'tidal_siphon',
+        auraBonusText: 'Cascading aqua ripple rings that continuously refresh the caster\'s mind.'
+      };
+    case 'sapphire_topaz':
+      return {
+        id: 'storm',
+        name: 'Storm Tempest',
+        tagline: 'Thunderlord Conduit',
+        description: '+18% Movement Speed; 30% chance on strike to discharge 8 Chain Lightning damage.',
+        slashColor: '#a855f7',
+        slashSecondaryColor: '#38bdf8',
+        auraColor: 'rgba(168, 85, 247, 0.4)',
+        auraType: 'storm',
+        gems: ['sapphire', 'topaz'],
+        speedBonus: 0.18,
+        elementalEffect: 'chain_lightning',
+        auraBonusText: 'Dancing electric lightning barrier that shocks enemies who step too close.'
+      };
+    case 'emerald_topaz':
+      return {
+        id: 'gaia',
+        name: "Gaia's Bastion",
+        tagline: 'Earth Warden',
+        description: '+15% Physical Resistance & +30% Faster Stamina Recovery rate.',
+        slashColor: '#10b981',
+        slashSecondaryColor: '#f59e0b',
+        auraColor: 'rgba(16, 185, 129, 0.4)',
+        auraType: 'gaia',
+        gems: ['emerald', 'topaz'],
+        elementalEffect: 'gaia_barrier',
+        auraBonusText: 'Rotating crystalline jade shields that deflect incoming blows.'
+      };
+    case 'ruby_ruby':
+      return {
+        id: 'infernal',
+        name: 'Infernal Cataclysm',
+        tagline: 'Dual Flame Surge',
+        description: '+20% Critical Strike Chance & +15 Continuous Fire Damage.',
+        slashColor: '#b91c1c',
+        slashSecondaryColor: '#ff6b6b',
+        auraColor: 'rgba(185, 28, 28, 0.45)',
+        auraType: 'infernal',
+        gems: ['ruby', 'ruby'],
+        damageBonusPercent: 0.20,
+        auraBonusText: 'Roaring crimson hellfire aura burning everything in its wake.'
+      };
+    case 'sapphire_sapphire':
+      return {
+        id: 'glacial',
+        name: 'Glacial Absolute',
+        tagline: 'Absolute Zero',
+        description: '+50 Max Mana; creates a frost mist that chills and slows nearby opponents.',
+        slashColor: '#0284c7',
+        slashSecondaryColor: '#bae6fd',
+        auraColor: 'rgba(2, 132, 199, 0.45)',
+        auraType: 'glacial',
+        gems: ['sapphire', 'sapphire'],
+        maxManaBonus: 50,
+        auraBonusText: 'Blizzard frost halo with hovering ice crystals.'
+      };
+    case 'emerald_emerald':
+      return {
+        id: 'lifebloom',
+        name: 'Primal Lifebloom',
+        tagline: 'Font of Vitality',
+        description: '+50 Max Health & +2 HP/sec Continuous Passive Regeneration.',
+        slashColor: '#059669',
+        slashSecondaryColor: '#6ee7b7',
+        auraColor: 'rgba(5, 150, 105, 0.45)',
+        auraType: 'lifebloom',
+        gems: ['emerald', 'emerald'],
+        maxHpBonus: 50,
+        auraBonusText: 'Swirling emerald leaves and blossom petals that constantly rejuvenate flesh.'
+      };
+    case 'topaz_topaz':
+      return {
+        id: 'dynamo',
+        name: 'Hypercharged Dynamo',
+        tagline: 'Kinetic Overload',
+        description: '+45% Attack & Mining Speed with relentless kinetic surge.',
+        slashColor: '#d97706',
+        slashSecondaryColor: '#fde047',
+        auraColor: 'rgba(217, 119, 6, 0.45)',
+        auraType: 'dynamo',
+        gems: ['topaz', 'topaz'],
+        speedBonus: 0.20,
+        miningSpeedBonus: 0.45,
+        auraBonusText: 'High-voltage electric sparks crackling around all movement and strikes.'
+      };
+    default:
+      return null;
+  }
+}
+
+export function getCursedAffixCost(curse: CursedAffix): {
+  gold: number;
+  dust: number;
+  materials: { type: BlockType; count: number }[];
+} {
+  return {
+    gold: 3,
+    dust: 5,
+    materials: [
+      { type: BlockType.ArcaneDust, count: 5 },
+      { type: BlockType.GoldIngot, count: 3 },
+      { type: BlockType.SlimeCore, count: 1 }
+    ]
+  };
+}
 
 export interface GemMetadata {
   type: GemType;

@@ -1,14 +1,14 @@
 import React from 'react';
 import { BlockType, BlockNames } from '../lib/constants';
-import { Shield, Swords, Pickaxe, Sparkles, Coins, Zap, Heart, Wrench, Layers, Gem } from 'lucide-react';
+import { Shield, Swords, Pickaxe, Sparkles, Coins, Zap, Heart, Wrench, Layers, Gem, Skull, AlertTriangle, Flame } from 'lucide-react';
 import { getSetForPiece } from '../lib/armorSets';
-import { PREFIXES, GEMS, type EnchantmentData, type SocketedGems } from '../lib/enchanting';
+import { PREFIXES, GEMS, CURSED_AFFIXES, getGemResonance, type EnchantmentData, type SocketedGems, type CursedAffix } from '../lib/enchanting';
 
 export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
 
 export interface ItemInfo {
   name: string;
-  category: 'Weapon' | 'Armor' | 'Tool' | 'Consumable' | 'Resource' | 'Magical' | 'Mechanism' | 'Special';
+  category: 'Weapon' | 'Armor' | 'Tool' | 'Consumable' | 'Resource' | 'Magical' | 'Mechanism' | 'Special' | 'Station' | 'Transportation' | 'Mount' | 'Ingredient' | 'Buff Meal';
   rarity: ItemRarity;
   attack?: number;
   defense?: number;
@@ -59,8 +59,19 @@ export function getItemRarity(type: BlockType): ItemRarity {
     type === BlockType.WoodAxe ||
     type === BlockType.Apple ||
     type === BlockType.Carrot ||
-    type === BlockType.Arrow
+    type === BlockType.Arrow ||
+    type === BlockType.CookedMeat ||
+    type === BlockType.WildSpice
   ) return 'uncommon';
+  if (
+    type === BlockType.HeartyStew ||
+    type === BlockType.ArcaneBroth ||
+    type === BlockType.HuntersRoast ||
+    type === BlockType.IronhideGoulash ||
+    type === BlockType.Minecart ||
+    type === BlockType.WolfSaddle ||
+    type === BlockType.Campfire
+  ) return 'rare';
   return 'common';
 }
 
@@ -274,6 +285,61 @@ export function getItemMetadata(type: BlockType, currentDurability?: number): It
       description = 'Nutritious farm vegetable. Restores 3 health.';
       coinValue = 2;
       break;
+    case BlockType.Campfire:
+      category = 'Station';
+      description = 'A crackling stone hearth. Place down and right-click to cook nourishing meals, stews, and broths.';
+      coinValue = 8;
+      break;
+    case BlockType.MinecartTrack:
+      category = 'Transportation';
+      description = 'Steel railway line. Lay tracks underground or across plains to ride minecarts at tremendous speed.';
+      coinValue = 2;
+      break;
+    case BlockType.Minecart:
+      category = 'Transportation';
+      description = 'Sturdy iron transit cart. Place on Minecart Tracks and right-click to ride smoothly across tunnels.';
+      coinValue = 25;
+      break;
+    case BlockType.WolfSaddle:
+      category = 'Mount';
+      description = 'Reinforced beast saddle. Feed wild wolves to tame them, then press [F] or right-click to mount and gallop.';
+      coinValue = 20;
+      break;
+    case BlockType.WildSpice:
+      category = 'Ingredient';
+      description = 'Crushed aromatic mountain herbs and dried chili. Key seasoning for campfire recipes.';
+      coinValue = 4;
+      break;
+    case BlockType.RawMeat:
+      category = 'Ingredient';
+      description = 'Raw meat from hunted fauna. Combine with crops and spice at a campfire to cook nourishing dishes.';
+      coinValue = 3;
+      break;
+    case BlockType.CookedMeat:
+      category = 'Consumable';
+      description = 'Seared steak grilled over embers. Restores 12 health and 40 stamina.';
+      coinValue = 6;
+      break;
+    case BlockType.HeartyStew:
+      category = 'Buff Meal';
+      description = 'Simmered carrot, savory meat, and wild spice. Restores full HP and grants +40 Max HP for 5 minutes!';
+      coinValue = 20;
+      break;
+    case BlockType.ArcaneBroth:
+      category = 'Buff Meal';
+      description = 'Shimmering mystic broth. Restores mana and grants Doubled Mana Regeneration (2x) for 5 minutes!';
+      coinValue = 25;
+      break;
+    case BlockType.HuntersRoast:
+      category = 'Buff Meal';
+      description = 'Seasoned hunter roast. Grants +35% Movement Speed and reduced sprint stamina drain for 5 minutes!';
+      coinValue = 22;
+      break;
+    case BlockType.IronhideGoulash:
+      category = 'Buff Meal';
+      description = 'Iron-infused thick goulash. Hardens skin to grant +30% Damage Resistance for 5 minutes!';
+      coinValue = 24;
+      break;
     case BlockType.BossDrop:
       category = 'Special';
       description = 'Ancient runic heart wrenched from the slumbering Golem.';
@@ -362,6 +428,13 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
   const count = typeof slot === 'object' ? slot.count : 1;
   const enchantment = typeof slot === 'object' ? slot.enchantment : undefined;
   const sockets = typeof slot === 'object' ? slot.sockets : undefined;
+  const curse: CursedAffix | undefined = enchantment?.curse || (typeof slot === 'object' ? (slot as any).curse : undefined);
+  const effectiveSockets: SocketedGems = {
+    slot1: sockets?.slot1 || (typeof slot === 'object' ? (slot as any).gem1 : null),
+    slot2: sockets?.slot2 || (typeof slot === 'object' ? (slot as any).gem2 : null),
+  };
+  const resonance = getGemResonance(effectiveSockets);
+  const cursedInfo = curse ? CURSED_AFFIXES[curse] : null;
   const info = getItemMetadata(blockType, currentDur);
   const rarityConfig = RARITY_STYLES[info.rarity];
 
@@ -430,6 +503,34 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
         </div>
       </div>
 
+      {/* Cursed Affix Banner */}
+      {cursedInfo && (
+        <div className="rounded-lg p-2 bg-gradient-to-r from-red-950/80 via-rose-950/50 to-neutral-950 border border-red-500/70 shadow-[0_0_12px_rgba(225,29,72,0.35)] text-[11px] flex flex-col gap-1.5">
+          <div className="flex items-center justify-between border-b border-red-500/30 pb-1">
+            <span className="font-bold flex items-center gap-1.5 text-rose-300">
+              <Skull size={13} className="text-rose-500 animate-pulse" />
+              {cursedInfo.title}
+            </span>
+            <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 bg-red-500/20 text-red-300 rounded border border-red-500/40">
+              Cursed
+            </span>
+          </div>
+          <p className="text-[10px] text-neutral-300 leading-tight">
+            {cursedInfo.description}
+          </p>
+          <div className="flex flex-col gap-1 font-mono text-[10px] pt-0.5">
+            <div className="flex items-center gap-1.5 text-emerald-400 font-bold bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-500/30">
+              <span>✦</span>
+              <span>{cursedInfo.positiveEffect}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-rose-400 font-bold bg-red-950/50 px-1.5 py-0.5 rounded border border-red-500/30">
+              <AlertTriangle size={11} className="text-rose-400 shrink-0" />
+              <span>{cursedInfo.negativeEffect}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Enchantment Details Banner */}
       {enchantment && (
         <div className="rounded-lg p-2 bg-gradient-to-r from-amber-950/40 via-purple-950/40 to-neutral-900 border border-amber-500/40 text-[11px] flex flex-col gap-1">
@@ -465,7 +566,7 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {[1, 2].map((slotIdx) => {
-              const gemKey = slotIdx === 1 ? sockets?.slot1 : sockets?.slot2;
+              const gemKey = slotIdx === 1 ? effectiveSockets.slot1 : effectiveSockets.slot2;
               const gem = gemKey ? GEMS[gemKey] : null;
               return (
                 <div
@@ -483,6 +584,36 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
               );
             })}
           </div>
+
+          {/* Gem Resonance Set Bonus */}
+          {resonance && (
+            <div className="mt-1 rounded-lg p-2 bg-gradient-to-r from-purple-950/60 via-indigo-950/50 to-neutral-900 border border-indigo-400/50 shadow-[0_0_15px_rgba(99,102,241,0.25)] flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[11px] flex items-center gap-1.5 text-indigo-300">
+                  <Sparkles size={12} className="text-amber-400 animate-spin" />
+                  ✦ {resonance.name}
+                </span>
+                <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30">
+                  Resonance
+                </span>
+              </div>
+              <div className="text-[9px] text-amber-300/90 italic">
+                "{resonance.tagline}"
+              </div>
+              <p className="text-[10px] text-neutral-200 font-medium leading-tight">
+                {resonance.description}
+              </p>
+              <div className="text-[9px] text-sky-300/80 bg-neutral-950/50 p-1 rounded border border-white/5">
+                <span className="font-semibold text-white/90">Aura: </span>
+                {resonance.auraBonusText}
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5 text-[9px] font-mono text-neutral-400">
+                <span>Slash FX:</span>
+                <span className="w-2.5 h-2.5 rounded-full inline-block border border-white/30" style={{ backgroundColor: resonance.slashColor }} />
+                <span className="w-2.5 h-2.5 rounded-full inline-block border border-white/30" style={{ backgroundColor: resonance.slashSecondaryColor }} />
+              </div>
+            </div>
+          )}
         </div>
       )}
 

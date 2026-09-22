@@ -3,18 +3,28 @@ import {
   User, Package, Hammer, BookOpen, Sparkles, Settings, 
   X, Volume2, VolumeX, LogOut, ArrowRight, Check, 
   Trash2, Shield, Swords, Heart, Zap, Award, Search, Plus, Wrench, GripVertical, Lock, Keyboard,
-  Layers, Flame, Star, Compass, LayoutTemplate, Users, Crown, CheckCircle2, UserPlus, HelpCircle
+  Layers, Flame, Star, Compass, LayoutTemplate, Users, Crown, CheckCircle2, UserPlus, HelpCircle, Crosshair
 } from 'lucide-react';
 import { BlockType, BlockNames, BlockColors } from '../lib/constants';
 import { RECIPES } from '../lib/crafting';
-import { abilitiesForClass, findAbilityOnBars, isAbilityUnlocked, keyForAbility } from '../lib/abilities';
+import { 
+  abilitiesForClass, 
+  findAbilityOnBars, 
+  isAbilityUnlocked, 
+  keyForAbility, 
+  bindAbilityKey, 
+  unbindAbility, 
+  isBindableKey, 
+  elementalMagicAbilities, 
+  isElementalAbility 
+} from '../lib/abilities';
 import { getTalentTreeForClass, getTalentRank, hasCapstone, getSelectedSpec } from '../lib/talents';
 import { getArmorSetInfo, ARMOR_SETS } from '../lib/armorSets';
 import { Sounds, AudioChannels } from '../lib/audio';
 import { loadKeybinds, saveKeybinds, resetKeybinds, DEFAULT_KEYBINDS, KEYBIND_LABELS, KeybindMap } from '../lib/keybinds';
 import { getItemMetadata, RARITY_STYLES, ItemTooltip } from './ItemTooltip';
 import { EnchantingStationView } from './EnchantingStationView';
-import { EnchantmentPrefix, GemType } from '../lib/enchanting';
+import { EnchantmentPrefix, GemType, CursedAffix } from '../lib/enchanting';
 
 export type UnifiedMenuTab = 'character' | 'inventory' | 'crafting' | 'enchanting' | 'quests' | 'skills' | 'social' | 'settings';
 
@@ -35,7 +45,7 @@ interface UnifiedMenuProps {
   craftingGrid: any[];
   craftingResult: { result: BlockType; count: number } | null;
   cursorItem?: any;
-  onSlotClick: (type: any, index: number, isRightClick?: boolean) => void;
+  onSlotClick: (type: any, index: number, isRightClick?: boolean, isShiftClick?: boolean) => void;
   /** `index` is a slot position, or the ability id when `type` is 'ability' (skill-tree card). */
   onSlotHover?: (slot: any, e: React.MouseEvent, type?: string, index?: number | string) => void;
   onSlotLeave?: () => void;
@@ -58,6 +68,12 @@ interface UnifiedMenuProps {
     slotIndex: number,
     socketIndex: 1 | 2,
     gemType: GemType
+  ) => void;
+  onApplyCurse?: (
+    slotSource: 'hotbar' | 'backpack',
+    slotIndex: number,
+    curse: CursedAffix,
+    cost: { gold: number; materials: { type: BlockType; count: number }[] }
   ) => void;
   onDismantle?: (
     slotSource: 'hotbar' | 'backpack',
@@ -133,6 +149,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   onTriggerHUDEdit,
   onApplyEnchant,
   onApplyGem,
+  onApplyCurse,
   onDismantle,
   onTossItem,
   renderBlockIcon,
@@ -205,6 +222,33 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [listeningKeybindAction, activeKeybinds]);
 
+  // Ability quick keybind state
+  const [bindingAbilityId, setBindingAbilityId] = useState<string | null>(null);
+
+  // Listen for ability keybind input
+  React.useEffect(() => {
+    if (!bindingAbilityId) return;
+
+    const handleAbilityKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === 'Escape') {
+        setBindingAbilityId(null);
+        return;
+      }
+
+      if (isBindableKey(e.key)) {
+        setKeybinds(prev => bindAbilityKey(prev, e.key, bindingAbilityId));
+        Sounds.slotClick();
+        setBindingAbilityId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleAbilityKeyDown, true);
+    return () => window.removeEventListener('keydown', handleAbilityKeyDown, true);
+  }, [bindingAbilityId, setKeybinds]);
+
   if (!isOpen) return null;
 
   // Safe fallbacks for player stats & abilities to prevent any runtime crashes
@@ -221,6 +265,10 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
   const totalDefense = helmDefense + chestDefense;
 
   const currentWeapon = hotbar[selectedSlotIndex]?.type || null;
+  const hasStaff = currentWeapon === BlockType.WizardStaff ||
+    equipment?.some((eq: any) => eq && (eq.type === BlockType.WizardStaff || eq === BlockType.WizardStaff)) ||
+    hotbar?.some((h: any) => h && (h.type === BlockType.WizardStaff || h === BlockType.WizardStaff)) ||
+    backpack?.some((b: any) => b && (b.type === BlockType.WizardStaff || b === BlockType.WizardStaff));
   const baseWeaponDmg = currentWeapon ? (getItemMetadata(currentWeapon).attack || 1) : 1;
   const totalAttackPower = baseWeaponDmg + (safeSkills.strength || 0) * 2;
   const totalKills = Object.values(player.kills || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
@@ -293,7 +341,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
         key={`${type}-${index}`}
         id={`slot-${type}-${index}`}
         aria-label={`${type} slot ${index + 1}${slot ? "" : " (empty)"}`}
-        onClick={() => {
+        onClick={(e) => {
           if (isEquipped) {
             Sounds.equipGear();
           } else if (type === 'craftingResult') {
@@ -301,12 +349,12 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
           } else {
             Sounds.slotClick();
           }
-          onSlotClick(type, index, false);
+          onSlotClick(type, index, false, e.shiftKey);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
           Sounds.slotClick();
-          onSlotClick(type, index, true);
+          onSlotClick(type, index, true, e.shiftKey);
         }}
         onMouseEnter={(e) => {
           Sounds.slotHover();
@@ -1012,6 +1060,7 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               renderBlockIcon={renderBlockIcon}
               onApplyEnchant={onApplyEnchant || (() => {})}
               onApplyGem={onApplyGem || (() => {})}
+              onApplyCurse={onApplyCurse}
               onDismantle={onDismantle || (() => {})}
             />
           )}
@@ -1341,110 +1390,179 @@ export const UnifiedMenu: React.FC<UnifiedMenuProps> = ({
               })()}
 
               {/* Class MMO Abilities — unified with inline rank upgrades, drag onto a bar, or bind */}
-              <div className="bg-neutral-900/60 p-5 rounded-xl border border-cyan-500/30 flex flex-col gap-4">
-                <div className="flex flex-wrap justify-between items-center gap-2">
-                  <h4 className="text-sm font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
-                    <Zap size={16} /> Class Combat Abilities & Upgrades
-                  </h4>
-                  <span className="text-xs text-neutral-400">Class: {playerClass.toUpperCase()}</span>
-                </div>
-                <p className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="flex items-center gap-1"><GripVertical size={12} className="text-cyan-400" /> Drag an unlocked ability onto action bars</span>
-                  <span className="flex items-center gap-1"><Keyboard size={12} className="text-amber-400" /> Hover a card and press a key to bind it</span>
-                  <span className="flex items-center gap-1"><Plus size={12} className="text-emerald-400" /> Spend Skill Points to raise ability rank</span>
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {abilitiesForClass(playerClass).map(ability => {
-                    const isUnlocked = isAbilityUnlocked(ability, safeSkills);
-                    const boundKey = keyForAbility(keybinds, ability.id);
-                    const placement = findAbilityOnBars({ hotbar, leftActionBar, rightActionBar }, ability.id);
-                    const placementLabel = placement
-                      ? `${placement.bar === 'hotbar' ? 'Hotbar' : placement.bar === 'leftActionBar' ? 'Left bar' : 'Right bar'} ${placement.index + 1}`
-                      : null;
-                    const abilityRank = safeAbilities[ability.id] || (isUnlocked ? 1 : 0);
+              {(() => {
+                const renderAbilityCard = (ability: any, themeColor: 'cyan' | 'amber') => {
+                  const isUnlocked = isAbilityUnlocked(ability, safeSkills, hasStaff);
+                  const boundKey = keyForAbility(keybinds, ability.id);
+                  const placement = findAbilityOnBars({ hotbar, leftActionBar, rightActionBar }, ability.id);
+                  const placementLabel = placement
+                    ? `${placement.bar === 'hotbar' ? 'Hotbar' : placement.bar === 'leftActionBar' ? 'Left bar' : 'Right bar'} ${placement.index + 1}`
+                    : null;
+                  const abilityRank = safeAbilities[ability.id] || (isUnlocked ? 1 : 0);
+                  const isBinding = bindingAbilityId === ability.id;
 
-                    return (
-                      <div 
-                        key={ability.id}
-                        data-ability-id={ability.id}
-                        draggable={isUnlocked}
-                        onDragStart={(e) => {
-                          if (!isUnlocked) { e.preventDefault(); return; }
-                          onAbilityDragStart?.(e, ability.id);
-                        }}
-                        onMouseEnter={(e) => onSlotHover?.(null, e, 'ability', ability.id)}
-                        onMouseLeave={() => onSlotLeave?.()}
-                        title={isUnlocked ? 'Drag to an action bar, or hover and press a key to bind' : `Requires ${ability.req} ${ability.class === 'warrior' ? 'Strength' : ability.class === 'archer' ? 'Dexterity' : 'Intelligence'}`}
-                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-colors ${
-                          isUnlocked 
-                            ? 'bg-neutral-950/80 border-cyan-500/40 text-neutral-200 shadow-[0_0_15px_rgba(6,182,212,0.1)] cursor-grab active:cursor-grabbing hover:border-cyan-400/70' 
-                            : 'bg-neutral-950/40 border-neutral-800/80 text-neutral-500 opacity-60 cursor-not-allowed'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-8 h-8 shrink-0 rounded-lg bg-neutral-900 border border-neutral-700 flex items-center justify-center">
-                              {ability.icon}
-                            </div>
-                            <div className="min-w-0">
-                              <h6 className="text-xs font-bold text-white truncate flex items-center gap-1.5">
-                                {ability.name}
-                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
-                                  Rank {abilityRank}
-                                </span>
-                              </h6>
-                              <span className="text-[10px] text-neutral-400">
-                                {ability.req > 0 ? `Req ${ability.req}` : 'Starter'} · {ability.cost > 0 ? `${ability.cost} MP` : 'Free'} · {ability.cd}s CD
-                              </span>
-                            </div>
+                  return (
+                    <div 
+                      key={ability.id}
+                      data-ability-id={ability.id}
+                      draggable={isUnlocked}
+                      onDragStart={(e) => {
+                        if (!isUnlocked) { e.preventDefault(); return; }
+                        onAbilityDragStart?.(e, ability.id);
+                      }}
+                      onMouseEnter={(e) => onSlotHover?.(null, e, 'ability', ability.id)}
+                      onMouseLeave={() => onSlotLeave?.()}
+                      title={isUnlocked ? 'Click "Bind Key" or drag to an action bar' : `Requires ${ability.req} ${ability.class === 'warrior' ? 'Strength' : ability.class === 'archer' ? 'Dexterity' : 'Intelligence'}`}
+                      className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-colors ${
+                        isUnlocked 
+                          ? themeColor === 'amber'
+                            ? 'bg-neutral-950/80 border-amber-500/40 text-neutral-200 shadow-[0_0_15px_rgba(245,158,11,0.1)] hover:border-amber-400/70'
+                            : 'bg-neutral-950/80 border-cyan-500/40 text-neutral-200 shadow-[0_0_15px_rgba(6,182,212,0.1)] hover:border-cyan-400/70'
+                          : 'bg-neutral-950/40 border-neutral-800/80 text-neutral-500 opacity-60 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-8 h-8 shrink-0 rounded-lg bg-neutral-900 border border-neutral-700 flex items-center justify-center">
+                            {ability.icon}
                           </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {!isUnlocked && <Lock size={12} className="text-neutral-500" />}
-                            {boundKey && (
-                              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-amber-500 text-neutral-950 rounded" title={`Bound to ${boundKey.toUpperCase()}`}>
-                                {boundKey.toUpperCase()}
+                          <div className="min-w-0">
+                            <h6 className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                              {ability.name}
+                              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${themeColor === 'amber' ? 'bg-amber-950 text-amber-300 border border-amber-500/30' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'}`}>
+                                Rank {abilityRank}
                               </span>
-                            )}
+                            </h6>
+                            <span className="text-[10px] text-neutral-400">
+                              {ability.req > 0 ? `Req ${ability.req}` : 'Starter'} · {ability.cost > 0 ? `${ability.cost} MP` : 'Free'} · {ability.cd}s CD
+                            </span>
                           </div>
                         </div>
-
-                        <p className="text-[11px] text-neutral-400 italic">
-                          {ability.desc}
-                        </p>
-
-                        <div className="flex flex-col gap-1.5 pt-1 border-t border-white/5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={`text-[10px] font-bold ${placementLabel ? 'text-emerald-400' : 'text-neutral-500'}`}>
-                              {placementLabel ? `On bar: ${placementLabel}` : 'Not on a bar'}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {!isUnlocked && <Lock size={12} className="text-neutral-500" />}
+                          {boundKey && (
+                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-amber-500 text-neutral-950 rounded shadow-sm" title={`Bound to ${boundKey.toUpperCase()}`}>
+                              {boundKey.toUpperCase()}
                             </span>
-                            <button
-                              type="button"
-                              disabled={!isUnlocked || !!placement}
-                              onClick={(e) => { e.stopPropagation(); onAddAbilityToBar?.(ability.id); }}
-                              className="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-cyan-600 text-white font-bold text-[10px] rounded-md transition-colors flex items-center gap-1"
-                            >
-                              <Plus size={11} /> {placement ? 'On Bar' : 'Add to Bar'}
-                            </button>
-                          </div>
-
-                          <button
-                            type="button"
-                            disabled={!isUnlocked || safeSkillPoints <= 0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              Sounds.slotClick();
-                              player.onAllocateAbility?.(ability.id);
-                            }}
-                            className="w-full py-1 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-300 font-bold text-[10px] rounded-md transition-colors flex items-center justify-center gap-1 border border-neutral-700"
-                          >
-                            <Plus size={11} /> Upgrade Rank (1 SP)
-                          </button>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+
+                      <p className="text-[11px] text-neutral-400 italic">
+                        {ability.desc}
+                      </p>
+
+                      <div className="flex flex-col gap-1.5 pt-1 border-t border-white/5">
+                        {/* Interactive Keybind Button */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={!isUnlocked}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBindingAbilityId(isBinding ? null : ability.id);
+                            }}
+                            className={`flex-1 py-1 px-2 rounded-md font-bold text-[10px] transition-all flex items-center justify-center gap-1 border ${
+                              isBinding
+                                ? 'bg-amber-500 text-neutral-950 border-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.5)]'
+                                : boundKey
+                                ? 'bg-amber-950/60 text-amber-300 border-amber-500/50 hover:bg-amber-900/60'
+                                : 'bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                            }`}
+                          >
+                            <Keyboard size={11} className={isBinding ? 'text-neutral-950' : 'text-amber-400'} />
+                            <span>{isBinding ? 'Press Key...' : boundKey ? `Bound: [${boundKey.toUpperCase()}]` : 'Bind Key'}</span>
+                          </button>
+
+                          {boundKey && (
+                            <button
+                              type="button"
+                              title="Unbind Key"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setKeybinds(prev => unbindAbility(prev, ability.id));
+                                Sounds.slotClick();
+                              }}
+                              className="p-1 rounded-md text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 border border-transparent hover:border-rose-500/30 transition-colors"
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-[10px] font-bold ${placementLabel ? 'text-emerald-400' : 'text-neutral-500'}`}>
+                            {placementLabel ? `On bar: ${placementLabel}` : 'Not on a bar'}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={!isUnlocked || !!placement}
+                            onClick={(e) => { e.stopPropagation(); onAddAbilityToBar?.(ability.id); }}
+                            className={`px-2 py-1 ${themeColor === 'amber' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-cyan-600 hover:bg-cyan-500'} disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-[10px] rounded-md transition-colors flex items-center gap-1`}
+                          >
+                            <Plus size={11} /> {placement ? 'On Bar' : 'Add to Bar'}
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!isUnlocked || safeSkillPoints <= 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            Sounds.slotClick();
+                            player.onAllocateAbility?.(ability.id);
+                          }}
+                          className="w-full py-1 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-300 font-bold text-[10px] rounded-md transition-colors flex items-center justify-center gap-1 border border-neutral-700"
+                        >
+                          <Plus size={11} /> Upgrade Rank (1 SP)
+                        </button>
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    {/* Class Combat Abilities */}
+                    <div className="bg-neutral-900/60 p-5 rounded-xl border border-cyan-500/30 flex flex-col gap-4">
+                      <div className="flex flex-wrap justify-between items-center gap-2">
+                        <h4 className="text-sm font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
+                          <Zap size={16} /> Class Combat Abilities & Upgrades
+                        </h4>
+                        <span className="text-xs text-neutral-400">Class: {playerClass.toUpperCase()}</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="flex items-center gap-1"><Keyboard size={12} className="text-amber-400" /> Click "Bind Key" on any ability to bind</span>
+                        <span className="flex items-center gap-1"><GripVertical size={12} className="text-cyan-400" /> Or drag onto action bars</span>
+                        <span className="flex items-center gap-1"><Plus size={12} className="text-emerald-400" /> Spend Skill Points to raise ability rank</span>
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                        {abilitiesForClass(playerClass).map(ability => renderAbilityCard(ability, 'cyan'))}
+                      </div>
+                    </div>
+
+                    {/* Elemental Magic & Wizard Staff Spells */}
+                    <div className="bg-neutral-900/60 p-5 rounded-xl border border-amber-500/30 flex flex-col gap-4">
+                      <div className="flex flex-wrap justify-between items-center gap-2">
+                        <h4 className="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                          <Flame size={16} /> Elemental Magic & Staff Spells
+                        </h4>
+                        <span className={`text-xs px-2.5 py-0.5 rounded-full border ${hasStaff ? 'bg-amber-950/80 text-amber-300 border-amber-500/40' : 'bg-neutral-950 text-neutral-400 border-neutral-800'}`}>
+                          {hasStaff ? '⚡ Wizard Staff Wielded' : 'Staff or Magic Required'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="flex items-center gap-1"><Sparkles size={12} className="text-amber-400" /> Elemental magic channelable with Wizard Staffs</span>
+                        <span className="flex items-center gap-1"><Keyboard size={12} className="text-amber-400" /> Keybindable directly or placeable on action bars</span>
+                        <span className="flex items-center gap-1"><Crosshair size={12} className="text-cyan-400" /> Casts towards cursor direction</span>
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                        {elementalMagicAbilities().map(ability => renderAbilityCard(ability, 'amber'))}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
 
             </div>
           )}

@@ -378,34 +378,43 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
         )}
 
         {/* Party Member Frames */}
-        {members.map(member => {
-          const isSelf = member.id === currentUserId || member.name === 'You' || member.id === 'self' || (Boolean(currentUserName) && member.name === currentUserName);
-          const rawHp = isSelf && currentHealth !== undefined ? currentHealth : member.hp;
-          const rawMaxHp = isSelf && maxHealth !== undefined ? maxHealth : member.maxHp;
-          const rawMana = isSelf && currentMana !== undefined ? currentMana : member.mana;
-          const rawMaxMana = isSelf && maxMana !== undefined ? maxMana : member.maxMana;
+        {(() => {
+          const seenMemberKeys = new Set<string>();
+          const uniqueMembers = members.filter((m, i) => {
+            const key = m.id || `idx-${i}`;
+            if (seenMemberKeys.has(key)) return false;
+            seenMemberKeys.add(key);
+            return true;
+          });
 
-          const hp = Math.max(0, Math.round(rawHp ?? 0));
-          const memberMaxHp = Math.max(1, Math.round(rawMaxHp ?? 20));
-          const hpPercent = Math.max(0, Math.min(100, Math.floor((hp / memberMaxHp) * 100)));
+          return uniqueMembers.map((member, memberIdx) => {
+            const isSelf = member.id === currentUserId || member.name === 'You' || member.id === 'self' || (Boolean(currentUserName) && member.name === currentUserName);
+            const rawHp = isSelf && currentHealth !== undefined ? currentHealth : member.hp;
+            const rawMaxHp = isSelf && maxHealth !== undefined ? maxHealth : member.maxHp;
+            const rawMana = isSelf && currentMana !== undefined ? currentMana : member.mana;
+            const rawMaxMana = isSelf && maxMana !== undefined ? maxMana : member.maxMana;
 
-          const mana = Math.max(0, Math.round(rawMana ?? 100));
-          const memberMaxMana = Math.max(1, Math.round(rawMaxMana ?? 100));
-          const manaPercent = Math.max(0, Math.min(100, Math.floor((mana / memberMaxMana) * 100)));
+            const hp = Math.max(0, Math.round(rawHp ?? 0));
+            const memberMaxHp = Math.max(1, Math.round(rawMaxHp ?? 20));
+            const hpPercent = Math.max(0, Math.min(100, Math.floor((hp / memberMaxHp) * 100)));
 
-          // Distance calculation if playerPos exists
-          let distanceStr = '';
-          if (playerPos && member.x !== undefined && member.y !== undefined && !isSelf) {
-            const dx = member.x - playerPos.x;
-            const dy = member.y - playerPos.y;
-            const dist = Math.round(Math.sqrt(dx * dx + dy * dy));
-            distanceStr = `${dist}m`;
-          }
+            const mana = Math.max(0, Math.round(rawMana ?? 100));
+            const memberMaxMana = Math.max(1, Math.round(rawMaxMana ?? 100));
+            const manaPercent = Math.max(0, Math.min(100, Math.floor((mana / memberMaxMana) * 100)));
 
-          return (
-            <div
-              key={member.id}
-              className={`relative bg-neutral-950/90 backdrop-blur-md p-2 rounded-xl border transition-all shadow-md ${
+            // Distance calculation if playerPos exists
+            let distanceStr = '';
+            if (playerPos && member.x !== undefined && member.y !== undefined && !isSelf) {
+              const dx = member.x - playerPos.x;
+              const dy = member.y - playerPos.y;
+              const dist = Math.round(Math.sqrt(dx * dx + dy * dy));
+              distanceStr = `${dist}m`;
+            }
+
+            return (
+              <div
+                key={member.id || `member-${memberIdx}`}
+                className={`relative bg-neutral-950/90 backdrop-blur-md p-2 rounded-xl border transition-all shadow-md ${
                 hpPercent <= 25 
                   ? 'border-rose-500/60 shadow-[0_0_10px_rgba(244,63,94,0.2)]' 
                   : 'border-white/10 hover:border-white/20'
@@ -527,7 +536,8 @@ export const HUDPartyOverlay: React.FC<HUDPartyOverlayProps> = ({
               )}
             </div>
           );
-        })}
+        });
+      })()}
 
         {/* Party Settings & Loot Rules Menu */}
         {showPartySettings && (

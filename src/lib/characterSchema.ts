@@ -14,7 +14,7 @@
  */
 
 import { BlockType } from './constants';
-import type { EnchantmentData, SocketedGems } from './enchanting';
+import type { EnchantmentData, SocketedGems, CursedAffix, EnchantmentPrefix, GemType } from './enchanting';
 
 /** Bumped whenever the stored document shape changes in a breaking way. */
 export const CHARACTER_SCHEMA_VERSION = 2;
@@ -27,6 +27,11 @@ export interface InventorySlotData {
   abilityId?: string;
   enchantment?: EnchantmentData;
   sockets?: SocketedGems;
+  curse?: CursedAffix;
+  prefix?: EnchantmentPrefix;
+  enchantLevel?: number;
+  gem1?: GemType | null;
+  gem2?: GemType | null;
 }
 
 /**

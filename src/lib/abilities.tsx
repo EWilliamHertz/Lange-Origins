@@ -12,7 +12,7 @@
  */
 
 import React from 'react';
-import { Activity, Crosshair, FastForward, Flame, Heart, Snowflake, Sword, Tent, Wind } from 'lucide-react';
+import { Activity, Crosshair, FastForward, Flame, Heart, Snowflake, Sword, Tent, Wind, Sparkles } from 'lucide-react';
 import { ABILITY_SLOT_TYPE, isAbilitySlot, type AbilitySlotData, type Slot } from './characterSchema';
 
 export { isAbilitySlot, ABILITY_SLOT_TYPE };
@@ -46,7 +46,6 @@ export const CLASS_STAT: Readonly<Record<PlayerClass, AbilityStat>> = {
 export const MMO_ABILITIES: readonly AbilityDef[] = [
   { id: 'ground_slam', class: 'warrior', name: 'Ground Slam', desc: 'Slam the ground to damage enemies.', req: 8, cost: 20, cd: 12, icon: <Activity size={24}/> },
   { id: 'battle_shout', class: 'warrior', name: 'Battle Shout', desc: 'Heal yourself slightly and buff.', req: 10, cost: 25, cd: 20, icon: <Heart size={24} className="text-red-500" /> },
-  { id: 'arcane_blast', class: 'mage', name: 'Arcane Blast', desc: 'A huge blast of magic energy.', req: 8, cost: 30, cd: 15, needsTarget: true, icon: <Activity size={24} className="text-purple-500"/> },
   { id: 'teleport', class: 'mage', name: 'Teleport', desc: 'Instantly travel a short distance.', req: 10, cost: 25, cd: 12, icon: <FastForward size={24} className="text-cyan-500"/> },
   { id: 'multishot', class: 'archer', name: 'Multishot', desc: 'Fire multiple arrows at once.', req: 8, cost: 25, cd: 8, icon: <Crosshair size={24} className="text-yellow-500"/> },
   { id: 'poison_arrow', class: 'archer', name: 'Poison Arrow', desc: 'Fire a toxic arrow.', req: 10, cost: 20, cd: 10, needsTarget: true, icon: <Crosshair size={24} className="text-green-500"/> },
@@ -54,13 +53,24 @@ export const MMO_ABILITIES: readonly AbilityDef[] = [
   { id: 'slash', class: 'warrior', name: 'Slash', desc: 'Melee attack dealing standard physical damage.', req: 0, cost: 0, cd: 3, icon: <Sword size={24}/> },
   { id: 'whirlwind', class: 'warrior', name: 'Whirlwind', desc: 'Spinning attack damaging all nearby enemies.', req: 3, cost: 15, cd: 8, icon: <Wind size={24}/> },
   { id: 'dash', class: 'warrior', name: 'Dash', desc: 'Lunge forward quickly.', req: 5, cost: 10, cd: 5, icon: <FastForward size={24}/> },
-  { id: 'fireball', class: 'mage', name: 'Fireball', desc: 'Shoot a flaming projectile.', req: 0, cost: 10, cd: 5, needsTarget: true, icon: <Flame size={24}/> },
-  { id: 'frostbolt', class: 'mage', name: 'Frostbolt', desc: 'Launch ice that slows enemies.', req: 3, cost: 15, cd: 6, needsTarget: true, icon: <Snowflake size={24}/> },
+  { id: 'fireball', class: 'mage', name: 'Fireball', desc: 'Shoot an explosive flaming projectile in your aimed direction.', req: 0, cost: 10, cd: 4, needsTarget: false, icon: <Flame size={24}/> },
+  { id: 'frostbolt', class: 'mage', name: 'Frostbolt', desc: 'Launch freezing ice that slows enemies in your aimed direction.', req: 3, cost: 15, cd: 5, needsTarget: false, icon: <Snowflake size={24}/> },
+  { id: 'arcane_blast', class: 'mage', name: 'Arcane Blast', desc: 'Devastating blast of raw arcane force in your aimed direction.', req: 6, cost: 22, cd: 6, needsTarget: false, icon: <Sparkles size={24} className="text-purple-400"/> },
   { id: 'heal', class: 'mage', name: 'Heal', desc: 'Restore 20 HP.', req: 5, cost: 20, cd: 10, icon: <Heart size={24}/> },
   { id: 'shoot', class: 'archer', name: 'Shoot', desc: 'Fire a fast arrow.', req: 0, cost: 0, cd: 2, icon: <Crosshair size={24}/> },
   { id: 'snipe', class: 'archer', name: 'Snipe', desc: 'A devastating heavy shot.', req: 3, cost: 20, cd: 10, needsTarget: true, icon: <Crosshair size={24} className="text-red-500" /> },
   { id: 'trap', class: 'archer', name: 'Trap', desc: 'Place a trap that damages enemies.', req: 5, cost: 15, cd: 15, icon: <Tent size={24}/> },
 ];
+
+export const ELEMENTAL_MAGIC_IDS: readonly string[] = ['fireball', 'frostbolt', 'arcane_blast'];
+
+export function isElementalAbility(id: string): boolean {
+  return ELEMENTAL_MAGIC_IDS.includes(id);
+}
+
+export function elementalMagicAbilities(): AbilityDef[] {
+  return MMO_ABILITIES.filter(a => ELEMENTAL_MAGIC_IDS.includes(a.id));
+}
 
 const ABILITY_BY_ID: ReadonlyMap<string, AbilityDef> = new Map(MMO_ABILITIES.map(a => [a.id, a]));
 
@@ -80,13 +90,20 @@ export function abilitiesForClass(playerClass: string | undefined): AbilityDef[]
   return MMO_ABILITIES.filter(a => a.class === playerClass);
 }
 
-/** An ability is unlocked once its class stat meets the requirement. */
+/** An ability is unlocked once its class stat meets the requirement, or if req is 0. */
 export function isAbilityUnlocked(
   def: AbilityDef,
   skills: Partial<Record<AbilityStat, number>> | undefined,
+  hasStaff?: boolean,
 ): boolean {
+  if (def.req === 0) return true;
+  // If wielding a wizard staff or channeling arcane magic, elemental spells unlock at reduced requirements
+  if (hasStaff && isElementalAbility(def.id)) {
+    return true;
+  }
   return (skills?.[CLASS_STAT[def.class]] || 0) >= def.req;
 }
+
 
 // ---------------------------------------------------------------------------
 // Action-bar placement

@@ -6,11 +6,125 @@ import { auth } from '../lib/firebase';
 import { BlockType, BlockColors, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, BlockHardness, SolidBlocks } from '../lib/constants';
 const ATTACK_RANGE = 64;
 import { World, getSafeSpawnPoint } from '../lib/world';
+import {
+  CHUNK_SIZE,
+  CHUNK_COLS,
+  CHUNK_ROWS,
+  getChunkKey,
+  parseChunkKey,
+  decompressChunk,
+  applyChunkToWorld,
+  createEmptyChunkWorld
+} from '../lib/chunk';
 import { PlayerState, updatePhysics } from '../lib/physics';
 import { computeLighting, LightMap } from '../lib/lighting';
 import { Sounds } from '../lib/audio';
 import { Sprites } from '../lib/sprites';
 import { Crosshair } from 'lucide-react';
+import { InventorySlot } from '../types';
+import { getGemResonance, CURSED_AFFIXES, GemResonance, CursedAffix } from '../lib/enchanting';
+
+export interface PlayerSnapshot {
+  time: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facingRight: boolean;
+}
+
+export interface RemotePlayer {
+  id: string;
+  name?: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facingRight: boolean;
+  skin?: string;
+  race?: string;
+  playerClass?: string;
+  tool?: number | null;
+  isMining?: boolean;
+  helmet?: number | null;
+  chest?: number | null;
+  health?: number;
+  hp?: number;
+  maxHealth?: number;
+  maxHp?: number;
+  snapshots?: PlayerSnapshot[];
+  renderX?: number;
+  renderY?: number;
+  renderFacingRight?: boolean;
+  [key: string]: any;
+}
+
+function updateRemotePlayersInterpolation(otherPlayers: Record<string, RemotePlayer>, now: number) {
+  const INTERPOLATION_DELAY_MS = 80;
+  const renderTime = now - INTERPOLATION_DELAY_MS;
+
+  for (const id in otherPlayers) {
+    const other = otherPlayers[id];
+    const snaps = other.snapshots;
+
+    if (!snaps || snaps.length === 0) {
+      continue;
+    }
+
+    if (snaps.length === 1) {
+      other.renderX = snaps[0].x;
+      other.renderY = snaps[0].y;
+      other.renderFacingRight = snaps[0].facingRight;
+      other.x = other.renderX;
+      other.y = other.renderY;
+      other.facingRight = other.renderFacingRight;
+      continue;
+    }
+
+    // Find the snapshot index right after renderTime
+    let nextIdx = -1;
+    for (let i = 0; i < snaps.length; i++) {
+      if (snaps[i].time >= renderTime) {
+        nextIdx = i;
+        break;
+      }
+    }
+
+    if (nextIdx === 0) {
+      other.renderX = snaps[0].x;
+      other.renderY = snaps[0].y;
+      other.renderFacingRight = snaps[0].facingRight;
+    } else if (nextIdx === -1) {
+      const latest = snaps[snaps.length - 1];
+      const dt = Math.min((renderTime - latest.time) / 1000, 0.12);
+      const damping = Math.max(0, 1 - dt * 5);
+      other.renderX = latest.x + (latest.vx || 0) * dt * 60 * damping;
+      other.renderY = latest.y + (latest.vy || 0) * dt * 60 * damping;
+      other.renderFacingRight = latest.facingRight;
+    } else {
+      const s0 = snaps[nextIdx - 1];
+      const s1 = snaps[nextIdx];
+      const span = s1.time - s0.time;
+      const alpha = span > 0 ? Math.max(0, Math.min(1, (renderTime - s0.time) / span)) : 1;
+
+      // Detect teleport / respawn (> 250px instant jump)
+      const dx = s1.x - s0.x;
+      const dy = s1.y - s0.y;
+      if (dx * dx + dy * dy > 250 * 250) {
+        other.renderX = s1.x;
+        other.renderY = s1.y;
+      } else {
+        other.renderX = s0.x + dx * alpha;
+        other.renderY = s0.y + dy * alpha;
+      }
+      other.renderFacingRight = alpha > 0.5 ? s1.facingRight : s0.facingRight;
+    }
+
+    other.x = other.renderX;
+    other.y = other.renderY;
+    other.facingRight = other.renderFacingRight;
+  }
+}
 
 interface GameProps {
   nickname: string;
@@ -69,6 +183,12 @@ interface GameProps {
   socketRef?: React.MutableRefObject<Socket | null>;
   onNearbyPlayersChange?: (players: { id: string, name: string, level?: number, playerClass?: string }[]) => void;
   onPartyUpdate?: (party: any) => void;
+  maxHpBonus?: number;
+  speedMultiplier?: number;
+  staminaDrainMultiplier?: number;
+  onEatFood?: (itemType: BlockType) => void;
+  activeItem?: InventorySlot;
+  activeEquipment?: (InventorySlot | null)[];
 }
 
 interface Particle {
@@ -83,7 +203,7 @@ interface Particle {
 }
 
 
-export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked }: GameProps) {
+export default function Game({ nickname, characterSkin, race, playerClass, helmet, chestplate, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, sendChatMsg, onChatMessage, onBlockMined, onBlockPlaced, onInteract, onPlayerInteract, onDepthChange, onPlayerCoordsChange, onWorldPing, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onFriendRequest, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, currentParty, socketRef, onFireWeapon, currentAmmoCount, duelingOpponents, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked, maxHpBonus, speedMultiplier, staminaDrainMultiplier, onEatFood, activeItem, activeEquipment }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastReportedStaminaRef = useRef<number>(100);
@@ -113,13 +233,15 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     maxLife: number;
     type: 'slash' | 'punch' | 'magic';
     facingRight: boolean;
+    color?: string;
+    secondaryColor?: string;
   }
 
   // Ref for mutable game state to avoid re-renders
   const gameState = useRef<{
     world: World;
     player: PlayerState;
-    otherPlayers: Record<string, {x: number, y: number, vx: number, vy: number, facingRight: boolean}>;
+    otherPlayers: Record<string, RemotePlayer>;
     socket: Socket | null;
     myId: string | null;
     keys: Record<string, boolean>;
@@ -222,6 +344,11 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
   const [connected, setConnected] = useState(false);
   // Track window resize
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  
+  // Chunk-based world loading tracking
+  const loadedChunks = useRef<Set<string>>(new Set());
+  const pendingChunks = useRef<Set<string>>(new Set());
+  const lastChunkCheckTime = useRef<number>(0);
 
   // Init Socket connection
   useEffect(() => {
@@ -294,15 +421,57 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       window.location.reload();
     });
 
-    socket.on('world_wiped', (data: { world: World }) => {
-      gameState.current.world = data.world;
+    socket.on('world_wiped', (data: { world?: World, chunks?: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }> }) => {
+      loadedChunks.current.clear();
+      pendingChunks.current.clear();
+      if (data.chunks && Array.isArray(data.chunks) && data.chunks.length > 0) {
+        gameState.current.world = createEmptyChunkWorld();
+        for (const chunk of data.chunks) {
+          try {
+            const decompressed = decompressChunk(chunk.data);
+            applyChunkToWorld(gameState.current.world, chunk.cx, chunk.cy, decompressed);
+            loadedChunks.current.add(getChunkKey(chunk.cx, chunk.cy));
+          } catch (e) {
+            console.error('Failed to unpack wiped chunk:', e);
+          }
+        }
+      } else if (data.world) {
+        gameState.current.world = data.world;
+      }
       gameState.current.items = {};
       gameState.current.mobs = {};
       gameState.current.lastLightTime = 0; // Force relight
     });
 
-    socket.on('init_world', (data: { world: World, players: Record<string, any>, mobs?: Record<string, any>, protectedBlocks?: Record<string, any>, id: string, roomCreatedAt?: number }) => {
-      gameState.current.world = data.world;
+    socket.on('init_world', (data: {
+      world?: World;
+      chunks?: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }>;
+      chunkSize?: number;
+      worldWidth?: number;
+      worldHeight?: number;
+      players: Record<string, any>;
+      mobs?: Record<string, any>;
+      protectedBlocks?: Record<string, any>;
+      id: string;
+      roomCreatedAt?: number;
+    }) => {
+      loadedChunks.current.clear();
+      pendingChunks.current.clear();
+
+      if (data.chunks && Array.isArray(data.chunks) && data.chunks.length > 0) {
+        gameState.current.world = createEmptyChunkWorld();
+        for (const chunk of data.chunks) {
+          try {
+            const decompressed = decompressChunk(chunk.data);
+            applyChunkToWorld(gameState.current.world, chunk.cx, chunk.cy, decompressed);
+            loadedChunks.current.add(getChunkKey(chunk.cx, chunk.cy));
+          } catch (e) {
+            console.error('Failed to unpack initial chunk:', e);
+          }
+        }
+      } else if (data.world) {
+        gameState.current.world = data.world;
+      }
       gameState.current.myId = data.id;
       
       if (data.mobs) {
@@ -326,8 +495,8 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
         gameState.current.player.invulnerableTimer = 60; // 1s spawn grace
         gameState.current.cameraX = Math.max(0, Math.min(me.x - w / 2, WORLD_WIDTH * TILE_SIZE - w));
         gameState.current.cameraY = Math.max(0, Math.min(me.y - h / 2, WORLD_HEIGHT * TILE_SIZE - h));
-      } else if (data.world && data.world.length > 0) {
-        const safeSpawn = getSafeSpawnPoint(data.world);
+      } else if (gameState.current.world && gameState.current.world.length > 0) {
+        const safeSpawn = getSafeSpawnPoint(gameState.current.world);
         gameState.current.player.x = safeSpawn.x;
         gameState.current.player.y = safeSpawn.y;
         gameState.current.player.vx = 0;
@@ -337,9 +506,28 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
         gameState.current.cameraY = Math.max(0, Math.min(safeSpawn.y - h / 2, WORLD_HEIGHT * TILE_SIZE - h));
       }
 
-      // Populate other players
-      const others = { ...data.players };
-      delete others[data.id];
+      // Populate other players with snapshot interpolation buffer
+      const now = performance.now();
+      const others: Record<string, RemotePlayer> = {};
+      for (const pId in data.players) {
+        if (pId !== data.id) {
+          const p = data.players[pId];
+          others[pId] = {
+            ...p,
+            snapshots: [{
+              time: now,
+              x: p.x,
+              y: p.y,
+              vx: p.vx || 0,
+              vy: p.vy || 0,
+              facingRight: p.facingRight ?? true
+            }],
+            renderX: p.x,
+            renderY: p.y,
+            renderFacingRight: p.facingRight ?? true
+          };
+        }
+      }
       gameState.current.otherPlayers = others;
       propsRef.current.onNearbyPlayersChange?.(Object.values(others));
 
@@ -349,6 +537,26 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       }
       
       setConnected(true);
+    });
+
+    socket.on('chunks_data', (data: { chunks: Array<{ cx: number, cy: number, data: Uint8Array | ArrayBuffer }> }) => {
+      if (!gameState.current.world || !Array.isArray(data?.chunks)) return;
+      let appliedCount = 0;
+      for (const chunk of data.chunks) {
+        try {
+          const decompressed = decompressChunk(chunk.data);
+          applyChunkToWorld(gameState.current.world, chunk.cx, chunk.cy, decompressed);
+          const key = getChunkKey(chunk.cx, chunk.cy);
+          loadedChunks.current.add(key);
+          pendingChunks.current.delete(key);
+          appliedCount++;
+        } catch (e) {
+          console.error('Failed to unpack streamed chunk:', chunk.cx, chunk.cy, e);
+        }
+      }
+      if (appliedCount > 0) {
+        gameState.current.lastLightTime = 0; // Refresh lighting for newly loaded terrain
+      }
     });
 
     socket.on('block_protection_set', (data: { tx: number, ty: number, partyId: string, ownerName: string }) => {
@@ -370,7 +578,22 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     });
 
     socket.on('player_joined', (player: any) => {
-      gameState.current.otherPlayers[player.id] = player;
+      const now = performance.now();
+      const remoteP: RemotePlayer = {
+        ...player,
+        snapshots: [{
+          time: now,
+          x: player.x,
+          y: player.y,
+          vx: player.vx || 0,
+          vy: player.vy || 0,
+          facingRight: player.facingRight ?? true
+        }],
+        renderX: player.x,
+        renderY: player.y,
+        renderFacingRight: player.facingRight ?? true
+      };
+      gameState.current.otherPlayers[player.id] = remoteP;
       propsRef.current.onNearbyPlayersChange?.(Object.values(gameState.current.otherPlayers));
       if (propsRef.current.onChatMessage) {
         propsRef.current.onChatMessage({ sender: 'System', text: `${player.name || 'A player'} joined the game.` });
@@ -387,10 +610,44 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
     });
 
     socket.on('player_moved', (player: any) => {
-      if (gameState.current.otherPlayers[player.id]) {
-        gameState.current.otherPlayers[player.id] = player;
+      if (!player || !player.id) return;
+      const now = performance.now();
+      const snap: PlayerSnapshot = {
+        time: now,
+        x: player.x,
+        y: player.y,
+        vx: typeof player.vx === 'number' ? player.vx : 0,
+        vy: typeof player.vy === 'number' ? player.vy : 0,
+        facingRight: player.facingRight ?? true
+      };
+
+      const existing = gameState.current.otherPlayers[player.id];
+      if (existing) {
+        Object.assign(existing, player);
+        if (!existing.snapshots) existing.snapshots = [];
+        existing.snapshots.push(snap);
+        const cutoff = now - 1500;
+        while (existing.snapshots.length > 2 && existing.snapshots[0].time < cutoff) {
+          existing.snapshots.shift();
+        }
       } else {
-        gameState.current.otherPlayers[player.id] = player;
+        const remoteP: RemotePlayer = {
+          ...player,
+          snapshots: [snap],
+          renderX: player.x,
+          renderY: player.y,
+          renderFacingRight: player.facingRight ?? true
+        };
+        gameState.current.otherPlayers[player.id] = remoteP;
+      }
+    });
+
+    socket.on('player_mount_updated', (data: { playerId: string, mounted: boolean, mountedMobId?: string | null, mountType?: 'wolf' | 'minecart' }) => {
+      const p = gameState.current.otherPlayers[data.playerId];
+      if (p) {
+        (p as any).mounted = data.mounted;
+        (p as any).mountedMobId = data.mountedMobId;
+        (p as any).mountType = data.mountType || 'wolf';
       }
     });
 
@@ -502,6 +759,61 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
        }
     });
 
+    socket.on('spell_environment_effect', (data: { x: number, y: number, type: 'fire_burn' | 'ice_freeze' }) => {
+      const state = gameState.current;
+      if (data.type === 'fire_burn') {
+        Sounds.hit();
+        for (let i = 0; i < 16; i++) {
+          state.particles.push({
+            x: data.x + (Math.random() - 0.5) * 24,
+            y: data.y + (Math.random() - 0.5) * 24,
+            vx: (Math.random() - 0.5) * 5,
+            vy: (Math.random() - 1) * 6,
+            life: 1,
+            maxLife: 25 + Math.random() * 20,
+            color: i % 3 === 0 ? '#FF5722' : (i % 3 === 1 ? '#FFC107' : '#4E342E'),
+            size: 3 + Math.random() * 4
+          });
+        }
+        state.damageTexts.push({
+          id: Math.random().toString(),
+          x: data.x - 16,
+          y: data.y - 12,
+          text: '🔥 Burned!',
+          color: '#FF7043',
+          life: 0,
+          maxLife: 35,
+          vy: -1.2,
+          isCrit: false
+        });
+      } else if (data.type === 'ice_freeze') {
+        Sounds.waterSplashed();
+        for (let i = 0; i < 18; i++) {
+          state.particles.push({
+            x: data.x + (Math.random() - 0.5) * 28,
+            y: data.y + (Math.random() - 0.5) * 28,
+            vx: (Math.random() - 0.5) * 4,
+            vy: (Math.random() - 1) * 4,
+            life: 1,
+            maxLife: 30 + Math.random() * 20,
+            color: i % 3 === 0 ? '#00E5FF' : (i % 3 === 1 ? '#E0F7FA' : '#80DEEA'),
+            size: 3 + Math.random() * 4
+          });
+        }
+        state.damageTexts.push({
+          id: Math.random().toString(),
+          x: data.x - 16,
+          y: data.y - 12,
+          text: '❄️ Frozen!',
+          color: '#00E5FF',
+          life: 0,
+          maxLife: 35,
+          vy: -1.2,
+          isCrit: false
+        });
+      }
+    });
+
     socket.on('mobs_update', (mobs: Record<string, any>) => {
       const current = gameState.current.mobs;
       for (const id in mobs) {
@@ -563,7 +875,7 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
       gameState.current.player.grounded = false;
     });
 
-    socket.on('take_damage', (data: { damage: number, vx: number, vy: number }) => {
+    socket.on('take_damage', (data: { damage?: number, amount?: number, vx?: number, vy?: number, facingRight?: boolean }) => {
       const p = gameState.current.player;
       if (p.invulnerableTimer <= 0) {
           const hTier = propsRef.current.helmet;
@@ -571,17 +883,17 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
           const hMitig = hTier === 409 ? 0.35 : (hTier === 407 ? 0.2 : (hTier === 400 ? 0.3 : 0));
           const cMitig = cTier === 410 ? 0.45 : (cTier === 408 ? 0.25 : (cTier === 401 ? 0.35 : 0));
           const mitigation = hMitig + cMitig;
-          const finalDamage = Math.max(1, Math.floor(data.damage * (1 - mitigation)));
+          const rawDamage = data.damage ?? data.amount ?? 5;
+          const finalDamage = Math.max(1, Math.floor(rawDamage * (1 - mitigation)));
           p.health = Math.max(0, p.health - finalDamage);
           if (mitigation > 0 && propsRef.current.onArmorDamage) {
              propsRef.current.onArmorDamage();
           }
           p.invulnerableTimer = 60;
-          p.vx = data.vx;
-          p.vy = data.vy;
+          p.vx = data.vx ?? (data.facingRight ? 8 : -8);
+          p.vy = data.vy ?? -6;
       }
     });
-
     socket.on('mob_killed', (data: { mobId: string, type: string, killerId: string }) => {
       if (data.killerId === socket.id && propsRef.current.onMobKilled) {
         propsRef.current.onMobKilled(data.type);
@@ -667,10 +979,10 @@ export default function Game({ nickname, characterSkin, race, playerClass, helme
   }, []);
 
   // Mutable refs to read latest props in game loop without restarting it
-const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked });
+const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked, maxHpBonus, speedMultiplier, staminaDrainMultiplier, onEatFood, activeItem, activeEquipment });
   useEffect(() => {
-    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked };
-  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked]);
+    propsRef.current = { nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked, maxHpBonus, speedMultiplier, staminaDrainMultiplier, onEatFood, activeItem, activeEquipment };
+  }, [nickname, currentAmmoCount, selectedBlock, roomId, userId, email, profileId, isInventoryOpen, onHealthChange, onArmorDamage, onBlockMined, onInteract, onPlayerInteract, onTradeRequest, onTradeStarted, onTradeUpdated, onTradeCompleted, onTradeCancelled, onPartyInvite, onPartyUpdate, onNearbyPlayersChange, onDepthChange, onPlayerCoordsChange, onWorldPing, onBlockPlaced, currentParty, onFireWeapon, characterSkin, race, playerClass, duelingOpponents, onDuelRequest, onDuelStarted, onChestData, onChestUpdated, helmet, chestplate, skills, mana, onManaChange, stamina, maxStamina, onStaminaChange, onToolDurabilityLoss, onMobKilled, onGiveSp, onGiveXp, onGiveLevel, keybinds, magicUnlocked, maxHpBonus, speedMultiplier, staminaDrainMultiplier, onEatFood, activeItem, activeEquipment]);
 
   // Send chat messages when props change
   useEffect(() => {
@@ -719,6 +1031,8 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         targetId: state.targetId || undefined,
         targetType: state.targetType || undefined,
         facingRight: state.player.facingRight,
+        mouseX: state.cameraX + state.mouseX,
+        mouseY: state.cameraY + state.mouseY,
       });
       state.globalCooldown = GLOBAL_COOLDOWN_MS;
       state.abilityCooldowns[def.id] = def.cd * 1000;
@@ -757,6 +1071,46 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            propsRef.current.onPlayerInteract(hoveredPlayer.id, hoveredPlayer.name);
         }
       }
+      if (key === 'f' && !e.repeat && !propsRef.current.isInventoryOpen) {
+        const p = gameState.current.player;
+        if (p.mounted) {
+          p.mounted = false;
+          p.mountType = undefined;
+          p.mountedMobId = undefined;
+          Sounds.wolfHowl();
+          if (gameState.current.socket) {
+            gameState.current.socket.emit('mount_mob', { isMounting: false });
+          }
+        } else {
+          let targetWolf: any = null;
+          let minDist = 100;
+          for (const mob of Object.values(gameState.current.mobs)) {
+            if ((mob as any).type === 'giant_wolf' || (mob as any).type === 'wolf') {
+              const dist = Math.hypot((mob as any).x - p.x, (mob as any).y - p.y);
+              if (dist < minDist) {
+                minDist = dist;
+                targetWolf = mob;
+              }
+            }
+          }
+          if (targetWolf) {
+            p.mounted = true;
+            p.mountType = 'wolf';
+            p.mountedMobId = targetWolf.id;
+            Sounds.wolfHowl();
+            if (gameState.current.socket) {
+              gameState.current.socket.emit('mount_mob', { mobId: targetWolf.id, isMounting: true, mountType: 'wolf' });
+            }
+          } else if (p.isOnRail) {
+            p.mounted = true;
+            p.mountType = 'minecart';
+            Sounds.railClick();
+            if (gameState.current.socket) {
+              gameState.current.socket.emit('mount_mob', { isMounting: true, mountType: 'minecart' });
+            }
+          }
+        }
+      }
       if (key === 'm') {
         gameState.current.showMap = !gameState.current.showMap;
       }
@@ -776,8 +1130,10 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       const mx = x + gameState.current.cameraX;
       const my = y + gameState.current.cameraY;
       for (const [id, other] of Object.entries(gameState.current.otherPlayers)) {
-        const px = (other as any).x - (TILE_SIZE * 0.8) / 2;
-        const py = (other as any).y - (TILE_SIZE * 1.8) / 2;
+        const ox = (other as any).renderX ?? (other as any).x;
+        const oy = (other as any).renderY ?? (other as any).y;
+        const px = ox - (TILE_SIZE * 0.8) / 2;
+        const py = oy - (TILE_SIZE * 1.8) / 2;
         if (mx >= px && mx <= px + TILE_SIZE * 0.8 && my >= py && my <= py + TILE_SIZE * 1.8) {
           return { id, name: (other as any).name || id.substring(0, 4) };
         }
@@ -888,6 +1244,65 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       const state = gameState.current;
       const { player, world } = state;
       
+      // True Snapshot Interpolation for remote players (eliminates jitter and rubber-banding)
+      updateRemotePlayersInterpolation(state.otherPlayers, performance.now());
+
+      // Dynamic Chunk-Based World Streaming
+      const nowMs = performance.now();
+      if (nowMs - lastChunkCheckTime.current > 150 && state.socket && state.world && state.world.length > 0) {
+        lastChunkCheckTime.current = nowMs;
+        const w = dimensions.width || canvasRef.current?.width || 800;
+        const h = dimensions.height || canvasRef.current?.height || 600;
+        const camX = state.cameraX;
+        const camY = state.cameraY;
+        const chunkSizePx = CHUNK_SIZE * TILE_SIZE; // 32 * 32 = 1024px
+
+        const minCx = Math.max(0, Math.floor((camX - 256) / chunkSizePx) - 1);
+        const maxCx = Math.min(CHUNK_COLS - 1, Math.floor((camX + w + 256) / chunkSizePx) + 1);
+        const minCy = Math.max(0, Math.floor((camY - 256) / chunkSizePx) - 1);
+        const maxCy = Math.min(CHUNK_ROWS - 1, Math.floor((camY + h + 256) / chunkSizePx) + 1);
+
+        const needed: Array<{ cx: number, cy: number }> = [];
+        for (let cx = minCx; cx <= maxCx; cx++) {
+          for (let cy = minCy; cy <= maxCy; cy++) {
+            const key = getChunkKey(cx, cy);
+            if (!loadedChunks.current.has(key) && !pendingChunks.current.has(key)) {
+              needed.push({ cx, cy });
+              pendingChunks.current.add(key);
+            }
+          }
+        }
+
+        if (needed.length > 0) {
+          state.socket.emit('request_chunks', { chunks: needed });
+        }
+
+        // Memory cleanup: unload chunks farther than 7 horizontal or 5 vertical chunks away
+        if (loadedChunks.current.size > 120) {
+          const pCx = Math.floor(state.player.x / chunkSizePx);
+          const pCy = Math.floor(state.player.y / chunkSizePx);
+          for (const key of loadedChunks.current) {
+            const coord = parseChunkKey(key);
+            if (Math.abs(coord.cx - pCx) > 7 || Math.abs(coord.cy - pCy) > 5) {
+              loadedChunks.current.delete(key);
+              const sX = coord.cx * CHUNK_SIZE;
+              const sY = coord.cy * CHUNK_SIZE;
+              for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+                const gx = sX + lx;
+                if (state.world[gx]) {
+                  for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+                    const gy = sY + ly;
+                    if (gy < WORLD_HEIGHT) {
+                      state.world[gx][gy] = BlockType.Air;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       // Zero keys if inventory is open
       const keysToUse = propsRef.current.isInventoryOpen ? {} : state.keys;
 
@@ -898,9 +1313,23 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       
       // Update Physics
       if (world.length > 0 && !propsRef.current.isInventoryOpen) {
-        const oldX = player.x;
+   const oldX = player.x;
         const oldY = player.y;
         updatePhysics(player, world, keysToUse, propsRef.current.skills?.dexterity || 0);
+
+        // BULLETPROOF SANITIZATION: Catch NaN propagation and out-of-bounds ejections
+        if (isNaN(player.x) || isNaN(player.y) || isNaN(player.vx) || isNaN(player.vy)) {
+            player.x = oldX || 100;
+            player.y = oldY || 100;
+            player.vx = 0;
+            player.vy = 0;
+        }
+
+        // World Boundaries: Prevent flying into the sky or walking off the map
+        if (player.x < 0) { player.x = 0; player.vx = 0; }
+        if (player.x > WORLD_WIDTH * TILE_SIZE - player.width) { player.x = WORLD_WIDTH * TILE_SIZE - player.width; player.vx = 0; }
+        if (player.y < 0) { player.y = 0; player.vy = 0; } 
+        if (player.y > WORLD_HEIGHT * TILE_SIZE + 100) { player.health = 0; } // Kill if fallen into the void
 
         // Sprint dust particles
         if (player.isSprinting && player.grounded && Math.abs(player.vx) > 0.4 && Math.random() < 0.35) {
@@ -1211,9 +1640,46 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       };
 
       if (!propsRef.current.isInventoryOpen && state.rightMouseDown && inBounds && state.interactionCooldown <= 0) {
-        if (dist <= MAX_REACH) {
+        const selected = propsRef.current.selectedBlock;
+        
+        if (
+          // Culinary Food Consumption on Right Click
+          selected === BlockType.HeartyStew || 
+          selected === BlockType.ArcaneBroth || 
+          selected === BlockType.HuntersRoast || 
+          selected === BlockType.IronhideGoulash || 
+          selected === BlockType.CookedMeat || 
+          selected === BlockType.Carrot || 
+          selected === BlockType.Apple
+        ) {
+          if (propsRef.current.onEatFood) {
+            propsRef.current.onEatFood(selected);
+            Sounds.eat();
+            state.interactionCooldown = 350;
+          }
+        } else if ((selected === BlockType.WolfSaddle || selected === BlockType.Bone || selected === BlockType.RawMeat)) {
+          let tamedAny = false;
+          for (const mob of Object.values(state.mobs)) {
+            if ((mob as any).type === 'wolf' || (mob as any).type === 'giant_wolf') {
+              const mobDist = Math.hypot((mob as any).x - (state.mouseX + state.cameraX), (mob as any).y - (state.mouseY + state.cameraY));
+              if (mobDist < 48) {
+                state.socket?.emit('tame_mob', { mobId: (mob as any).id, saddle: selected === BlockType.WolfSaddle });
+                Sounds.wolfHowl();
+                state.interactionCooldown = 350;
+                tamedAny = true;
+                break;
+              }
+            }
+          }
+          if (!tamedAny && dist <= MAX_REACH) {
+            const currentBlock = world[targetTx][targetTy];
+            if (currentBlock !== BlockType.Air && propsRef.current.onInteract) {
+              propsRef.current.onInteract(currentBlock, targetTx, targetTy);
+              state.interactionCooldown = 300;
+            }
+          }
+        } else if (dist <= MAX_REACH) {
           const currentBlock = world[targetTx][targetTy];
-          const selected = propsRef.current.selectedBlock;
           
           if (selected === BlockType.TreeSeed) {
              tryPlantTree(targetTx, targetTy);
@@ -1309,7 +1775,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
             }
         }
         
-        if ((isGun || isBow || isGrenade || isStaff) && state.interactionCooldown <= 0 && state.socket) {
+        if ((isGun || isBow || isGrenade) && state.interactionCooldown <= 0 && state.socket) {
              if ((propsRef.current.currentAmmoCount || 0) <= 0) {
                  state.interactionCooldown = 500;
                  state.damageTexts.push({ id: Math.random().toString(), text: 'No Ammo!', x: player.x, y: player.y - 15, life: 1, maxLife: 40, color: '#FF3333', size: 14 });
@@ -1320,34 +1786,19 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                  const speed = isGun ? 25 : (isBow ? 15 : 10);
                  const vx = (dx / mDist) * speed;
                  const vy = (dy / mDist) * speed;
-                 const type = isGun ? 'bullet' : (isBow ? 'arrow' : (isStaff ? 'fireball' : 'grenade'));
+                 const type = isGun ? 'bullet' : (isBow ? 'arrow' : 'grenade');
                  
-                 const baseProjDmg = type === 'bullet' ? 15 : (type === 'arrow' ? 8 : (type === 'fireball' ? 30 : 20));
-                 const bonusProjDmg = (isGun || isBow || isGrenade) ? (propsRef.current.skills?.dexterity || 0) * 2 : (propsRef.current.skills?.intelligence || 0) * 3;
+                 const baseProjDmg = type === 'bullet' ? 15 : (type === 'arrow' ? 8 : 20);
+                 const bonusProjDmg = (propsRef.current.skills?.dexterity || 0) * 2;
                  const projDamage = baseProjDmg + bonusProjDmg;
                  
-                 if (isStaff) {
-                     // Requires mana check in parent, but we will send mana decrease event
-                     if ((propsRef.current.mana || 0) < 10) {
-                        state.interactionCooldown = 500;
-                        state.damageTexts.push({ id: Math.random().toString(), text: 'No Mana!', x: player.x, y: player.y - 15, life: 1, maxLife: 40, color: '#4444FF', size: 14 });
-                     } else {
-                         state.socket.emit('fire_projectile', { type, x: player.x, y: player.y - 12, vx, vy, damage: projDamage });
-                         state.interactionCooldown = isGun ? 100 : (isBow ? 300 : (isStaff ? 250 : 400));
-                         
-                         if (propsRef.current.onFireWeapon && propsRef.current.selectedBlock !== null) {
-                             propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
-                         }
-                     }
-                 } else {
-                     state.socket.emit('fire_projectile', { type, x: player.x, y: player.y - 12, vx, vy, damage: projDamage });
-                     state.interactionCooldown = isGun ? 100 : (isBow ? 300 : (isStaff ? 250 : 400));
-                     
-                     if (propsRef.current.onFireWeapon && propsRef.current.selectedBlock !== null) {
-                         propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
-                     }
+                 state.socket.emit('fire_projectile', { type, x: player.x, y: player.y - 12, vx, vy, damage: projDamage });
+                 state.interactionCooldown = isGun ? 100 : (isBow ? 300 : 400);
+                 
+                 if (propsRef.current.onFireWeapon && propsRef.current.selectedBlock !== null) {
+                     propsRef.current.onFireWeapon(propsRef.current.selectedBlock);
                  }
-         }
+             }
          }
          else if (state.interactionCooldown <= 0) {
            const mx = state.cameraX + state.mouseX;
@@ -1364,15 +1815,17 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                  const isSword = sel === BlockType.WoodSword || sel === BlockType.StoneSword || sel === BlockType.IronSword || sel === 402 || sel === 403; // Gold/Diamond sword
                  const isPickaxe = sel === BlockType.WoodPickaxe || sel === BlockType.StonePickaxe || sel === BlockType.IronPickaxe;
                  const isAxe = sel === BlockType.WoodAxe || sel === BlockType.StoneAxe || sel === BlockType.IronAxe;
+                 const isStaff = sel === BlockType.WizardStaff;
                  
-                 if (!isFist && !isSword && !isPickaxe && !isAxe) continue; // Cannot fight with this item
+                 if (!isFist && !isSword && !isPickaxe && !isAxe && !isStaff) continue; // Cannot fight with this item
                  
                  if (state.socket) {
                     const baseDmg = isSword ? (sel === BlockType.IronSword ? 8 : 5)
                              : isAxe ? (sel === BlockType.IronAxe ? 6 : 4)
                              : isPickaxe ? (sel === BlockType.IronPickaxe ? 5 : 3)
+                             : isStaff ? 6
                              : 1;
-                    const dmg = baseDmg + (propsRef.current.skills?.strength || 0) * 2;
+                    const dmg = baseDmg + (isStaff ? (propsRef.current.skills?.intelligence || 0) * 2 : (propsRef.current.skills?.strength || 0) * 2);
                     const isCrit = Math.random() < 0.15;
                     const finalDmg = isCrit ? dmg * 2 : dmg;
                     state.socket.emit('hit_mob', { mobId, damage: finalDmg, facingRight: player.x < mob.x, playerId: state.socket.id });
@@ -1875,6 +2328,51 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
                    ctx.fillStyle = grad;
                    ctx.fillRect(cx - TILE_SIZE * 3, cy - TILE_SIZE * 3, TILE_SIZE * 6, TILE_SIZE * 6);
                }
+
+               if (block === BlockType.Campfire) {
+                   const cx = x * TILE_SIZE + TILE_SIZE / 2;
+                   const cy = y * TILE_SIZE + TILE_SIZE / 2;
+                   const bx = x * TILE_SIZE;
+                   const by = y * TILE_SIZE;
+                   ctx.fillStyle = '#424242';
+                   ctx.fillRect(bx + 2, by + TILE_SIZE - 5, TILE_SIZE - 4, 5);
+                   ctx.fillStyle = '#5D4037';
+                   ctx.fillRect(bx + 4, by + TILE_SIZE - 9, TILE_SIZE - 8, 4);
+                   const flicker = Math.sin(timestamp * 0.02 + x) * 2;
+                   ctx.fillStyle = '#FF7043';
+                   ctx.beginPath();
+                   ctx.moveTo(bx + 4, by + TILE_SIZE - 7);
+                   ctx.lineTo(cx, by + 3 + flicker);
+                   ctx.lineTo(bx + TILE_SIZE - 4, by + TILE_SIZE - 7);
+                   ctx.fill();
+                   ctx.fillStyle = '#FFEB3B';
+                   ctx.beginPath();
+                   ctx.moveTo(bx + 7, by + TILE_SIZE - 7);
+                   ctx.lineTo(cx, by + 6 + flicker * 0.6);
+                   ctx.lineTo(bx + TILE_SIZE - 7, by + TILE_SIZE - 7);
+                   ctx.fill();
+
+                   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, TILE_SIZE * 4);
+                   grad.addColorStop(0, 'rgba(255, 140, 20, 0.45)');
+                   grad.addColorStop(1, 'rgba(255, 100, 0, 0)');
+                   ctx.fillStyle = grad;
+                   ctx.fillRect(cx - TILE_SIZE * 4, cy - TILE_SIZE * 4, TILE_SIZE * 8, TILE_SIZE * 8);
+               }
+
+               if (block === BlockType.MinecartTrack) {
+                   const bx = x * TILE_SIZE;
+                   const by = y * TILE_SIZE;
+                   ctx.fillStyle = '#4E342E';
+                   ctx.fillRect(bx + 2, by + TILE_SIZE - 3, 4, 3);
+                   ctx.fillRect(bx + 10, by + TILE_SIZE - 3, 4, 3);
+                   ctx.fillRect(bx + 18, by + TILE_SIZE - 3, 4, 3);
+                   ctx.fillRect(bx + 26, by + TILE_SIZE - 3, 4, 3);
+                   ctx.fillStyle = '#78909C';
+                   ctx.fillRect(bx, by + TILE_SIZE - 6, TILE_SIZE, 2);
+                   ctx.fillRect(bx, by + TILE_SIZE - 2, TILE_SIZE, 1);
+                   ctx.fillStyle = '#ECEFF1';
+                   ctx.fillRect(bx, by + TILE_SIZE - 6, TILE_SIZE, 1);
+               }
              }
              // Apply darkness overlay
 
@@ -1999,7 +2497,9 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         maxHp: number = 20,
         currentStamina?: number,
         maxStaminaVal?: number,
-        isSprinting?: boolean
+        isSprinting?: boolean,
+        isMounted?: boolean,
+        mountType?: 'wolf' | 'minecart'
       ) => {
 
         const pWidth = player.width;
@@ -2286,32 +2786,111 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           ctx.fillStyle = '#FFFFFF';
           ctx.fillText(displayName, nameCenterX, nameY);
         }
+
+        // Mount Visualization (Wolf Mount or Minecart)
+        if (isMounted) {
+          ctx.save();
+          if (mountType === 'wolf') {
+            const gallop = Math.sin(timestamp * 0.025 * Math.max(1, Math.abs(pVx))) * 3.5;
+            const wolfCenterX = pX + pWidth / 2;
+            const wolfCenterY = pY + pHeight - 4;
+
+            // Body
+            ctx.fillStyle = '#90A4AE';
+            ctx.fillRect(wolfCenterX - 18, wolfCenterY - 8 + gallop * 0.3, 36, 14);
+            ctx.fillStyle = '#ECEFF1';
+            ctx.fillRect(wolfCenterX - 16, wolfCenterY - 2 + gallop * 0.3, 32, 6);
+
+            // Saddle & Stirrup
+            ctx.fillStyle = '#B71C1C';
+            ctx.fillRect(wolfCenterX - 9, wolfCenterY - 9 + gallop * 0.3, 18, 5);
+            ctx.fillStyle = '#FFD54F';
+            ctx.fillRect(wolfCenterX - 2, wolfCenterY - 4 + gallop * 0.3, 4, 6);
+
+            // Legs
+            ctx.fillStyle = '#78909C';
+            const legWalk = isMoving ? Math.sin(timestamp * 0.025) * 5 : 0;
+            ctx.fillRect(wolfCenterX - 14, wolfCenterY + 4, 4, 10 + legWalk);
+            ctx.fillRect(wolfCenterX - 7, wolfCenterY + 4, 4, 10 - legWalk);
+            ctx.fillRect(wolfCenterX + 5, wolfCenterY + 4, 4, 10 - legWalk);
+            ctx.fillRect(wolfCenterX + 12, wolfCenterY + 4, 4, 10 + legWalk);
+
+            // Head & Ears
+            const headX = facingRight ? wolfCenterX + 12 : wolfCenterX - 24;
+            ctx.fillStyle = '#90A4AE';
+            ctx.fillRect(headX, wolfCenterY - 15 + gallop * 0.4, 12, 12);
+            ctx.fillStyle = '#546E7A';
+            ctx.beginPath();
+            ctx.moveTo(headX + 2, wolfCenterY - 15 + gallop * 0.4);
+            ctx.lineTo(headX + 5, wolfCenterY - 21 + gallop * 0.4);
+            ctx.lineTo(headX + 9, wolfCenterY - 15 + gallop * 0.4);
+            ctx.fill();
+
+            // Snout & Nose
+            ctx.fillStyle = '#CFD8DC';
+            ctx.fillRect(facingRight ? headX + 9 : headX - 5, wolfCenterY - 10 + gallop * 0.4, 6, 6);
+            ctx.fillStyle = '#263238';
+            ctx.fillRect(facingRight ? headX + 13 : headX - 5, wolfCenterY - 10 + gallop * 0.4, 2, 3);
+            // Amber eye
+            ctx.fillStyle = '#FFD54F';
+            ctx.fillRect(facingRight ? headX + 7 : headX + 3, wolfCenterY - 13 + gallop * 0.4, 2.5, 2.5);
+
+            // Tail
+            ctx.fillStyle = '#78909C';
+            const tailX = facingRight ? wolfCenterX - 22 : wolfCenterX + 18;
+            ctx.fillRect(tailX, wolfCenterY - 9 - gallop * 0.5, 5, 10);
+          } else if (mountType === 'minecart') {
+            const cartX = pX + pWidth / 2 - 17;
+            const cartY = pY + pHeight - 11;
+            ctx.fillStyle = '#455A64';
+            ctx.fillRect(cartX, cartY, 34, 13);
+            ctx.fillStyle = '#37474F';
+            ctx.fillRect(cartX + 2, cartY + 2, 30, 9);
+            ctx.fillStyle = '#78909C';
+            ctx.fillRect(cartX - 1, cartY - 1, 36, 3);
+            // Wheels
+            ctx.fillStyle = '#263238';
+            ctx.beginPath();
+            ctx.arc(cartX + 7, cartY + 13, 4, 0, Math.PI * 2);
+            ctx.arc(cartX + 27, cartY + 13, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ECEFF1';
+            ctx.beginPath();
+            ctx.arc(cartX + 7, cartY + 13, 1.5, 0, Math.PI * 2);
+            ctx.arc(cartX + 27, cartY + 13, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Headlamp beam
+            const lampX = facingRight ? cartX + 34 : cartX;
+            const lampY = cartY + 4;
+            const beamGrad = ctx.createRadialGradient(lampX, lampY, 2, facingRight ? lampX + 70 : lampX - 70, lampY, 90);
+            beamGrad.addColorStop(0, 'rgba(255, 235, 59, 0.45)');
+            beamGrad.addColorStop(1, 'rgba(255, 235, 59, 0)');
+            ctx.fillStyle = beamGrad;
+            ctx.beginPath();
+            ctx.moveTo(lampX, lampY - 3);
+            ctx.lineTo(facingRight ? lampX + 90 : lampX - 90, lampY - 18);
+            ctx.lineTo(facingRight ? lampX + 90 : lampX - 90, lampY + 18);
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.restore();
+        }
       };
 
-      // Draw other players
-      Object.values(state.otherPlayers).forEach((other: any) => {
-        // Interpolate or just draw at current pos
-        other.x += other.vx; // simple prediction
-        other.y += other.vy;
-        other.vy += 0.4; // simple gravity
-        other.vx *= 0.8; // dampen horizontal prediction to prevent sliding away on lag
-        // Clamp to floor for prediction (crude)
-        const topTy = Math.floor(other.y / TILE_SIZE);
-        const botTy = Math.floor((other.y + player.height) / TILE_SIZE);
-        const tx = Math.floor((other.x + player.width/2) / TILE_SIZE);
-        if (world[tx] && world[tx][botTy] && world[tx][botTy] !== BlockType.Air) {
-           other.vy = 0;
-           other.y = botTy * TILE_SIZE - player.height - 0.01;
-        }
-
+      // Draw other players with smoothed snapshot interpolation (no jitter or rubber-banding)
+      Object.values(state.otherPlayers).forEach((other: RemotePlayer) => {
         const isParty = propsRef.current.currentParty?.members?.includes(other.id);
         const otherHp = (other as any).health ?? (other as any).hp ?? 20;
         const otherMaxHp = (other as any).maxHealth ?? (other as any).maxHp ?? 20;
+        const drawX = other.renderX ?? other.x;
+        const drawY = other.renderY ?? other.y;
+        const drawFacing = other.renderFacingRight ?? other.facingRight;
         drawPlayer(
-          other.x, 
-          other.y, 
+          drawX, 
+          drawY, 
           other.vx, 
-          other.facingRight, 
+          drawFacing, 
           (other as any).skin || 'blue', 
           (other as any).name || other.id.substring(0, 4), 
           (other as any).race || 'human',
@@ -2323,7 +2902,12 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
           (other as any).chest,
           0,
           otherHp,
-          otherMaxHp
+          otherMaxHp,
+          undefined,
+          undefined,
+          (other as any).isSprinting,
+          (other as any).mounted,
+          (other as any).mountType
         );
       });
 
@@ -2447,6 +3031,11 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
       
       // Draw mobs
       Object.values(state.mobs).forEach((mob: any) => {
+         if (player.mounted && player.mountedMobId === mob.id) return;
+         for (const other of Object.values(state.otherPlayers)) {
+           if ((other as any).mounted && (other as any).mountedMobId === mob.id) return;
+         }
+
          // Smoothly interpolate towards server authoritative position
          let isWalking = false;
          if (mob.targetX !== undefined) {
@@ -2485,8 +3074,12 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
             const eyeOffset = mob.facingRight ? 14 : 4;
             ctx.fillRect(eyeOffset, -20, 4, 4);
             ctx.fillRect(eyeOffset + 6, -20, 4, 4);
-} else if (mob.type === 'wolf') {
-            ctx.fillStyle = mob.ownerId ? '#E0E0E0' : '#9E9E9E'; // Lighter if tamed
+} else if (mob.type === 'wolf' || mob.type === 'giant_wolf') {
+            const isGiant = mob.type === 'giant_wolf';
+            if (isGiant) {
+              ctx.scale(1.4, 1.4);
+            }
+            ctx.fillStyle = mob.ownerId ? '#ECEFF1' : (isGiant ? '#78909C' : '#9E9E9E');
             
             // Body
             ctx.fillRect(-8, -4, 24, 12);
@@ -2497,16 +3090,20 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
             ctx.fillRect(mob.facingRight ? 20 : -16, -8, 6, 6);
             
             // Legs
-            ctx.fillStyle = mob.ownerId ? '#BDBDBD' : '#757575';
+            ctx.fillStyle = mob.ownerId ? '#B0BEC5' : '#757575';
             ctx.fillRect(-6, 8, 4, 16 + legOffset);
             ctx.fillRect(2, 8, 4, 16 - legOffset);
             ctx.fillRect(8, 8, 4, 16 + legOffset);
             ctx.fillRect(16, 8, 4, 16 - legOffset);
 
-            // Collar if tamed
-            if (mob.ownerId) {
-                ctx.fillStyle = '#F44336';
+            // Collar / Saddle
+            if (mob.ownerId || isGiant) {
+                ctx.fillStyle = isGiant ? '#B71C1C' : '#F44336';
                 ctx.fillRect(mob.facingRight ? 12 : -12, -4, 10, 2);
+                if (isGiant) {
+                  ctx.fillStyle = '#FFD54F';
+                  ctx.fillRect(-2, -5, 12, 3);
+                }
             }
          } else if (mob.type === 'creeper') {
             ctx.fillStyle = '#2196F3'; // blue creeper
@@ -2667,7 +3264,59 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
            player.isGrappling = false;
       }
       
-      drawPlayer(player.x, player.y, player.vx, player.facingRight, propsRef.current.characterSkin || 'orange', propsRef.current.nickname || 'You', propsRef.current.race || 'human', propsRef.current.playerClass || 'warrior', selectedBlock, state.miningProgress > 0 || state.interactionCooldown > 150, false, propsRef.current.helmet || null, propsRef.current.chestplate || null, state.interactionCooldown, player.health, player.maxHealth, player.stamina, player.maxStamina, player.isSprinting);
+      drawPlayer(
+        player.x, 
+        player.y, 
+        player.vx, 
+        player.facingRight, 
+        propsRef.current.characterSkin || 'orange', 
+        propsRef.current.nickname || 'You', 
+        propsRef.current.race || 'human', 
+        propsRef.current.playerClass || 'warrior', 
+        selectedBlock, 
+        state.miningProgress > 0 || state.interactionCooldown > 150, 
+        false, 
+        propsRef.current.helmet || null, 
+        propsRef.current.chestplate || null, 
+        state.interactionCooldown, 
+        player.health, 
+        player.maxHealth, 
+        player.stamina, 
+        player.maxStamina, 
+        player.isSprinting,
+        player.mounted,
+        player.mountType
+      );
+
+      // Mount Contextual Prompt
+      if (!player.mounted) {
+        let nearbyWolf = false;
+        for (const mob of Object.values(gameState.current.mobs)) {
+          if ((mob as any).type === 'giant_wolf' || (mob as any).type === 'wolf') {
+            const d = Math.hypot((mob as any).x - player.x, (mob as any).y - player.y);
+            if (d < 90) {
+              nearbyWolf = true;
+              break;
+            }
+          }
+        }
+        if (nearbyWolf) {
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillStyle = '#FFFFFF';
+          ctx.textAlign = 'center';
+          ctx.fillText('[F] Ride Wolf Mount', player.x + player.width / 2, player.y - 24);
+        } else if (player.isOnRail) {
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillStyle = '#FFFFFF';
+          ctx.textAlign = 'center';
+          ctx.fillText('[F] Ride Minecart', player.x + player.width / 2, player.y - 24);
+        }
+      } else {
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = '#FFD54F';
+        ctx.textAlign = 'center';
+        ctx.fillText('[F] Dismount', player.x + player.width / 2, player.y - 24);
+      }
 
       // Draw block highlight outline
       if (inBounds && dist <= MAX_REACH) {
@@ -2891,7 +3540,7 @@ const propsRef = useRef({ nickname, currentAmmoCount, selectedBlock, roomId, use
         ref={canvasRef}
         width={dimensions.width}
         height={dimensions.height}
-        className="block"
+        className="absolute inset-0 block"
       />
       {(!connected || !gameState.current.world || gameState.current.world.length === 0) && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-neutral-950/85 backdrop-blur-sm select-none">

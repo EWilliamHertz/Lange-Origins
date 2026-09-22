@@ -1,6 +1,6 @@
 {
   "name": "Lange: Origins",
-  "description": "A 2D multiplayer sandbox survival game featuring gangs, trading, hostile mobs, and redstone mechanics.",
+  "description": "A 2D multiplayer sandbox survival game featuring culinary cooking with stat buffs, giant wolf mounts, minecart rail networks, gangs, and crafting.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
