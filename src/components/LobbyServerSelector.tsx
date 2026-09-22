@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Globe, Users, Wifi, ChevronRight, Sparkles, Compass } from 'lucide-react';
-import { PRESET_SERVERS, ServerRealm, ServerBrowserModal } from './ServerBrowserModal';
+import { PRESET_SERVERS, ServerRealm, ServerBrowserModal, measureServerPing, pingTone } from './ServerBrowserModal';
 
 interface LobbyServerSelectorProps {
   selectedServerId: string;
@@ -31,12 +31,17 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
             setServerList(prev =>
               prev.map(srv => ({
                 ...srv,
-                players: countMap.get(srv.id) || 0
+                players: countMap.get(srv.id) ?? 0
               }))
             );
           }
         })
         .catch(() => {});
+      // Measure real latency instead of showing a hardcoded ping.
+      void measureServerPing().then(ping => {
+        if (!mounted || ping === null) return;
+        setServerList(prev => prev.map(srv => ({ ...srv, ping })));
+      });
     };
 
     fetchCounts();
@@ -55,7 +60,7 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
       description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
       players: 0,
       maxPlayers: 20,
-      ping: 42,
+      ping: null as number | null,
       biomeTag: 'Verdant Woodlands'
     };
 
@@ -105,11 +110,11 @@ export const LobbyServerSelector: React.FC<LobbyServerSelectorProps> = ({
 
           <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs font-mono text-neutral-400">
             <span className="flex items-center gap-1">
-              <Users size={12} className="text-sky-400" /> {activeServer.players}/20 Adventurers
+              <Users size={12} className="text-sky-400" /> {activeServer.players}/{activeServer.maxPlayers} Adventurers
             </span>
-            <span className={`flex items-center gap-1 font-bold ${activeServer.ping < 40 ? 'text-emerald-400' : (activeServer.ping < 60 ? 'text-amber-400' : 'text-rose-400')}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${activeServer.ping < 40 ? 'bg-emerald-400' : (activeServer.ping < 60 ? 'bg-amber-400' : 'bg-rose-400')} animate-pulse`} />
-              <Wifi size={12} /> {activeServer.ping}ms
+            <span className={`flex items-center gap-1 font-bold ${pingTone(activeServer.ping) === 'good' ? 'text-emerald-400' : pingTone(activeServer.ping) === 'ok' ? 'text-amber-400' : pingTone(activeServer.ping) === 'bad' ? 'text-rose-400' : 'text-neutral-500'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${pingTone(activeServer.ping) === 'good' ? 'bg-emerald-400' : pingTone(activeServer.ping) === 'ok' ? 'bg-amber-400' : pingTone(activeServer.ping) === 'bad' ? 'bg-rose-400' : 'bg-neutral-500'} animate-pulse`} />
+              <Wifi size={12} /> {activeServer.ping === null ? '—' : `${activeServer.ping}ms`}
             </span>
           </div>
         </div>

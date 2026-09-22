@@ -2439,6 +2439,43 @@ let targetArray = type === 'hotbar' ? [...hotbar]
     );
   };
 
+  // Cursed Affixes & Gem Resonance calculations.
+  // NOTE: this block (and the health-clamp effect below it) MUST stay above
+  // the early returns. Every hook in this component has to run on every
+  // render — otherwise entering the game from the lobby renders more hooks
+  // than the lobby did and React throws
+  // "Rendered more hooks than during the previous render".
+  const activeHeldItem = hotbar[selectedSlotIndex];
+  const activeCurseWeapon = activeHeldItem?.curse;
+  const activeCurseArmor = equipment[1]?.curse;
+  const activeCurseHelmet = equipment[0]?.curse;
+
+  // Cursed Affixes: Glass Soul reduces max health by 35%
+  const hasGlassSoul = activeCurseWeapon === 'GlassSoul' || activeCurseArmor === 'GlassSoul' || activeCurseHelmet === 'GlassSoul';
+  // Netherweight reduces movement speed by 25%
+  const hasNetherweight = activeCurseArmor === 'Netherweight' || activeCurseHelmet === 'Netherweight';
+  // Bloodbound increases stamina drain on swings
+  const hasBloodbound = activeCurseWeapon === 'Bloodbound';
+
+  // Gem Resonance set bonuses
+  const weaponResonance = getGemResonance(activeHeldItem?.sockets || (activeHeldItem ? { slot1: activeHeldItem.gem1, slot2: activeHeldItem.gem2 } : null));
+  const chestResonance = getGemResonance(equipment[1]?.sockets || (equipment[1] ? { slot1: equipment[1].gem1, slot2: equipment[1].gem2 } : null));
+  const helmResonance = getGemResonance(equipment[0]?.sockets || (equipment[0] ? { slot1: equipment[0].gem1, slot2: equipment[0].gem2 } : null));
+
+  const totalHpBonus = (weaponResonance?.maxHpBonus || 0) + (chestResonance?.maxHpBonus || 0) + (helmResonance?.maxHpBonus || 0);
+  const totalSpeedBonus = (weaponResonance?.speedBonus || 0) + (chestResonance?.speedBonus || 0) + (helmResonance?.speedBonus || 0);
+
+  const baseCalculatedMaxHp = 20 + (skills.strength || 0) * 10;
+  const effectiveMaxHp = Math.max(10, Math.round((baseCalculatedMaxHp + totalHpBonus) * (hasGlassSoul ? 0.65 : 1.0)));
+  const calculatedSpeedMultiplier = (hasNetherweight ? 0.75 : 1.0) * (1.0 + totalSpeedBonus);
+  const calculatedStaminaDrainMult = hasBloodbound ? 1.4 : 1.0;
+
+  useEffect(() => {
+    if (appState === 'playing' && health > effectiveMaxHp) {
+      setHealth(effectiveMaxHp);
+    }
+  }, [effectiveMaxHp, health, appState]);
+
   if (appState === 'landing') {
     return (
       <LandingPage 
@@ -2775,38 +2812,6 @@ let targetArray = type === 'hotbar' ? [...hotbar]
   const helmetType = getHelmet();
   const chestplateType = getChestplate();
   const currentActiveProfile = profiles.find(p => p.id === activeProfileId);
-
-  // Cursed Affixes & Gem Resonance calculations
-  const activeHeldItem = hotbar[selectedSlotIndex];
-  const activeCurseWeapon = activeHeldItem?.curse;
-  const activeCurseArmor = equipment[1]?.curse;
-  const activeCurseHelmet = equipment[0]?.curse;
-
-  // Cursed Affixes: Glass Soul reduces max health by 35%
-  const hasGlassSoul = activeCurseWeapon === 'GlassSoul' || activeCurseArmor === 'GlassSoul' || activeCurseHelmet === 'GlassSoul';
-  // Netherweight reduces movement speed by 25%
-  const hasNetherweight = activeCurseArmor === 'Netherweight' || activeCurseHelmet === 'Netherweight';
-  // Bloodbound increases stamina drain on swings
-  const hasBloodbound = activeCurseWeapon === 'Bloodbound';
-
-  // Gem Resonance set bonuses
-  const weaponResonance = getGemResonance(activeHeldItem?.sockets || (activeHeldItem ? { slot1: activeHeldItem.gem1, slot2: activeHeldItem.gem2 } : null));
-  const chestResonance = getGemResonance(equipment[1]?.sockets || (equipment[1] ? { slot1: equipment[1].gem1, slot2: equipment[1].gem2 } : null));
-  const helmResonance = getGemResonance(equipment[0]?.sockets || (equipment[0] ? { slot1: equipment[0].gem1, slot2: equipment[0].gem2 } : null));
-
-  const totalHpBonus = (weaponResonance?.maxHpBonus || 0) + (chestResonance?.maxHpBonus || 0) + (helmResonance?.maxHpBonus || 0);
-  const totalSpeedBonus = (weaponResonance?.speedBonus || 0) + (chestResonance?.speedBonus || 0) + (helmResonance?.speedBonus || 0);
-
-  const baseCalculatedMaxHp = 20 + (skills.strength || 0) * 10;
-  const effectiveMaxHp = Math.max(10, Math.round((baseCalculatedMaxHp + totalHpBonus) * (hasGlassSoul ? 0.65 : 1.0)));
-  const calculatedSpeedMultiplier = (hasNetherweight ? 0.75 : 1.0) * (1.0 + totalSpeedBonus);
-  const calculatedStaminaDrainMult = hasBloodbound ? 1.4 : 1.0;
-
-  useEffect(() => {
-    if (health > effectiveMaxHp) {
-      setHealth(effectiveMaxHp);
-    }
-  }, [effectiveMaxHp, health]);
 
   return (
     <div className="w-full h-screen bg-neutral-900 flex flex-col overflow-hidden font-sans select-none touch-none" style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}>

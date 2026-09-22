@@ -9,7 +9,8 @@ export interface ServerRealm {
   description: string;
   players: number;
   maxPlayers: number;
-  ping: number;
+  // Measured round-trip latency in ms, or null while unknown (never faked).
+  ping: number | null;
   biomeTag?: string;
   featured?: boolean;
 }
@@ -22,7 +23,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     description: 'The primary realm with abundant wood, community trade depot, and starter quests.',
     players: 0,
     maxPlayers: 20,
-    ping: 42,
+    ping: null,
     biomeTag: 'Verdant Woodlands',
     featured: true
   },
@@ -33,7 +34,7 @@ export const PRESET_SERVERS: ServerRealm[] = [
     description: 'Expansive wild frontier with dense forests, volcanic crags, and deep crystal caverns.',
     players: 0,
     maxPlayers: 20,
-    ping: 38,
+    ping: null,
     biomeTag: 'Obsidian Caverns',
     featured: true
   },
@@ -44,11 +45,36 @@ export const PRESET_SERVERS: ServerRealm[] = [
     description: 'A serene expanse with snow-capped mountain peaks and undisturbed subterranean ruins.',
     players: 0,
     maxPlayers: 20,
-    ping: 54,
+    ping: null,
     biomeTag: 'Glacial Peaks',
     featured: false
   }
 ];
+
+/**
+ * Measures real round-trip latency to the game backend. All realms are served
+ * by this same backend, so one measurement applies to every realm. Returns
+ * null when the backend cannot be reached.
+ */
+export async function measureServerPing(): Promise<number | null> {
+  try {
+    const started = performance.now();
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    if (!res.ok) return null;
+    await res.text().catch(() => null);
+    return Math.max(1, Math.round(performance.now() - started));
+  } catch {
+    return null;
+  }
+}
+
+/** Display text + tone for a (possibly still unknown) ping value. */
+export function pingTone(ping: number | null): 'good' | 'ok' | 'bad' | 'unknown' {
+  if (ping === null) return 'unknown';
+  if (ping < 40) return 'good';
+  if (ping < 60) return 'ok';
+  return 'bad';
+}
 
 interface ServerBrowserModalProps {
   isOpen: boolean;
@@ -73,9 +99,11 @@ export const ServerBrowserModal: React.FC<ServerBrowserModalProps> = ({
   // Attempt to fetch any active rooms from backend if available
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     fetch('/api/servers')
       .then(res => res.json())
       .then(data => {
+        if (cancelled) return;
         if (data && Array.isArray(data.servers)) {
           // Merge dynamic rooms
           const dynamicMap = new Map<string, number>();
@@ -93,6 +121,14 @@ export const ServerBrowserModal: React.FC<ServerBrowserModalProps> = ({
       .catch(() => {
         // Fall back gracefully to preset servers
       });
+    // Measure real latency instead of showing a hardcoded ping.
+    void measureServerPing().then(ping => {
+      if (cancelled || ping === null) return;
+      setLiveServers(prev => prev.map(srv => ({ ...srv, ping })));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   // Escape key listener to close modal
@@ -225,8 +261,8 @@ export const ServerBrowserModal: React.FC<ServerBrowserModalProps> = ({
                       <Users size={13} className="text-sky-400" /> {srv.players}/{srv.maxPlayers} Adventurers
                     </span>
                     <span className="flex items-center gap-1">
-                      <span className={`w-1.5 h-1.5 rounded-full ${srv.ping < 40 ? 'bg-emerald-400' : (srv.ping < 60 ? 'bg-amber-400' : 'bg-rose-400')} animate-pulse`} />
-                      <Wifi size={13} className={srv.ping < 40 ? 'text-emerald-400' : 'text-amber-400'} /> {srv.ping}ms
+                      <span className={`w-1.5 h-1.5 rounded-full ${pingTone(srv.ping) === 'good' ? 'bg-emerald-400' : pingTone(srv.ping) === 'ok' ? 'bg-amber-400' : pingTone(srv.ping) === 'bad' ? 'bg-rose-400' : 'bg-neutral-500'} animate-pulse`} />
+                      <Wifi size={13} className={pingTone(srv.ping) === 'good' ? 'text-emerald-400' : pingTone(srv.ping) === 'unknown' ? 'text-neutral-500' : 'text-amber-400'} /> {srv.ping === null ? '—' : `${srv.ping}ms`}
                     </span>
                     <span className="text-neutral-500">ID: {srv.id}</span>
                   </div>
