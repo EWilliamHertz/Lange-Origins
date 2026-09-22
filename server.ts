@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import { Server as SocketIOServer } from 'socket.io';
 import http from 'http';
 import { generateWorld, getSafeSpawnPoint, World } from './src/lib/world';
-import { extractChunkFromWorld, compressChunk, CHUNK_SIZE, CHUNK_COLS, CHUNK_ROWS } from './src/lib/chunk';
+import { extractChunkFromWorld, compressChunk, packChunkBatch, CHUNK_SIZE, CHUNK_COLS, CHUNK_ROWS } from './src/lib/chunk';
 import { WORLD_WIDTH, WORLD_HEIGHT, BlockType } from './src/lib/constants';
 import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -116,7 +116,10 @@ async function startServer() {
           if (cData) resetChunks.push({ cx, cy, data: cData });
         }
       }
-      io.to(roomId).emit('world_wiped', { chunks: resetChunks, world: activeRooms[roomId].world });
+      // Packed as a single binary attachment — socket.io rejects packets
+      // with more than 10 binary attachments ("too many attachments").
+      const packedReset = packChunkBatch(resetChunks);
+      io.to(roomId).emit('world_wiped', { chunkManifest: packedReset.manifest, chunkBlob: packedReset.blob, world: activeRooms[roomId].world });
       res.json({ success: true });
     } else {
       res.status(404).json({ error: 'Room not found or not active.' });
@@ -1107,13 +1110,19 @@ async function startServer() {
         }
       }
 
+      // Chunks travel as ONE binary attachment (manifest + blob): a packet with
+      // more than 10 binary attachments is rejected by socket.io-parser
+      // ("too many attachments"), which used to disconnect clients on join and
+      // leave them stuck on the "Entering Realm" loading screen forever.
+      const packedInit = packChunkBatch(initialChunks);
+
       // Send the compressed chunks and initial game state to the new user
       socket.emit('init_world', {
-        chunks: initialChunks,
+        chunkManifest: packedInit.manifest,
+        chunkBlob: packedInit.blob,
         chunkSize: CHUNK_SIZE,
         worldWidth: WORLD_WIDTH,
         worldHeight: WORLD_HEIGHT,
-        world: activeRooms[roomId].world,
         players: activeRooms[roomId].players,
         mobs: activeRooms[roomId].mobs,
         items: activeRooms[roomId].items,
@@ -1138,9 +1147,8 @@ async function startServer() {
           }
         }
       }
-      if (chunksToSend.length > 0) {
-        socket.emit('chunks_data', { chunks: chunksToSend });
-      }
+      const packedRequest = packChunkBatch(chunksToSend);
+      socket.emit('chunks_data', { chunkManifest: packedRequest.manifest, chunkBlob: packedRequest.blob });
     });
 
 socket.on('open_chest', async (data: { tx: number, ty: number }) => {
